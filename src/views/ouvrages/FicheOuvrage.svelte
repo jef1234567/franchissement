@@ -1,6 +1,6 @@
 <script lang="ts">
   import { etat } from '../../lib/etat.svelte';
-  import type { Ouvrage } from '../../core/model';
+  import { LIBELLE_TYPE_OUVRAGE, type Ouvrage, type TypeOuvrage } from '../../core/model';
   import { analyserPosition, versMGRS } from '../../core/geo';
   import ChampNombre from '../../components/ChampNombre.svelte';
   import Icone from '../../components/Icone.svelte';
@@ -39,6 +39,11 @@
     <button class="btn petit danger" onclick={supprimer}><Icone nom="corbeille" taille={15} /> Supprimer</button>
   </div>
   <label class="champ">Nom<input type="text" bind:value={o.nom} /></label>
+  <label class="champ">Type d'ouvrage
+    <select bind:value={o.type}>
+      {#each Object.entries(LIBELLE_TYPE_OUVRAGE) as [t, l] (t)}<option value={t as TypeOuvrage}>{l}</option>{/each}
+    </select>
+  </label>
   <div class="grille-2">
     <label class="champ">Route portée<input type="text" bind:value={o.route} placeholder="ex. D952" /></label>
     <label class="champ">Position (MGRS ou lat, lon)
@@ -75,7 +80,7 @@
     </label>
     <label class="champ">Classe risque établie (Génie)
       <ChampNombre bind:valeur={o.classes.risque} min={0} max={200} />
-      <span class="aide">Vide : franchissement à risque non autorisé</span>
+      <span class="aide">{o.type === 'permanent' && !etat.projet.referentiel.risqueSurPermanent ? 'Sans effet sur un pont permanent (doctrine : ponts militaires préfabriqués uniquement)' : 'Vide : franchissement à risque non autorisé'}</span>
     </label>
   </div>
   {#if incoherence}<p class="encadre alerte petit-txt">La classe double voie est supérieure à la classe voie unique : vérifiez la saisie.</p>{/if}

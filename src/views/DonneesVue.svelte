@@ -14,6 +14,8 @@
     tableDepuisCSV, tableDepuisGeoJSON, tableDepuisKML,
     type Correspondance, type OperationFusion, type ResultatConversion, type TableImport,
   } from '../core/importation';
+  import { tableDepuisShapefile } from '../core/shapefile';
+  import { SCR, devinerSCR, type CodeSCR } from '../core/projections';
   import Icone from '../components/Icone.svelte';
   import ChampNombre from '../components/ChampNombre.svelte';
 
@@ -126,16 +128,25 @@
   let seuil = $state<number | null>(60);
   let conversion = $state.raw<ResultatConversion | null>(null);
   let plan = $state<OperationFusion[]>([]);
+  let scr = $state<CodeSCR>('l93');
+  const xyMappes = $derived(!!table && !!corr.x && !!corr.y);
+  function suggererSCR() {
+    if (!table || !corr.x || !corr.y) return;
+    const n = (s: string) => parseFloat((s ?? '').replace(',', '.'));
+    const g = devinerSCR(table.lignes.map((l) => n(l[corr.x!])), table.lignes.map((l) => n(l[corr.y!])));
+    if (g) scr = g;
+  }
 
   async function lireFichierInjection(e: Event) {
     const f = (e.target as HTMLInputElement).files?.[0];
     (e.target as HTMLInputElement).value = '';
     if (!f) return;
-    const texte = await lireTexte(f);
     try {
       const nom = f.name.toLowerCase();
       let t: TableImport;
-      if (nom.endsWith('.kml')) t = tableDepuisKML(texte);
+      const texte = nom.endsWith('.zip') ? '' : await lireTexte(f);
+      if (nom.endsWith('.zip')) t = await tableDepuisShapefile(await f.arrayBuffer());
+      else if (nom.endsWith('.kml')) t = tableDepuisKML(texte);
       else if (nom.endsWith('.geojson') || nom.endsWith('.json')) {
         const j = JSON.parse(texte);
         if (j.type === 'FeatureCollection' || j.type === 'Feature') t = tableDepuisGeoJSON(texte);
@@ -144,6 +155,7 @@
       table = t;
       nomFichier = f.name;
       corr = proposerCorrespondance(t.colonnes);
+      suggererSCR();
       provReference = f.name;
       conversion = null;
       plan = [];
@@ -164,7 +176,7 @@
 
   function analyser() {
     if (!table) return;
-    conversion = convertirOuvrages(table, $state.snapshot(corr), { type: 'geo', libelle: provLibelle || 'Import', reference: provReference, date: provDate, auteur: provAuteur }, fiabDefaut);
+    conversion = convertirOuvrages(table, $state.snapshot(corr), { type: 'geo', libelle: provLibelle || 'Import', reference: provReference, date: provDate, auteur: provAuteur }, fiabDefaut, scr);
     plan = planifierFusion($state.snapshot(etat.projet.ouvrages) as Ouvrage[], conversion.ouvrages, seuil ?? 60);
   }
   function appliquer() {
@@ -397,10 +409,10 @@
   <section class="carte-ui">
     <div class="section pile">
       <div class="ligne" style="align-items:center"><span class="pas">3</span><h3>Injecter des données d'ouvrages <span class="muted petit-txt">(28e GG, reconnaissances, tableurs)</span></h3></div>
-      <p class="petit-txt">Formats : CSV / TXT (séparateur et encodage détectés), GeoJSON (points ou lignes), KML. Positions en lat/lon WGS84, en MGRS, ou par géométrie.</p>
+      <p class="petit-txt">Formats : shapefile zippé (.zip avec .shp, .dbf, .prj — reprojeté automatiquement), CSV / TXT (séparateur et encodage détectés), GeoJSON, KML. Positions : géométrie, lat/lon WGS84, MGRS, ou X/Y en Lambert 93, Lambert II étendu ou UTM.</p>
       <div class="ligne">
         <label class="btn primaire"><Icone nom="envoyer" taille={16} /> Choisir un fichier
-          <input type="file" accept=".csv,.txt,.geojson,.json,.kml" hidden onchange={lireFichierInjection} />
+          <input type="file" accept=".zip,.csv,.txt,.geojson,.json,.kml" hidden onchange={lireFichierInjection} />
         </label>
         {#if table}<span class="petit-txt"><strong>{nomFichier}</strong> — {table.lignes.length} ligne(s), {table.colonnes.length} colonne(s)</span>{/if}
       </div>
@@ -422,6 +434,14 @@
           {/each}
         </div>
         {#if table.geometries.some(Boolean)}<p class="muted petit-txt">Positions lues dans la géométrie du fichier.</p>{/if}
+        {#if xyMappes}
+          <div class="ligne">
+            <label class="champ" style="width:320px">Système des coordonnées X / Y
+              <select bind:value={scr}>{#each Object.entries(SCR) as [c, s] (c)}{#if c !== 'wgs84'}<option value={c}>{s.libelle}</option>{/if}{/each}</select>
+            </label>
+            <button class="btn petit" onclick={suggererSCR}>Détecter</button>
+          </div>
+        {/if}
         <div class="tableau-wrap apercu">
           <table class="tableau">
             <thead><tr>{#each table.colonnes as c (c)}<th>{c}</th>{/each}</tr></thead>

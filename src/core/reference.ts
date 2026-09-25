@@ -3,14 +3,28 @@ import type { Propulsion, Referentiel, Unite, Vehicule } from './model';
 /* =========================================================================
    Référentiel de franchissement (STANAG 2021)
    -------------------------------------------------------------------------
-   Les valeurs par défaut ci-dessous sont des valeurs de travail usuelles.
-   Elles DOIVENT être confrontées à l'édition en vigueur du STANAG 2021 puis
-   validées dans l'écran « Référentiel » ; tant que ce n'est pas fait, l'outil
-   affiche un bandeau « référentiel non validé ».
+   Le texte du STANAG 2021 n'est pas public. Les valeurs par défaut sont
+   celles de la doctrine publique américaine qui le transpose :
+   - FM 5-170, annexe B (Bridge Classification) : normal 30 m / 40 km/h
+     (100 ft / 25 mph) ; précaution : dépassement de 25 %, dans l'axe, 50 m,
+     13 km/h, sans arrêt, accélération ni changement de rapport ; risque :
+     uniquement ponts militaires préfabriqués fixes ou flottants, véhicule
+     seul dans l'axe, 5 km/h, inspection Génie après chaque passage ;
+   - FM 3-34.343 (Military Nonstandard Fixed Bridging) : classe précaution
+     d'un pont non standard = 125 % de la classe normale voie unique ;
+   - FM 90-13 (River-Crossing Operations), annexe C : 24 km/h en
+     franchissement normal sur pont flottant.
+   Elles restent à valider par le Génie (écran « Référentiel »).
    ========================================================================= */
+export const SOURCES_REFERENTIEL = [
+  { ref: 'FM 5-170, annexe B', objet: 'Normal : 30 m (100 ft), 40 km/h (25 mph). Précaution : +25 %, axe, 50 m, 13 km/h, sans arrêt ni changement de rapport. Risque : ponts militaires préfabriqués fixes / flottants uniquement, véhicule seul, axe, 5 km/h, inspection Génie après chaque passage.' },
+  { ref: 'FM 3-34.343, ch. 5', objet: 'Classe précaution des ponts non standard = classe normale voie unique × 125 %.' },
+  { ref: 'FM 90-13, annexe C', objet: 'Franchissement normal sur pont flottant : intervalle 30 m, vitesse ≤ 24 km/h.' },
+  { ref: 'STANAG 2021', objet: 'Trois conditions de franchissement (normal, précaution, risque) à marge de sécurité décroissante ; le risque accepte un endommagement et relève d\'une décision du commandement.' },
+];
 export function referentielParDefaut(): Referentiel {
   return {
-    titre: 'STANAG 2021 — valeurs de travail',
+    titre: 'STANAG 2021 — doctrine publique (FM 5-170, FM 3-34.343, FM 90-13)',
     valide: false,
     validePar: '',
     valideLe: '',
@@ -21,12 +35,11 @@ export function referentielParDefaut(): Referentiel {
     },
     coefPrecaution: 1.25,
     deriverPrecaution: true,
+    vitesseNormalFlottantKmh: 24,
+    risqueSurPermanent: false,
     margeLargeurM: 0.3,
     margeHauteurM: 0.1,
-    notes:
-      'Normal : classe véhicule ≤ classe ouvrage, espacement et vitesse de convoi. ' +
-      'Précaution : un seul véhicule, dans l\'axe, à vitesse réduite, sans arrêt ni changement de rapport ; classe établie ou dérivée de la classe voie unique. ' +
-      'Risque : uniquement sur classe établie par le Génie (ponts militaires / étude spécifique).',
+    notes: '',
   };
 }
 

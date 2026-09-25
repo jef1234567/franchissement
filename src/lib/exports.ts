@@ -29,6 +29,7 @@ function proprietesOuvrage(o: Ouvrage) {
   return {
     nom: o.nom,
     route: o.route,
+    type: o.type,
     mgrs: o.lat != null && o.lon != null ? versMGRS(o.lat, o.lon) : null,
     longueur_m: o.longueurM,
     largeur_m: o.largeurM,

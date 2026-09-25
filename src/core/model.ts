@@ -58,11 +58,20 @@ export interface ClasseVoie {
 
 export type Fiabilite = 'estime' | 'reconnu' | 'valide';
 
+/** Nature de l'ouvrage : conditionne le franchissement à risque et la vitesse (ponts flottants). */
+export type TypeOuvrage = 'permanent' | 'militaire_fixe' | 'militaire_flottant';
+export const LIBELLE_TYPE_OUVRAGE: Record<TypeOuvrage, string> = {
+  permanent: 'Pont permanent (civil)',
+  militaire_fixe: 'Pont militaire préfabriqué fixe',
+  militaire_flottant: 'Pont militaire flottant',
+};
+
 export interface Ouvrage {
   id: string;
   nom: string;
   /** Route portée (ex. « D952 »). */
   route: string;
+  type: TypeOuvrage;
   lat: number | null;
   lon: number | null;
   /** Tracé de l'ouvrage si connu. */
@@ -108,6 +117,10 @@ export interface Referentiel {
   coefPrecaution: number;
   /** Autoriser la dérivation automatique de la classe précaution. */
   deriverPrecaution: boolean;
+  /** Vitesse maximale en franchissement normal sur pont flottant. */
+  vitesseNormalFlottantKmh: number;
+  /** Autoriser le franchissement à risque sur un pont permanent dont la classe risque est renseignée (hors doctrine). */
+  risqueSurPermanent: boolean;
   /** Marges de sécurité gabarit. */
   margeLargeurM: number;
   margeHauteurM: number;
@@ -138,6 +151,7 @@ export function nouvelOuvrage(partiel: Partial<Ouvrage> = {}): Ouvrage {
     id: uid('o'),
     nom: 'Nouvel ouvrage',
     route: '',
+    type: 'permanent',
     lat: null,
     lon: null,
     geom: null,

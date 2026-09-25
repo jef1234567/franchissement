@@ -104,7 +104,9 @@ export function classesApplicables(o: Ouvrage, voies: Voies, propulsion: Propuls
     precaution = Math.floor(baseUnique * ref.coefPrecaution);
     precautionDerivee = true;
   }
-  const risque = estNombre(o.classes.risque) ? o.classes.risque : null;
+  // Doctrine : risque uniquement sur ponts militaires préfabriqués (fixes ou flottants).
+  const risqueAutorise = (o.type ?? 'permanent') !== 'permanent' || ref.risqueSurPermanent;
+  const risque = risqueAutorise && estNombre(o.classes.risque) ? o.classes.risque : null;
   return { normal, precaution, precautionDerivee, risque };
 }
 

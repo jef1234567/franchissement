@@ -1,6 +1,6 @@
 <script lang="ts">
   import { etat } from '../lib/etat.svelte';
-  import { referentielParDefaut } from '../core/reference';
+  import { referentielParDefaut, SOURCES_REFERENTIEL } from '../core/reference';
   import { LIBELLE_MODE } from '../core/verification';
   import type { ModeFranchissement } from '../core/model';
   import ChampNombre from '../components/ChampNombre.svelte';
@@ -37,7 +37,7 @@
     <div class="encadre succes"><Icone nom="bouclier" taille={16} /> Référentiel <strong>validé</strong> par {r.validePar} le {r.valideLe}. Toute modification retire la validation. <button class="btn petit" onclick={retirer}>Retirer la validation</button></div>
   {:else}
     <div class="encadre alerte">
-      <strong>Référentiel non validé.</strong> Les valeurs par défaut sont des valeurs de travail usuelles (franchissement normal : 30 m, 40 km/h ; précaution : un seul véhicule dans l'axe, 13 km/h ; risque : sur classe établie uniquement). Confrontez-les à l'édition en vigueur du STANAG 2021 et aux directives du Génie avant emploi opérationnel.
+      <strong>Référentiel non validé.</strong> Le texte du STANAG 2021 n'étant pas public, les valeurs par défaut sont celles de la doctrine publique américaine qui le transpose (sources ci-dessous). Faites-les confirmer par le Génie (texte OTAN ou doctrine française en vigueur) avant emploi opérationnel.
     </div>
   {/if}
 
@@ -76,10 +76,25 @@
         <ChampNombre valeur={r.margeHauteurM} onchange={(v) => { if (v != null) { r.margeHauteurM = v; r.valide = false; } }} min={0} max={3} />
       </label>
     </div>
-    <p class="muted petit-txt">La classe « risque » n'est jamais dérivée : elle doit être établie par le Génie pour l'ouvrage (ponts militaires, étude spécifique).</p>
+    <div class="grille-3" style="max-width:720px">
+      <label class="champ">Vitesse normale sur pont flottant (km/h)
+        <ChampNombre valeur={r.vitesseNormalFlottantKmh} onchange={(v) => { if (v != null) { r.vitesseNormalFlottantKmh = v; r.valide = false; } }} min={1} max={60} />
+      </label>
+    </div>
+    <label class="case"><input type="checkbox" checked={r.risqueSurPermanent} onchange={(e) => { r.risqueSurPermanent = (e.target as HTMLInputElement).checked; r.valide = false; }} /> Autoriser le franchissement à risque sur un pont permanent dont la classe risque est renseignée <span class="muted">(hors doctrine)</span></label>
+    <p class="muted petit-txt">La classe « risque » n'est jamais dérivée : elle est établie par le Génie. Selon la doctrine, le franchissement à risque ne concerne que les ponts militaires préfabriqués (fixes ou flottants) et impose une inspection après chaque passage.</p>
     <label class="champ">Notes et références (édition du STANAG, directives…)
       <textarea bind:value={r.notes} rows="4" oninput={() => (r.valide = false)}></textarea>
     </label>
+  </section>
+
+  <section class="carte-ui section pile">
+    <h3>Sources des valeurs par défaut</h3>
+    <table class="tableau">
+      <thead><tr><th style="width:170px">Référence</th><th>Contenu repris</th></tr></thead>
+      <tbody>{#each SOURCES_REFERENTIEL as s (s.ref)}<tr><td><strong>{s.ref}</strong></td><td>{s.objet}</td></tr>{/each}</tbody>
+    </table>
+    <p class="muted petit-txt">Manuels de l'US Army diffusables au public, transposant le STANAG 2021 (MLC des ponts, bacs, portières et véhicules). À confronter à l'édition OTAN en vigueur et à la doctrine française du Génie.</p>
   </section>
 
   <section class="carte-ui section pile">

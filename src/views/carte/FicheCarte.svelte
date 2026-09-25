@@ -3,6 +3,7 @@
   import { iti } from '../../lib/itineraire.svelte';
   import { verifierConvoi, LIBELLE_MODE, type ElementConvoi } from '../../core/verification';
   import { versMGRS } from '../../core/geo';
+  import { LIBELLE_TYPE_OUVRAGE } from '../../core/model';
   import Pastille from '../../components/Pastille.svelte';
   import Icone from '../../components/Icone.svelte';
 
@@ -24,6 +25,7 @@
     <div class="ligne" style="gap:6px">
       <span class="etiquette {o.fiabilite}">{o.fiabilite === 'valide' ? 'Validé' : o.fiabilite === 'reconnu' ? 'Reconnu' : 'Estimé'}</span>
       <span class="etiquette" title={o.provenance.reference}>{o.provenance.libelle}</span>
+      <span class="etiquette">{LIBELLE_TYPE_OUVRAGE[o.type ?? 'permanent']}</span>
     </div>
     <dl class="caracs">
       <dt>Classe voie unique</dt><dd>{fmt(o.classes.unique.generique)}{o.classes.unique.roues != null ? ` · roues ${o.classes.unique.roues}` : ''}{o.classes.unique.chenilles != null ? ` · chenilles ${o.classes.unique.chenilles}` : ''}</dd>

@@ -82,6 +82,9 @@ function vitesseMs(p: ParametresMode) {
 
 export function calculerEcoulement(o: Ouvrage, rames: Rame[], ref: Referentiel, opt: OptionsEcoulement): ResultatEcoulement {
   const params = parametresEffectifs(ref, opt.surcharges);
+  if (o.type === 'militaire_flottant' && ref.vitesseNormalFlottantKmh > 0 && opt.surcharges?.normal?.vitesseKmh == null) {
+    params.normal = { ...params.normal, vitesseKmh: Math.min(params.normal.vitesseKmh, ref.vitesseNormalFlottantKmh) };
+  }
   const vide: ResultatEcoulement = {
     ok: false,
     passages: [],

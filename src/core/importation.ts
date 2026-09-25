@@ -14,6 +14,7 @@ import {
 } from './model';
 import { referentielParDefaut } from './reference';
 import { areteLaPlusProche, type Reseau } from './reseau';
+import { versWGS84, type CodeSCR } from './projections';
 
 /* =========================================================================
    Table générique issue d'un fichier (CSV, GeoJSON, KML)
@@ -110,10 +111,10 @@ function pointsGeometrie(g: GeomGeoJSON | null | undefined): [number, number][] 
   }
 }
 
-export function tableDepuisGeoJSON(texte: string): TableImport {
-  const j = JSON.parse(texte);
-  const features: { properties?: Record<string, unknown>; geometry?: GeomGeoJSON }[] =
-    j.type === 'FeatureCollection' ? j.features : j.type === 'Feature' ? [j] : [];
+export function tableDepuisGeoJSON(texte: string | object): TableImport {
+  type Entite = { type?: string; properties?: Record<string, unknown>; geometry?: GeomGeoJSON };
+  const j = (typeof texte === 'string' ? JSON.parse(texte) : texte) as Entite & { features?: Entite[] };
+  const features: Entite[] = j.type === 'FeatureCollection' ? (j.features ?? []) : j.type === 'Feature' ? [j] : [];
   if (!features.length) throw new Error('Aucune entité (Feature) dans le fichier GeoJSON.');
   const colonnes = new Set<string>();
   const lignes = features.map((f) => {
@@ -170,7 +171,7 @@ export function tableDepuisKML(texte: string): TableImport {
    ========================================================================= */
 
 export type ChampCible =
-  | 'nom' | 'route' | 'lat' | 'lon' | 'mgrs' | 'longueur' | 'largeur' | 'hauteurLibre'
+  | 'nom' | 'route' | 'type' | 'lat' | 'lon' | 'x' | 'y' | 'mgrs' | 'longueur' | 'largeur' | 'hauteurLibre'
   | 'classeUnique' | 'classeUniqueRoues' | 'classeUniqueChenilles'
   | 'classeDouble' | 'classeDoubleRoues' | 'classeDoubleChenilles'
   | 'classePrecaution' | 'classeRisque'
@@ -182,6 +183,9 @@ export const CHAMPS_CIBLES: { cle: ChampCible; libelle: string; alias: string[] 
   { cle: 'route', libelle: 'Route portée', alias: ['route', 'ref', 'axe', 'voie', 'numero route'] },
   { cle: 'lat', libelle: 'Latitude', alias: ['lat', 'latitude', 'y wgs84'] },
   { cle: 'lon', libelle: 'Longitude', alias: ['lon', 'lng', 'longitude', 'x wgs84'] },
+  { cle: 'x', libelle: 'X (projeté)', alias: ['x', 'x l93', 'x lambert', 'x lambert 93', 'coord x', 'easting', 'est'] },
+  { cle: 'y', libelle: 'Y (projeté)', alias: ['y', 'y l93', 'y lambert', 'y lambert 93', 'coord y', 'northing', 'nord'] },
+  { cle: 'type', libelle: "Type d'ouvrage", alias: ['type', 'type ouvrage', 'nature', 'categorie'] },
   { cle: 'mgrs', libelle: 'Position MGRS', alias: ['mgrs', 'position mgrs', 'coordonnees mgrs', 'mgrs position'] },
   { cle: 'longueur', libelle: 'Longueur (m)', alias: ['longueur', 'length', 'long ouvrage', 'portee'] },
   { cle: 'largeur', libelle: 'Largeur utile (m)', alias: ['largeur', 'width', 'largeur utile', 'largeur chaussee'] },
@@ -251,6 +255,13 @@ export function nombreFR(txt: string | undefined): number | null {
   return Number.isFinite(v) ? v : null;
 }
 
+function typeDepuis(txt: string | undefined): Ouvrage['type'] {
+  const s = (txt ?? '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (/flott|pff|ribbon|motorise|gap|bac/.test(s)) return 'militaire_flottant';
+  if (/militaire|prefab|bailey|mgb|spb|lrb|pta|mabey|dry support/.test(s)) return 'militaire_fixe';
+  return 'permanent';
+}
+
 function fiabiliteDepuis(txt: string | undefined, defaut: Fiabilite): Fiabilite {
   const s = (txt ?? '').toLowerCase();
   if (/valid/.test(s)) return 'valide';
@@ -275,6 +286,7 @@ export function convertirOuvrages(
   corr: Correspondance,
   provenance: Provenance,
   fiabiliteDefaut: Fiabilite,
+  scr: CodeSCR = 'wgs84',
 ): ResultatConversion {
   const ouvrages: Ouvrage[] = [];
   const rejets: LigneRejetee[] = [];
@@ -290,6 +302,12 @@ export function convertirOuvrages(
     } else {
       lat = nombreFR(get(l, 'lat'));
       lon = nombreFR(get(l, 'lon'));
+      const x = nombreFR(get(l, 'x')), y = nombreFR(get(l, 'y'));
+      if ((lat === null || lon === null) && x !== null && y !== null) {
+        const p = versWGS84(scr, x, y);
+        if (p) [lat, lon] = [Math.round(p[0] * 1e7) / 1e7, Math.round(p[1] * 1e7) / 1e7];
+        else avertissements.push({ ligne: n, motif: `Coordonnées X/Y non convertibles (${x}, ${y}).` });
+      }
       if ((lat === null || lon === null) && get(l, 'mgrs')) {
         const p = analyserPosition(get(l, 'mgrs')!);
         if (p) [lat, lon] = p;
@@ -313,6 +331,7 @@ export function convertirOuvrages(
     const o = nouvelOuvrage({
       nom: nom || 'Ouvrage importé',
       route: (get(l, 'route') ?? '').trim(),
+      type: typeDepuis(get(l, 'type')),
       lat, lon,
       geom: geom && geom.length > 1 ? geom : null,
       longueurM: nombreFR(get(l, 'longueur')) ?? (geom && geom.length > 1 ? Math.round(longueurPolyligne(geom) * 10) / 10 : null),
@@ -480,6 +499,7 @@ export function reparerOuvrage(x: Record<string, unknown>): Ouvrage {
     id: str(x.id) || base.id,
     nom: str(x.nom, base.nom) || base.nom,
     route: str(x.route),
+    type: (['permanent', 'militaire_fixe', 'militaire_flottant'].includes(str(x.type)) ? str(x.type) : 'permanent') as Ouvrage['type'],
     lat: num(x.lat),
     lon: num(x.lon),
     geom: Array.isArray(x.geom) ? (x.geom as [number, number][]).filter((p) => Array.isArray(p) && p.length >= 2).map((p) => [Number(p[0]), Number(p[1])]) : null,
@@ -552,6 +572,8 @@ export function reparerReferentiel(x: unknown): Referentiel {
     valideLe: str(r.valideLe),
     modes: { normal: mode('normal'), precaution: mode('precaution'), risque: mode('risque') },
     coefPrecaution: num(r.coefPrecaution) ?? d.coefPrecaution,
+    vitesseNormalFlottantKmh: num(r.vitesseNormalFlottantKmh) ?? d.vitesseNormalFlottantKmh,
+    risqueSurPermanent: r.risqueSurPermanent === true,
     deriverPrecaution: typeof r.deriverPrecaution === 'boolean' ? r.deriverPrecaution : d.deriverPrecaution,
     margeLargeurM: num(r.margeLargeurM) ?? d.margeLargeurM,
     margeHauteurM: num(r.margeHauteurM) ?? d.margeHauteurM,

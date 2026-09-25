@@ -49,10 +49,15 @@ describe('Vérification STANAG', () => {
     expect(e.classes.precautionDerivee).toBe(true);
     expect(evaluerVehicule(pont(30), el('leclerc'), 'unique', ref).mode).toBe('interdit');
   });
-  it('risque uniquement sur classe établie', () => {
+  it('risque : classe établie ET pont militaire préfabriqué (FM 5-170)', () => {
     const o = pont(30, null, {});
     o.classes.risque = 65;
+    expect(evaluerVehicule(o, el('leclerc'), 'unique', ref).mode).toBe('interdit'); // pont permanent
+    expect(evaluerVehicule(o, el('leclerc'), 'unique', { ...ref, risqueSurPermanent: true }).mode).toBe('risque');
+    o.type = 'militaire_fixe';
     expect(evaluerVehicule(o, el('leclerc'), 'unique', ref).mode).toBe('risque');
+    o.classes.risque = null;
+    expect(evaluerVehicule(o, el('leclerc'), 'unique', ref).mode).toBe('interdit');
   });
   it('double voie utilise la classe double', () => {
     expect(verifierConvoi(pont(40, 20), [el('vbci')], 'double', ref).mode).not.toBe('normal');
@@ -116,6 +121,12 @@ describe('Écoulement', () => {
     const u = calculerEcoulement(pont(30, 30), rames, ref, { voies: 'unique', mode: 'auto', regrouperSeuls: true });
     const d = calculerEcoulement(pont(30, 30), rames, ref, { voies: 'double', mode: 'auto', regrouperSeuls: true });
     expect(d.dureeTotaleS).toBeLessThan(u.dureeTotaleS);
+  });
+  it('pont flottant : vitesse normale plafonnée à 24 km/h (FM 90-13)', () => {
+    const o = pont(30, null, { type: 'militaire_flottant' });
+    const r = calculerEcoulement(o, [{ nom: 'S', elements: [el('vab')], intervalleApresS: 0 }], ref, { voies: 'unique', mode: 'auto', regrouperSeuls: true });
+    expect(r.parametres.normal.vitesseKmh).toBe(24);
+    expect(r.dureeTotaleS).toBeCloseTo((100 + 6.05) / (24 / 3.6), 6);
   });
   it('véhicules interdits exclus et signalés', () => {
     const r = calculerEcoulement(pont(20), [{ nom: 'S', elements: [el('leclerc'), el('vbl')], intervalleApresS: 0 }], ref, { voies: 'unique', mode: 'auto', regrouperSeuls: true });

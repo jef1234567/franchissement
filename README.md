@@ -20,7 +20,7 @@ Il s'ouvre par double-clic (Edge, Firefox, Chrome) sur un poste Intradef ou isol
 | Étape | Où | Poste |
 |---|---|---|
 | 1. Préparer une zone : lieu (ou MGRS) + rayon → téléchargement du réseau routier et des ponts OpenStreetMap, puis des tuiles IGN | *Données & zone* | connecté |
-| 2. Injecter les données du 28e GG / des reconnaissances (CSV, GeoJSON, KML), avec correspondance des colonnes, rapprochement et arbitrage | *Données & zone* | l'un ou l'autre |
+| 2. Injecter les données du 28e GG / des reconnaissances (shapefile zippé, CSV, GeoJSON, KML ; WGS84, MGRS, Lambert 93, Lambert II étendu, UTM), avec correspondance des colonnes, rapprochement et arbitrage | *Données & zone* | l'un ou l'autre |
 | 3. Exporter un **paquet de zone `.franchir`** (projet + réseau + tuiles) | *Données & zone* | connecté |
 | 4. Importer le paquet, activer le **mode hors ligne strict** | *Données & zone* | isolé |
 | 5. Valider le référentiel STANAG (valeurs, nom du valideur) | *Référentiel* | isolé |
@@ -72,10 +72,12 @@ Raccourcis : `Alt+1…7` (écrans), `Ctrl+Z` / `Ctrl+Y` (annuler / rétablir).
 
 ## Points à valider (important)
 
-- **Référentiel** : les valeurs par défaut sont des valeurs de travail usuelles. Elles doivent être confrontées à l'édition en vigueur du STANAG 2021, puis validées dans l'écran *Référentiel* :
-  - normal : 30 m, 40 km/h ;
-  - précaution : un seul véhicule dans l'axe, 13 km/h, classe = classe voie unique × 1,25 ;
-  - risque : 5 km/h, sur classe établie uniquement.
+- **Référentiel** : le texte du STANAG 2021 n'est pas public. Les valeurs par défaut viennent de la doctrine publique de l'US Army qui le transpose :
+  - normal : 30 m, 40 km/h (100 ft / 25 mph) — *FM 5-170, annexe B* ; 24 km/h sur pont flottant — *FM 90-13, annexe C* ;
+  - précaution : dépassement de classe jusqu'à 25 % (classe voie unique × 1,25 — *FM 3-34.343*), véhicule seul dans l'axe, 50 m, 13 km/h, sans arrêt, accélération ni changement de rapport ;
+  - risque : uniquement sur ponts militaires préfabriqués fixes ou flottants, classe établie par le Génie, véhicule seul, 5 km/h, inspection après chaque passage.
+
+  Elles restent à faire confirmer par le Génie (texte OTAN ou doctrine française), puis à valider dans l'écran *Référentiel*.
 - **Véhicules** : les classes et longueurs reprises de la v1 ne sont pas sourcées. Les hauteurs, largeurs et masses sont à renseigner, sans quoi le gabarit n'est pas contrôlé.
 - **OpenStreetMap** ne contient aucune classe MLC : les ponts importés sont « estimés » tant qu'ils n'ont pas été renseignés.
 

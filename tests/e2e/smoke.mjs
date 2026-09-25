@@ -82,12 +82,20 @@ const csv = 'Nom;MGRS;Classe;Classe double;Largeur;Observations\n' +
 const csvPath = path.join(captures, 'injection.csv');
 writeFileSync(csvPath, csv);
 await page.getByRole('button', { name: /Données & zone/ }).click();
-await page.locator('input[type=file][accept=".csv,.txt,.geojson,.json,.kml"]').setInputFiles(csvPath);
+await page.locator('input[type=file][accept=".zip,.csv,.txt,.geojson,.json,.kml"]').setInputFiles(csvPath);
 await page.getByRole('button', { name: 'Analyser' }).click();
 await page.getByText('À fusionner').waitFor();
 await page.screenshot({ path: path.join(captures, '05-injection.png'), fullPage: true });
 await page.getByRole('button', { name: /Intégrer/ }).click();
 await page.getByText(/intégré\(s\)/).waitFor();
+
+// 4 bis. Shapefile Lambert 93 zippé (format SIG courant)
+await page.locator('input[type=file][accept=".zip,.csv,.txt,.geojson,.json,.kml"]').setInputFiles(path.join(racine, 'src/test/donnees/ouvrages_l93.zip'));
+await page.getByText(/ouvrages_l93\.zip/).first().waitFor();
+await page.getByRole('button', { name: 'Analyser' }).click();
+await page.getByText('À créer').waitFor();
+await page.getByRole('button', { name: /Intégrer/ }).click();
+await page.getByText(/intégré\(s\) depuis ouvrages_l93/).waitFor();
 
 // 5. Base ouvrages
 await page.getByRole('button', { name: /Ouvrages/ }).first().click();
@@ -96,6 +104,9 @@ const ligne = page.locator('.ouvrages table.tableau tbody tr').first();
 verifier(/34/.test(await ligne.innerText()), 'classe 34 du 28e GG appliquée au pont Fouchard (MGRS rapproché)');
 await ligne.click();
 await page.getByText('Historique').waitFor();
+await page.getByPlaceholder('Nom, route, source, notes…').fill('PFM');
+await page.locator('.ouvrages table.tableau tbody tr').first().click();
+verifier(await page.getByLabel("Type d'ouvrage").inputValue() === 'militaire_flottant', 'shapefile Lambert 93 : ouvrage flottant reconnu (NATURE « PFM flottant »)');
 await page.getByPlaceholder('Nom, route, source, notes…').fill('');
 await page.screenshot({ path: path.join(captures, '06-ouvrages.png') });
 verifier(await page.locator('img[src="x"]').count() === 0, 'aucun code injecté via un nom d\'ouvrage (XSS)');
@@ -115,6 +126,7 @@ await page.screenshot({ path: path.join(captures, '07-unites.png') });
 
 // 7. Référentiel + thème sombre
 await page.getByRole('button', { name: /Référentiel STANAG/ }).click();
+verifier(await page.getByText('FM 5-170, annexe B').isVisible(), 'sources doctrinales affichées dans le référentiel');
 await page.screenshot({ path: path.join(captures, '08-referentiel.png'), fullPage: true });
 await page.getByRole('button', { name: 'Changer de thème' }).click();
 await page.getByRole('button', { name: /Carte & itinéraire/ }).click();
