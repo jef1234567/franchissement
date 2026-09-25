@@ -73,20 +73,93 @@ const V1: [string, string, Propulsion, number, number][] = [
   ['vt4', 'VT4', 'roues', 3, 5],
 ];
 
+/* =========================================================================
+   Dimensions et masses en sources ouvertes (relevé de septembre 2026)
+   -------------------------------------------------------------------------
+   - longueur : la plus grande des valeurs v1 / source (prudent pour
+     l'écoulement), canon compris ;
+   - largeur : hors rétroviseurs ; hauteur hors tout ;
+   - masse : valeur haute (masse au combat ou PTAC) pour le contrôle des
+     restrictions civiles de tonnage.
+   Les classes MLC restent celles de l'outil v1 (non publiées en source ouverte).
+   ========================================================================= */
+export interface FicheOuverte {
+  longueurM: number;
+  largeurM: number | null;
+  hauteurM: number | null;
+  masseT: number | null;
+  source: string;
+  notes: string;
+}
+
+export const FICHES_OUVERTES: Record<string, FicheOuverte> = {
+  leclerc: { longueurM: 10.61, largeurM: 3.6, hauteurM: 3.43, masseT: 63, source: 'Ministère des Armées (defense.gouv.fr)', notes: 'Masse 56 à 63 t selon configuration. Hauteur hors tout indiquée par le ministère (2,53 m au toit de tourelle selon d\'autres sources).' },
+  amx10rc: { longueurM: 9.15, largeurM: 2.95, hauteurM: 2.59, masseT: 17, source: 'Ministère des Armées / Wikipédia', notes: 'Longueur canon compris (6,24 m caisse). Masse au combat 15 à 17 t.' },
+  jaguar: { longueurM: 7.8, largeurM: 2.99, hauteurM: 2.8, masseT: 25, source: 'Fiche LPM Jaguar (ministère) / Wikipédia', notes: 'Longueur canon de 40 mm compris (7,1 m caisse).' },
+  vbci: { longueurM: 7.89, largeurM: 2.98, hauteurM: 3.22, masseT: 32, source: 'Wikipédia', notes: 'Masse au combat 28 t (origine) à 32 t (version rénovée, surblindage).' },
+  griffon: { longueurM: 7.6, largeurM: 2.5, hauteurM: 3.7, masseT: 25, source: 'Wikipédia / Army Technology', notes: 'Hauteur hors tout (tourelleau téléopéré compris).' },
+  vab: { longueurM: 6.05, largeurM: 2.49, hauteurM: 2.06, masseT: 13, source: 'Wikipédia / ministère des Armées', notes: 'Masse au combat.' },
+  vbl: { longueurM: 3.88, largeurM: 2.02, hauteurM: 1.7, masseT: 3.8, source: 'Fiche technique UNABCC / Wikipédia', notes: 'Longueur 3,84 à 3,92 m selon source ; VB2L 4,10 m.' },
+  pvp: { longueurM: 4.6, largeurM: 2.28, hauteurM: 2.17, masseT: 4.39, source: 'Wikipédia / Army Technology', notes: '' },
+  gbc: { longueurM: 8.25, largeurM: 2.49, hauteurM: 3.27, masseT: 12.8, source: 'Wikipédia (Renault GBC 180)', notes: 'Longueur 7,27 à 8,25 m, hauteur 2,92 à 3,27 m selon version. Masse = PTAC.' },
+  trm10000: { longueurM: 10.75, largeurM: 2.5, hauteurM: 3.42, masseT: 25, source: 'Wikipédia (Renault TRM 10000)', notes: 'Masse = masse totale en charge. Longueur v1 : 9,24 m (version à confirmer).' },
+  pplog: { longueurM: 10.07, largeurM: 2.5, hauteurM: 3.95, masseT: 36, source: 'Wikipédia (Porteur polyvalent terrestre) / ministère', notes: '20 t à vide ; 36 t = PTRA (avec remorque), PTAC seul non publié. Hauteur avec PLM.' },
+  ppld: { longueurM: 10.3, largeurM: 2.5, hauteurM: 3.4, masseT: 40, source: 'Ministère des Armées (PPLD)', notes: '32 t à vide, PTAC 40 t.' },
+  scania8m3: { longueurM: 9.38, largeurM: 2.47, hauteurM: null, masseT: null, source: 'Forum Esprit de Valmy (Scania P340 CB 6x6 benne 8 m³)', notes: 'Source : longueur 7,88 m (8,05 m cabine blindée) ; valeur v1 (9,38 m) conservée par prudence. Hauteur et masse non trouvées.' },
+  egrap: { longueurM: 7.13, largeurM: 2.45, hauteurM: 3.52, masseT: 11.41, source: 'Milinfo / Esprit de Valmy (JCB 4CX EGRAP)', notes: '10,4 t sans protection, 11,4 t blindé avec conteneur. Longueur : valeur v1 (non trouvée).' },
+  ebg: { longueurM: 8.29, largeurM: 3.5, hauteurM: 2.94, masseT: 38, source: 'Encyclopédie des armes / Wikipédia (AMX-30 EBG)', notes: 'Source : longueur 7,90 m ; valeur v1 (8,29 m) conservée par prudence.' },
+  vabvtm120: { longueurM: 9.15, largeurM: 2.49, hauteurM: 2.06, masseT: 13.6, source: 'Wikipédia (VAB, MO-120-RT)', notes: 'VAB (6,05 m, 13 t) + mortier de 120 mm tracté (3,10 m, 0,6 t).' },
+  caesar: { longueurM: 10, largeurM: 2.55, hauteurM: 3.7, masseT: 17.7, source: 'Wikipédia (CAESAR sur Sherpa 5 6x6)', notes: '' },
+  erc90: { longueurM: 7.78, largeurM: 2.5, hauteurM: 2.25, masseT: 8.9, source: 'Wikipédia / fiche technique UNABCC', notes: 'Longueur canon compris (5,02 m caisse ; v1 : 5,21 m). Masse 7,4 à 8,9 t.' },
+  trm2000: { longueurM: 5.32, largeurM: 2.23, hauteurM: 3.1, masseT: 6.3, source: 'Revue Défense nationale / Wikipédia', notes: 'Longueur source 5,27 m. Masse = PTAC.' },
+  egame: { longueurM: 7.69, largeurM: 3, hauteurM: null, masseT: null, source: 'Ministère des Armées / UNAC', notes: 'Largeur = lame. Source : longueur 5,64 m lame en position route ; valeur v1 conservée par prudence. Hauteur et masse non trouvées.' },
+  p4: { longueurM: 4.2, largeurM: 1.7, hauteurM: 1.95, masseT: 2.28, source: 'Wikipédia / Milinfo', notes: 'Masse en charge ; version longue 4,65 m.' },
+  vt4: { longueurM: 5.3, largeurM: 2.16, hauteurM: 2.06, masseT: 3.5, source: 'Fiche LPM VT4 (ministère)', notes: 'Largeur avec rétroviseurs (1,86 m sans). Masse = PTAC.' },
+};
+
 export function vehiculesParDefaut(): Vehicule[] {
-  return V1.map(([id, nom, propulsion, mlc, longueur]) => ({
-    id,
-    nom,
-    propulsion,
-    mlcCharge: mlc,
-    mlcVide: null,
-    longueurM: longueur,
-    largeurM: null,
-    hauteurM: null,
-    masseT: null,
-    provenance: { type: 'v1', libelle: 'Outil v1 (non sourcé)' },
-    notes: '',
-  }));
+  return V1.map(([id, nom, propulsion, mlc, longueur]) => {
+    const f = FICHES_OUVERTES[id];
+    return {
+      id,
+      nom,
+      propulsion,
+      mlcCharge: mlc,
+      mlcVide: null,
+      longueurM: f?.longueurM ?? longueur,
+      largeurM: f?.largeurM ?? null,
+      hauteurM: f?.hauteurM ?? null,
+      masseT: f?.masseT ?? null,
+      provenance: { type: 'reference', libelle: f ? `Sources ouvertes : ${f.source} — MLC : outil v1` : 'Outil v1 (non sourcé)' },
+      notes: f?.notes ?? '',
+    };
+  });
+}
+
+/** Complète une base véhicules existante avec les fiches en sources ouvertes (champs vides uniquement, sauf longueur v1). */
+export function completerVehicules(vehicules: Vehicule[]): { vehicules: Vehicule[]; modifies: string[] } {
+  const modifies: string[] = [];
+  const res = vehicules.map((v) => {
+    const f = FICHES_OUVERTES[v.id];
+    if (!f) return v;
+    const n = { ...v, provenance: { ...v.provenance } };
+    let change = false;
+    const remplir = (cle: 'largeurM' | 'hauteurM' | 'masseT', val: number | null) => {
+      if (n[cle] == null && val != null) { n[cle] = val; change = true; }
+    };
+    remplir('largeurM', f.largeurM);
+    remplir('hauteurM', f.hauteurM);
+    remplir('masseT', f.masseT);
+    // Longueur : remplacée seulement si elle venait de l'outil v1 (non sourcée).
+    if ((n.longueurM == null || v.provenance.type === 'v1') && n.longueurM !== f.longueurM) { n.longueurM = f.longueurM; change = true; }
+    if (change) {
+      if (v.provenance.type === 'v1') n.provenance = { type: 'reference', libelle: `Sources ouvertes : ${f.source} — MLC : outil v1` };
+      if (f.notes && !n.notes.includes(f.notes)) n.notes = [n.notes, f.notes].filter(Boolean).join(' ');
+      modifies.push(v.nom);
+    }
+    return n;
+  });
+  return { vehicules: res, modifies };
 }
 
 const U1: [string, Record<string, number>][] = [

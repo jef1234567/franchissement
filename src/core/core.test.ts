@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { depuisMGRS, versMGRS, analyserPosition } from './geo';
-import { referentielParDefaut, unitesParDefaut, vehiculesParDefaut } from './reference';
+import { completerVehicules, referentielParDefaut, unitesParDefaut, vehiculesParDefaut } from './reference';
 import { expanserUnite, verifierConvoi, evaluerVehicule, type ElementConvoi } from './verification';
 import { calculerEcoulement } from './ecoulement';
-import { nouvelOuvrage, nouveauVehicule, type Ouvrage } from './model';
+import { nouvelOuvrage, nouveauVehicule, type Ouvrage, type Vehicule } from './model';
 import { analyserLongueurOSM, analyserMasseOSM, construireReseau, extraireOuvrages } from './reseau';
 import { calculerItineraire, OPTIONS_ITINERAIRE_DEFAUT } from './itineraire';
 import { appliquerFusion, convertirOuvrages, integrerOuvragesOSM, lireProjet, parserCSV, planifierFusion, proposerCorrespondance, tableDepuisCSV, tableDepuisGeoJSON } from './importation';
@@ -92,11 +92,29 @@ describe('Vérification STANAG', () => {
   });
 });
 
+describe('Fiches véhicules en sources ouvertes', () => {
+  it('toutes les fiches ont largeur et source ; MLC inchangées', () => {
+    const vs = vehiculesParDefaut();
+    expect(vs.filter((x) => x.largeurM == null).map((x) => x.id)).toEqual([]);
+    expect(vs.find((x) => x.id === 'leclerc')!.mlcCharge).toBe(60);
+  });
+  it('complète une base existante sans écraser une saisie', () => {
+    const base: Vehicule[] = vehiculesParDefaut().map((x) => ({ ...x, largeurM: null, hauteurM: null, masseT: null, provenance: { type: 'v1' as const, libelle: 'Outil v1' } }));
+    base[0].masseT = 57; // saisie utilisateur conservée
+    const { vehicules, modifies } = completerVehicules(base);
+    expect(vehicules[0].masseT).toBe(57);
+    expect(vehicules[0].largeurM).toBe(3.6);
+    expect(vehicules.find((x) => x.id === 'erc90')!.longueurM).toBe(7.78);
+    expect(modifies.length).toBe(22);
+    expect(completerVehicules(vehicules).modifies).toEqual([]); // idempotent
+  });
+});
+
 describe('Écoulement', () => {
   it('retrouve la formule v1 pour un convoi homogène en normal', () => {
-    // 4 VAB (6,05 m) + 1 GBC (8 m), pont 100 m, 30 m, 40 km/h
+    // 4 VAB + 1 GBC, pont 100 m, 30 m, 40 km/h
     const r = calculerEcoulement(pont(30), [{ nom: 'S', elements: [el('vab', 4), el('gbc')], intervalleApresS: 0 }], ref, { voies: 'unique', mode: 'auto', regrouperSeuls: true });
-    const attendu = (100 + 4 * 6.05 + 8 + 4 * 30) / (40 / 3.6);
+    const attendu = (100 + 4 * v('vab').longueurM! + v('gbc').longueurM! + 4 * 30) / (40 / 3.6);
     expect(r.ok).toBe(true);
     expect(r.dureeTotaleS).toBeCloseTo(attendu, 6);
   });
@@ -106,7 +124,7 @@ describe('Écoulement', () => {
     const dernierVab = Math.max(...r.passages.filter((p) => p.vehicule === 'VAB').map((p) => p.sortieS));
     expect(pp.mode).toBe('precaution');
     expect(pp.entreeS).toBeGreaterThanOrEqual(dernierVab);
-    expect(pp.sortieS - pp.entreeS).toBeCloseTo((100 + 9.27) / (13 / 3.6), 6);
+    expect(pp.sortieS - pp.entreeS).toBeCloseTo((100 + v('pplog').longueurM!) / (13 / 3.6), 6);
   });
   it('rame suivante bloquée par un véhicule seul encore sur l\'ouvrage', () => {
     const r = calculerEcoulement(pont(30), [

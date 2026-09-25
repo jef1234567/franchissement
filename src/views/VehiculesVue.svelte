@@ -1,6 +1,7 @@
 <script lang="ts">
   import { etat } from '../lib/etat.svelte';
   import { nouveauVehicule } from '../core/model';
+  import { completerVehicules } from '../core/reference';
   import ChampNombre from '../components/ChampNombre.svelte';
   import Icone from '../components/Icone.svelte';
 
@@ -11,6 +12,12 @@
   function ajouter() {
     etat.projet.vehicules.unshift(nouveauVehicule());
     recherche = '';
+  }
+  function completer() {
+    const { vehicules, modifies } = completerVehicules($state.snapshot(etat.projet.vehicules) as typeof etat.projet.vehicules);
+    if (!modifies.length) { etat.notifier('Aucun champ à compléter : les fiches sont déjà à jour.'); return; }
+    etat.projet.vehicules = vehicules;
+    etat.notifier(`${modifies.length} véhicule(s) complété(s) depuis les sources ouvertes (annulable par Ctrl+Z).`, 'ok');
   }
   function supprimer(id: string) {
     const v = etat.projet.vehicules.find((x) => x.id === id)!;
@@ -29,10 +36,11 @@
       <p class="muted">Caractéristiques de référence. Une classe MLC vide rend le véhicule <strong>non franchissant</strong> (jamais déclaré compatible). Hauteur, largeur et masse permettent les contrôles de gabarit et de restrictions civiles.</p>
     </div>
     <input type="search" placeholder="Rechercher…" bind:value={recherche} style="width:220px" aria-label="Rechercher un véhicule" />
+    <button class="btn" onclick={completer} title="Remplit les dimensions et masses vides à partir des fiches en sources ouvertes, sans écraser vos saisies"><Icone nom="telecharger" taille={16} /> Compléter (sources ouvertes)</button>
     <button class="btn primaire" onclick={ajouter}><Icone nom="plus" taille={16} /> Ajouter</button>
   </header>
   {#if incomplets}<p class="encadre alerte petit-txt">{incomplets} véhicule(s) sans classe MLC ou sans longueur.</p>{/if}
-  <p class="encadre info petit-txt">Les classes et longueurs reprises de l'outil v1 ne sont pas sourcées : indiquez la source officielle (fiche technique, STAT, SIMMT, 28e GG…) dans la colonne « Source » après vérification.</p>
+  <p class="encadre info petit-txt">Dimensions et masses : sources ouvertes (ministère des Armées, fiches constructeurs, encyclopédies), valeurs hautes retenues par prudence — survolez la source pour le détail. <strong>Les classes MLC restent celles de l'outil v1</strong> (non publiées en source ouverte) : à confirmer auprès de la STAT / SIMMT.</p>
   <div class="tableau-wrap">
     <table class="tableau">
       <thead>
@@ -51,7 +59,7 @@
             <td><ChampNombre bind:valeur={v.largeurM} min={0} max={10} largeur="72px" etiquette="Largeur" /></td>
             <td><ChampNombre bind:valeur={v.hauteurM} min={0} max={10} largeur="72px" etiquette="Hauteur" /></td>
             <td><ChampNombre bind:valeur={v.masseT} min={0} max={200} largeur="72px" etiquette="Masse" /></td>
-            <td><input type="text" bind:value={v.provenance.libelle} aria-label="Source" style="min-width:150px" /></td>
+            <td><input type="text" bind:value={v.provenance.libelle} aria-label="Source" style="min-width:150px" title={v.notes || v.provenance.libelle} /></td>
             <td><button class="btn icone fantome" title="Supprimer" aria-label="Supprimer {v.nom}" onclick={() => supprimer(v.id)}><Icone nom="corbeille" taille={16} /></button></td>
           </tr>
         {/each}

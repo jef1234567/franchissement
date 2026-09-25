@@ -78,7 +78,7 @@ Raccourcis : `Alt+1…7` (écrans), `Ctrl+Z` / `Ctrl+Y` (annuler / rétablir).
   - risque : uniquement sur ponts militaires préfabriqués fixes ou flottants, classe établie par le Génie, véhicule seul, 5 km/h, inspection après chaque passage.
 
   Elles restent à faire confirmer par le Génie (texte OTAN ou doctrine française), puis à valider dans l'écran *Référentiel*.
-- **Véhicules** : les classes et longueurs reprises de la v1 ne sont pas sourcées. Les hauteurs, largeurs et masses sont à renseigner, sans quoi le gabarit n'est pas contrôlé.
+- **Véhicules** : dimensions et masses renseignées depuis des sources ouvertes (ministère des Armées, fiches constructeurs, encyclopédies), en retenant les valeurs hautes par prudence ; la source et les écarts figurent sur chaque fiche. Hauteur et masse restent inconnues pour le Scania benne 8 m³ et l'EGAME. **Les classes MLC restent celles de la v1**, non publiées en source ouverte : à confirmer auprès de la STAT / SIMMT. Un bouton « Compléter (sources ouvertes) » met à jour un projet existant sans écraser les saisies.
 - **OpenStreetMap** ne contient aucune classe MLC : les ponts importés sont « estimés » tant qu'ils n'ont pas été renseignés.
 
 ## Développement
