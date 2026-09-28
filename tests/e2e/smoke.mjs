@@ -29,8 +29,19 @@ await page.goto(url);
 await page.getByText('FRANCHIR', { exact: true }).waitFor();
 verifier(await page.getByText('Référentiel non validé').isVisible(), 'bandeau référentiel non validé affiché');
 
-// Mode hors ligne strict
+// 0. Réseau bloqué : diagnostic explicite puis méthode manuelle (import du JSON Overpass)
 await page.getByRole('button', { name: /Données & zone/ }).click();
+await page.getByLabel('Lieu, MGRS ou lat, lon').fill('47.27, -0.03');
+await page.getByRole('button', { name: 'Localiser' }).click();
+await page.getByRole('button', { name: /Télécharger réseau routier/ }).click();
+await page.getByText(/requêtes bloquées avant d'atteindre Internet/).first().waitFor({ timeout: 60000 });
+verifier(await page.locator('details.manuel').evaluate((d) => d.open), 'méthode manuelle proposée après blocage réseau');
+verifier((await page.locator('input.lien-brut').inputValue()).startsWith('https://overpass-api.de/api/interpreter?data='), 'lien de requête manuelle fourni');
+await page.locator('details.manuel input[type=file]').setInputFiles(path.join(ici, 'demo-overpass.json'));
+await page.getByText(/Réseau chargé : 607 tronçons, 9 ouvrages/).first().waitFor();
+verifier(true, 'import manuel du fichier Overpass : 607 tronçons, 9 ouvrages');
+
+// Mode hors ligne strict
 await page.getByLabel('Mode hors ligne strict').check();
 horsLigneActif = true;
 

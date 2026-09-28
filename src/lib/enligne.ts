@@ -8,9 +8,25 @@ import { iterTuiles, cleTuile, urlTuile, type SourceTuiles } from '../core/tuile
 
 export const MIROIRS_OVERPASS = [
   'https://overpass-api.de/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
   'https://overpass.openstreetmap.fr/api/interpreter',
   'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
 ];
+
+/** Lien direct de la requête (méthode manuelle : ouverture dans un onglet puis enregistrement du fichier). */
+export function urlOverpassManuelle(bbox: BBox, inclureSecondaires: boolean): string {
+  return MIROIRS_OVERPASS[0] + '?data=' + encodeURIComponent(requeteOverpassReseau(bbox, inclureSecondaires));
+}
+
+/** Erreur réseau « muette » (Failed to fetch) : requête bloquée avant d'atteindre le serveur. */
+export class ErreurAccesBloque extends Error {}
+
+// Détection des blocages par la politique de sécurité (CSP) du document hôte.
+let violationsCSP: string[] = [];
+if (typeof document !== 'undefined') {
+  document.addEventListener('securitypolicyviolation', (e) => violationsCSP.push(e.blockedURI));
+}
 
 export interface ResultatGeocodage {
   libelle: string;
@@ -34,19 +50,40 @@ export async function telechargerReseauOSM(
 ): Promise<unknown> {
   const q = requeteOverpassReseau(bbox, inclureSecondaires);
   const erreurs: string[] = [];
+  let bloques = 0;
+  violationsCSP = [];
   for (const url of MIROIRS_OVERPASS) {
-    suivi(`Interrogation de ${new URL(url).host}…`);
-    try {
-      const r = await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal });
-      if (!r.ok) throw new Error('HTTP ' + r.status + (r.status === 429 ? ' (quota dépassé)' : r.status === 504 ? ' (serveur saturé)' : ''));
-      suivi('Réception des données…');
-      const j = await r.json();
-      if (j.remark && /runtime error|timed out|out of memory/i.test(j.remark)) throw new Error(j.remark);
-      return j;
-    } catch (e) {
-      if (signal?.aborted) throw new Error('Téléchargement annulé.');
-      erreurs.push(`${new URL(url).host} : ${(e as Error).message}`);
+    const hote = new URL(url).host;
+    suivi(`Interrogation de ${hote}…`);
+    // POST puis, en cas d'échec réseau, GET (certains proxys filtrent l'un ou l'autre).
+    for (const methode of ['POST', 'GET'] as const) {
+      try {
+        const r = methode === 'POST'
+          ? await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal })
+          : await fetch(url + '?data=' + encodeURIComponent(q), { signal });
+        if (!r.ok) throw new Error('HTTP ' + r.status + (r.status === 429 ? ' (quota dépassé)' : r.status === 504 ? ' (serveur saturé)' : ''));
+        suivi('Réception des données…');
+        const j = await r.json();
+        if (j.remark && /runtime error|timed out|out of memory/i.test(j.remark)) throw new Error(j.remark);
+        return j;
+      } catch (e) {
+        if (signal?.aborted) throw new Error('Téléchargement annulé.');
+        const muet = e instanceof TypeError;
+        if (!muet || methode === 'GET') {
+          if (muet) bloques++;
+          erreurs.push(`${hote} : ${muet ? 'requête bloquée' : (e as Error).message}`);
+          break;
+        }
+      }
     }
+  }
+  if (bloques === MIROIRS_OVERPASS.length) {
+    const csp = violationsCSP.length > 0;
+    throw new ErreurAccesBloque(
+      csp
+        ? "Requêtes bloquées par la politique de sécurité de la page qui affiche l'outil."
+        : "Aucun serveur Overpass joignable depuis ce navigateur : requêtes bloquées avant d'atteindre Internet (fichier ouvert dans une visionneuse, pare-feu ou proxy, ou pas de connexion).",
+    );
   }
   throw new Error('Échec sur tous les serveurs Overpass. ' + erreurs.join(' ; '));
 }

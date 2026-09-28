@@ -77,4 +77,6 @@ const octets = creerPaquet({
   tuiles: [],
 });
 writeFileSync(new URL('./demo.franchir', import.meta.url), octets);
+// Réponse Overpass brute (test de la méthode manuelle d'import).
+writeFileSync(new URL('./demo-overpass.json', import.meta.url), JSON.stringify({ version: 0.6, generator: 'test', elements: el }));
 console.log(`demo.franchir : ${reseau.aretes.length} tronçons, ${ouvrages.length} ouvrages, ${(octets.length / 1024).toFixed(0)} Ko`);

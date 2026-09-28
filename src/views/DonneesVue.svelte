@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { etat, projetParDefaut } from '../lib/etat.svelte';
   import * as stockage from '../lib/stockage';
-  import { geocoder, telechargerReseauOSM, telechargerTuiles, type ResultatGeocodage } from '../lib/enligne';
+  import { ErreurAccesBloque, geocoder, telechargerReseauOSM, telechargerTuiles, urlOverpassManuelle, type ResultatGeocodage } from '../lib/enligne';
   import { telecharger, horodatage } from '../lib/exports';
   import { analyserPosition, bboxAutour, versMGRS } from '../core/geo';
   import { construireReseau, extraireOuvrages } from '../core/reseau';
@@ -55,23 +55,62 @@
     annulation = new AbortController();
     try {
       const json = await telechargerReseauOSM(bbox, secondaires, (m) => (etatReseau = m), annulation.signal);
-      etatReseau = 'Construction du graphe routier…';
-      await new Promise((r) => setTimeout(r, 10));
-      const reseau = construireReseau(json as { elements: [] }, bbox);
-      if (!reseau.aretes.length) throw new Error('Aucune route trouvée dans cette zone.');
-      const osm = extraireOuvrages(reseau);
-      const zone: Zone = { nom: lieu, centre, rayonKm: rayon, bbox };
-      await etat.definirReseau(reseau, zone);
-      const { ouvrages, ajoutes, completes } = integrerOuvragesOSM($state.snapshot(etat.projet.ouvrages) as Ouvrage[], osm);
-      etat.projet.ouvrages = ouvrages;
-      etatReseau = `Réseau chargé : ${reseau.aretes.length.toLocaleString('fr-FR')} tronçons, ${osm.length} ouvrages détectés (${ajoutes} nouveaux, ${completes} complétés).`;
-      etat.notifier(etatReseau, 'ok');
+      await integrerReseau(json, bbox, centre, rayon);
+      methodeManuelle = false;
     } catch (e) {
       etatReseau = 'Échec : ' + (e as Error).message;
+      if (e instanceof ErreurAccesBloque) {
+        methodeManuelle = true;
+        etatReseau += ' Utilisez la méthode manuelle ci-dessous.';
+      }
       etat.notifier(etatReseau, 'err');
     } finally {
       enCours = false;
       annulation = null;
+    }
+  }
+
+  /** Construit le graphe, extrait les ponts et les fusionne avec la base. */
+  async function integrerReseau(json: unknown, bbox: ReturnType<typeof bboxAutour>, c: [number, number], r: number) {
+    etatReseau = 'Construction du graphe routier…';
+    await new Promise((res) => setTimeout(res, 10));
+    const reseau = construireReseau(json as { elements: [] }, bbox);
+    if (!reseau.aretes.length) throw new Error('Aucune route trouvée dans ces données.');
+    const osm = extraireOuvrages(reseau);
+    const zone: Zone = { nom: lieu, centre: c, rayonKm: r, bbox };
+    await etat.definirReseau(reseau, zone);
+    const { ouvrages, ajoutes, completes } = integrerOuvragesOSM($state.snapshot(etat.projet.ouvrages) as Ouvrage[], osm);
+    etat.projet.ouvrages = ouvrages;
+    etatReseau = `Réseau chargé : ${reseau.aretes.length.toLocaleString('fr-FR')} tronçons, ${osm.length} ouvrages détectés (${ajoutes} nouveaux, ${completes} complétés).`;
+    etat.notifier(etatReseau, 'ok');
+  }
+
+  /* ---------------- Méthode manuelle (requête ouverte dans un onglet du navigateur) ---------------- */
+  let methodeManuelle = $state(false);
+  const lienManuel = $derived(centre ? urlOverpassManuelle(bboxAutour(centre[0], centre[1], rayon), secondaires) : '');
+
+  async function importerFichierOSM(e: Event) {
+    const f = (e.target as HTMLInputElement).files?.[0];
+    (e.target as HTMLInputElement).value = '';
+    if (!f) return;
+    enCours = true;
+    try {
+      const json = JSON.parse(await f.text()) as { elements?: { type: string; lat?: number; lon?: number }[]; remark?: string };
+      if (!Array.isArray(json.elements)) throw new Error("ce fichier n'est pas une réponse Overpass (JSON).");
+      if (json.remark && /error|timed out|out of memory/i.test(json.remark)) throw new Error('le serveur a renvoyé une erreur : ' + json.remark);
+      // Emprise déduite des données elles-mêmes.
+      const pts = json.elements.filter((x) => x.type === 'node' && typeof x.lat === 'number');
+      if (!pts.length) throw new Error('aucun point dans le fichier.');
+      const lats = pts.map((p) => p.lat!), lons = pts.map((p) => p.lon!);
+      const bbox = { sud: Math.min(...lats), nord: Math.max(...lats), ouest: Math.min(...lons), est: Math.max(...lons) };
+      const c: [number, number] = centre ?? [(bbox.sud + bbox.nord) / 2, (bbox.ouest + bbox.est) / 2];
+      await integrerReseau(json, bbox, c, rayon);
+      methodeManuelle = false;
+    } catch (err) {
+      etatReseau = 'Import impossible : ' + (err as Error).message;
+      etat.notifier(etatReseau, 'err');
+    } finally {
+      enCours = false;
     }
   }
 
@@ -335,6 +374,22 @@
           {#if enCours && annulation}<button class="btn" onclick={() => annulation?.abort()}>Annuler</button>{/if}
         </div>
         {#if etatReseau}<p class="petit-txt" role="status">{etatReseau}</p>{/if}
+        <details class="manuel" bind:open={methodeManuelle}>
+          <summary class="petit-txt">Le téléchargement échoue ? Méthode manuelle</summary>
+          <ol class="petit-txt">
+            <li>Ouvrez la requête dans un onglet de votre navigateur :
+              <a class="btn petit" href={lienManuel || undefined} target="_blank" rel="noopener noreferrer" aria-disabled={!lienManuel}>Ouvrir la requête</a>
+              <button class="btn petit fantome" disabled={!lienManuel} onclick={async () => { try { await navigator.clipboard.writeText(lienManuel); etat.notifier('Lien copié.', 'ok'); } catch { etat.notifier('Copie impossible : sélectionnez le lien ci-dessous.', 'err'); } }}>Copier le lien</button>
+              {#if !lienManuel}<span class="muted"> (localisez d'abord la zone)</span>{/if}
+            </li>
+            <li>Patientez (jusqu'à quelques minutes), puis enregistrez la page obtenue avec <kbd>Ctrl</kbd>+<kbd>S</kbd> sous un nom en <code>.json</code>.</li>
+            <li>Importez ce fichier :
+              <label class="btn petit primaire">Importer le fichier OSM (.json)<input type="file" accept=".json,application/json" hidden onchange={importerFichierOSM} /></label>
+            </li>
+          </ol>
+          {#if lienManuel}<input type="text" readonly value={lienManuel} class="mono lien-brut" aria-label="Lien de la requête" onfocus={(e) => (e.target as HTMLInputElement).select()} />{/if}
+          <p class="muted petit-txt">Cette méthode fonctionne même si l'outil est ouvert dans une visionneuse ou derrière un filtrage qui bloque ses propres requêtes.</p>
+        </details>
         <p class="muted petit-txt">Les ponts détectés sont « estimés » : OSM ne contient aucune classe MLC. Un rechargement ne crée pas de doublon et n'écrase jamais une classe saisie ou injectée.</p>
         {#if etat.reseau}
           <div class="encadre succes petit-txt">
@@ -526,6 +581,10 @@
   .choix-geo { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
   .choix-geo .btn { white-space: normal; text-align: left; justify-content: flex-start; }
   progress { width: 100%; height: 10px; }
+  .manuel ol { margin: 6px 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; }
+  .manuel summary { cursor: pointer; color: var(--lien); }
+  .lien-brut { font-size: 11px; }
+  kbd { border: 1px solid var(--border-fort); border-radius: 3px; padding: 0 4px; font-size: 11px; }
   .correspondance { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px 12px; }
   select.renseigne { border-color: var(--m-normal); }
   .apercu { max-height: 170px; }
