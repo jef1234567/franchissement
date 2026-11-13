@@ -17,8 +17,44 @@ export const FORMAT_PAQUET = 'franchir-paquet';
 export interface Zone {
   nom: string;
   centre: [number, number];
+  /** Rayon du cercle de préparation ; pour une emprise administrative, demi-diagonale approchée. */
   rayonKm: number;
   bbox: BBox;
+  /** « cercle » (défaut, rayon autour du centre) ou « administrative » (emprise du département, de la commune…). */
+  emprise?: 'cercle' | 'administrative';
+  /** Réseau limité aux grands axes (autoroutes, nationales, départementales principales). */
+  grandsAxes?: boolean;
+  /** Zones assemblées (paquets importés en fusion). */
+  composantes?: Zone[];
+}
+
+/** Libellé court d'une zone pour l'affichage. */
+export function libelleZone(z: Zone): string {
+  if (z.composantes?.length) return z.composantes.map(libelleZone).join(' + ');
+  const etendue = z.emprise === 'administrative' ? 'emprise administrative' : `${z.rayonKm} km`;
+  return `${z.nom} (${etendue}${z.grandsAxes ? ', grands axes' : ''})`;
+}
+
+/** Zone résultant de l'assemblage de deux zones (emprise réunie, composantes conservées). */
+export function assemblerZones(a: Zone | null, b: Zone | null, bbox: BBox): Zone | null {
+  if (!a) return b;
+  if (!b) return a;
+  const composantes = [...(a.composantes ?? [a]), ...(b.composantes ?? [b])];
+  const vues = new Set<string>();
+  const uniques = composantes.filter((z) => {
+    const k = JSON.stringify([z.nom, z.bbox, z.grandsAxes ?? false]);
+    if (vues.has(k)) return false;
+    vues.add(k);
+    return true;
+  });
+  return {
+    nom: uniques.map((z) => z.nom).join(' + '),
+    centre: [(bbox.sud + bbox.nord) / 2, (bbox.ouest + bbox.est) / 2],
+    rayonKm: Math.max(...uniques.map((z) => z.rayonKm)),
+    bbox,
+    emprise: 'administrative',
+    composantes: uniques,
+  };
 }
 
 export interface EnTetePaquet {

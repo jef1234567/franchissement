@@ -16,8 +16,8 @@ export const MIROIRS_OVERPASS = [
 ];
 
 /** Lien direct de la requête (méthode manuelle : ouverture dans un onglet puis enregistrement du fichier). */
-export function urlOverpassManuelle(bbox: BBox, inclureSecondaires: boolean): string {
-  return MIROIRS_OVERPASS[0] + '?data=' + encodeURIComponent(requeteOverpassReseau(bbox, inclureSecondaires));
+export function urlOverpassManuelle(bbox: BBox, inclureSecondaires: boolean, grandsAxes = false): string {
+  return MIROIRS_OVERPASS[0] + '?data=' + encodeURIComponent(requeteOverpassReseau(bbox, inclureSecondaires, grandsAxes));
 }
 
 /** Erreur réseau « muette » (Failed to fetch) : requête bloquée avant d'atteindre le serveur. */
@@ -33,14 +33,26 @@ export interface ResultatGeocodage {
   libelle: string;
   lat: number;
   lon: number;
+  /** Emprise de l'objet trouvé (département, commune…), si fournie par Nominatim. */
+  bbox?: BBox;
+  /** Type d'objet Nominatim (ex. « administrative »). */
+  type?: string;
+}
+
+/** boundingbox Nominatim : [sud, nord, ouest, est] en chaînes. */
+export function bboxNominatim(b: string[] | undefined): BBox | undefined {
+  if (!b || b.length !== 4) return undefined;
+  const [sud, nord, ouest, est] = b.map(parseFloat);
+  if (![sud, nord, ouest, est].every(Number.isFinite) || sud >= nord || ouest >= est) return undefined;
+  return { sud, nord, ouest, est };
 }
 
 export async function geocoder(lieu: string, signal?: AbortSignal): Promise<ResultatGeocodage[]> {
   const url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&countrycodes=fr&accept-language=fr&q=' + encodeURIComponent(lieu);
   const r = await fetch(url, { headers: { Accept: 'application/json' }, signal });
   if (!r.ok) throw new Error('Géocodage : réponse HTTP ' + r.status);
-  const j = (await r.json()) as { display_name: string; lat: string; lon: string }[];
-  return j.map((x) => ({ libelle: x.display_name, lat: parseFloat(x.lat), lon: parseFloat(x.lon) }));
+  const j = (await r.json()) as { display_name: string; lat: string; lon: string; type?: string; boundingbox?: string[] }[];
+  return j.map((x) => ({ libelle: x.display_name, lat: parseFloat(x.lat), lon: parseFloat(x.lon), type: x.type, bbox: bboxNominatim(x.boundingbox) }));
 }
 
 export async function telechargerReseauOSM(
@@ -48,8 +60,9 @@ export async function telechargerReseauOSM(
   inclureSecondaires: boolean,
   suivi: (msg: string) => void,
   signal?: AbortSignal,
+  grandsAxes = false,
 ): Promise<unknown> {
-  const q = requeteOverpassReseau(bbox, inclureSecondaires);
+  const q = requeteOverpassReseau(bbox, inclureSecondaires, grandsAxes);
   const erreurs: string[] = [];
   let bloques = 0;
   violationsCSP = [];

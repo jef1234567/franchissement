@@ -6,10 +6,11 @@
   import { appliquerRestrictionsIGN, marquerReseauTE, COUCHE_BDTOPO_ROUTES } from '../core/ign';
   import { ErreurAccesBloque, geocoder, telechargerReseauOSM, telechargerTuiles, urlOverpassManuelle, type ResultatGeocodage } from '../lib/enligne';
   import { telecharger, horodatage } from '../lib/exports';
-  import { analyserPosition, bboxAutour, versMGRS } from '../core/geo';
+  import { analyserPosition, bboxAutour, haversine, versMGRS, type BBox } from '../core/geo';
   import { construireReseau, extraireOuvrages } from '../core/reseau';
   import { SOURCES_TUILES, nombreTuiles, TAILLE_MOYENNE } from '../core/tuiles';
-  import { creerPaquet, lirePaquet, FORMAT_PAQUET, type Zone } from '../core/paquet';
+  import { assemblerZones, creerPaquet, libelleZone, lirePaquet, FORMAT_PAQUET, type Zone } from '../core/paquet';
+  import { assemblerReseaux } from '../core/assemblage';
   import { SCHEMA_VERSION, type Fiabilite, type Ouvrage, type Projet } from '../core/model';
   import {
     CHAMPS_CIBLES, appliquerFusion, convertirOuvrages, integrerOuvragesOSM, lireProjet, planifierFusion, proposerCorrespondance,
@@ -27,13 +28,18 @@
   let centre = $state<[number, number] | null>(etat.zone?.centre ?? null);
   let rayon = $state(etat.zone?.rayonKm ?? 25);
   let secondaires = $state(false);
+  let grandsAxes = $state(etat.zone?.grandsAxes ?? false);
+  let emprise = $state<'cercle' | 'administrative'>(etat.zone?.emprise === 'administrative' && !etat.zone.composantes ? 'administrative' : 'cercle');
+  let bboxAdmin = $state<BBox | null>(etat.zone?.emprise === 'administrative' && !etat.zone.composantes ? etat.zone.bbox : null);
+  /** Emprise retenue pour le téléchargement : cercle autour du centre ou emprise administrative du lieu. */
+  const bboxChoisie = $derived(emprise === 'administrative' && bboxAdmin ? bboxAdmin : centre ? bboxAutour(centre[0], centre[1], rayon) : null);
   let etatReseau = $state('');
   let enCours = $state(false);
   let annulation = $state.raw<AbortController | null>(null);
 
   async function localiser() {
     const pos = analyserPosition(lieu);
-    if (pos) { centre = pos; resultatsGeo = []; return; }
+    if (pos) { centre = pos; resultatsGeo = []; bboxAdmin = null; emprise = 'cercle'; return; }
     if (etat.horsLigne) { etat.notifier('Mode hors ligne strict : saisissez une position MGRS ou lat, lon.', 'err'); return; }
     try {
       resultatsGeo = await geocoder(lieu);
@@ -46,18 +52,21 @@
   function choisirLieu(r: ResultatGeocodage) {
     centre = [r.lat, r.lon];
     lieu = r.libelle.split(',')[0];
+    bboxAdmin = r.bbox ?? null;
+    if (!bboxAdmin) emprise = 'cercle';
     resultatsGeo = [];
   }
 
   async function chargerReseau() {
-    if (!centre) return;
+    if (!centre || !bboxChoisie) return;
     if (etat.horsLigne) { etat.notifier('Mode hors ligne strict activé.', 'err'); return; }
-    const bbox = bboxAutour(centre[0], centre[1], rayon);
+    const bbox = bboxChoisie;
+    if (emprise === 'administrative' && !grandsAxes && !confirm('Emprise administrative avec toutes les routes : le volume peut dépasser ce que le serveur et le navigateur acceptent. Continuer sans limiter aux grands axes ?')) return;
     enCours = true;
     annulation = new AbortController();
     try {
-      const json = await telechargerReseauOSM(bbox, secondaires, (m) => (etatReseau = m), annulation.signal);
-      await integrerReseau(json, bbox, centre, rayon);
+      const json = await telechargerReseauOSM(bbox, secondaires, (m) => (etatReseau = m), annulation.signal, grandsAxes);
+      await integrerReseau(json, bbox, centre, rayonZone(bbox), { emprise, grandsAxes });
       methodeManuelle = false;
     } catch (e) {
       etatReseau = 'Échec : ' + (e as Error).message;
@@ -73,13 +82,18 @@
   }
 
   /** Construit le graphe, extrait les ponts et les fusionne avec la base. */
-  async function integrerReseau(json: unknown, bbox: ReturnType<typeof bboxAutour>, c: [number, number], r: number) {
+  /** Rayon affiché : celui du cercle, ou demi-diagonale de l'emprise administrative. */
+  function rayonZone(b: BBox): number {
+    return emprise === 'administrative' ? Math.round(haversine(b.sud, b.ouest, b.nord, b.est) / 2000) : rayon;
+  }
+
+  async function integrerReseau(json: unknown, bbox: BBox, c: [number, number], r: number, extra: Pick<Zone, 'emprise' | 'grandsAxes'> = {}) {
     etatReseau = 'Construction du graphe routier…';
     await new Promise((res) => setTimeout(res, 10));
     const reseau = construireReseau(json as { elements: [] }, bbox);
     if (!reseau.aretes.length) throw new Error('Aucune route trouvée dans ces données.');
     const osm = extraireOuvrages(reseau);
-    const zone: Zone = { nom: lieu, centre: c, rayonKm: r, bbox };
+    const zone: Zone = { nom: lieu, centre: c, rayonKm: r, bbox, ...(extra.emprise === 'administrative' ? { emprise: 'administrative' as const } : {}), ...(extra.grandsAxes ? { grandsAxes: true } : {}) };
     await etat.definirReseau(reseau, zone);
     const { ouvrages, ajoutes, completes } = integrerOuvragesOSM($state.snapshot(etat.projet.ouvrages) as Ouvrage[], osm);
     etat.projet.ouvrages = ouvrages;
@@ -137,7 +151,7 @@
 
   /* ---------------- Méthode manuelle (requête ouverte dans un onglet du navigateur) ---------------- */
   let methodeManuelle = $state(false);
-  const lienManuel = $derived(centre ? urlOverpassManuelle(bboxAutour(centre[0], centre[1], rayon), secondaires) : '');
+  const lienManuel = $derived(bboxChoisie ? urlOverpassManuelle(bboxChoisie, secondaires, grandsAxes) : '');
 
   async function importerFichierOSM(e: Event) {
     const f = (e.target as HTMLInputElement).files?.[0];
@@ -154,7 +168,7 @@
       const lats = pts.map((p) => p.lat!), lons = pts.map((p) => p.lon!);
       const bbox = { sud: Math.min(...lats), nord: Math.max(...lats), ouest: Math.min(...lons), est: Math.max(...lons) };
       const c: [number, number] = centre ?? [(bbox.sud + bbox.nord) / 2, (bbox.ouest + bbox.est) / 2];
-      await integrerReseau(json, bbox, c, rayon);
+      await integrerReseau(json, bbox, c, rayonZone(bbox), { emprise, grandsAxes });
       methodeManuelle = false;
     } catch (err) {
       etatReseau = 'Import impossible : ' + (err as Error).message;
@@ -170,7 +184,7 @@
   let zMin = $state<number | null>(8);
   let zMax = $state<number | null>(15);
   let progression = $state<{ fait: number; total: number; erreurs: number } | null>(null);
-  const bboxZone = $derived(centre ? bboxAutour(centre[0], centre[1], rayon) : etat.zone?.bbox ?? null);
+  const bboxZone = $derived(bboxChoisie ?? etat.zone?.bbox ?? null);
   const estimation = $derived(bboxZone && zMin != null && zMax != null && zMax >= zMin ? nombreTuiles(bboxZone, zMin, zMax) : 0);
   const src = $derived(sourcesCache.find((s) => s.id === sourceTuiles)!);
 
@@ -349,14 +363,20 @@
         const p = lirePaquet(octets);
         const { projet, avertissements } = lireProjet({ schema: SCHEMA_VERSION, ...p.entete.projet });
         fusionnerProjet(projet, remplacer);
-        if (p.reseau) await etat.definirReseau(p.reseau, p.entete.zone);
+        let bilanAssemblage = '';
+        if (p.reseau && !remplacer && etat.reseau) {
+          // Fusion : le réseau du paquet est assemblé au réseau en place (paquets départementaux, zones voisines).
+          const { reseau, bilan } = assemblerReseaux([etat.reseau, p.reseau]);
+          await etat.definirReseau(reseau, assemblerZones(etat.zone ? ($state.snapshot(etat.zone) as Zone) : null, p.entete.zone, reseau.bbox));
+          bilanAssemblage = ` Réseaux assemblés : ${bilan.aretes.toLocaleString('fr-FR')} tronçons${bilan.waysDivergentes ? `, ${bilan.waysDivergentes} voie(s) aux géométries différentes entre paquets (restriction la plus forte appliquée à toute la voie)` : ''}.`;
+        } else if (p.reseau) await etat.definirReseau(p.reseau, p.entete.zone);
         if (p.tuiles.length) {
           for (let i = 0; i < p.tuiles.length; i += 200) {
             await stockage.ecrireTuiles(p.tuiles.slice(i, i + 200).map((t) => ({ cle: t.cle, blob: new Blob([t.donnees as BlobPart], { type: t.cle.startsWith('ign-ortho') ? 'image/jpeg' : 'image/png' }) })));
           }
           await majCompteTuiles();
         }
-        etat.notifier(`Paquet importé : ${projet.ouvrages?.length ?? 0} ouvrages, ${p.reseau ? 'réseau routier' : 'sans réseau'}, ${p.tuiles.length} tuiles.${avertissements.length ? ' ' + avertissements.join(' ') : ''}`, 'ok');
+        etat.notifier(`Paquet importé : ${projet.ouvrages?.length ?? 0} ouvrages, ${p.reseau ? 'réseau routier' : 'sans réseau'}, ${p.tuiles.length} tuiles.${bilanAssemblage}${avertissements.length ? ' ' + avertissements.join(' ') : ''}`, 'ok');
       } else {
         const { projet, origine, avertissements } = lireProjet(JSON.parse(new TextDecoder().decode(octets)));
         fusionnerProjet(projet, remplacer && origine === 'v2');
@@ -412,13 +432,25 @@
         {/if}
         {#if centre}<p class="petit-txt">Centre : <span class="mono">{versMGRS(centre[0], centre[1])}</span></p>{/if}
         <div class="grille-2">
-          <label class="champ">Rayon
-            <select bind:value={rayon}>
-              {#each [10, 25, 50, 75, 100] as r (r)}<option value={r}>{r} km</option>{/each}
+          <label class="champ">Emprise
+            <select bind:value={emprise}>
+              <option value="cercle">Cercle autour du centre</option>
+              <option value="administrative" disabled={!bboxAdmin}>Emprise du lieu (département, commune…){bboxAdmin ? '' : ' — localisez par le nom'}</option>
             </select>
           </label>
-          <label class="case" style="align-self:end"><input type="checkbox" bind:checked={secondaires} /> Inclure chemins de service et pistes</label>
+          {#if emprise === 'cercle'}
+            <label class="champ">Rayon
+              <select bind:value={rayon}>
+                {#each [10, 25, 50, 75, 100] as r (r)}<option value={r}>{r} km</option>{/each}
+              </select>
+            </label>
+          {:else if bboxAdmin}
+            <p class="petit-txt" style="align-self:end">Emprise ≈ {Math.round(haversine(bboxAdmin.sud, bboxAdmin.ouest, bboxAdmin.sud, bboxAdmin.est) / 1000)} × {Math.round(haversine(bboxAdmin.sud, bboxAdmin.ouest, bboxAdmin.nord, bboxAdmin.ouest) / 1000)} km (rectangle englobant)</p>
+          {/if}
+          <label class="case" style="align-self:end"><input type="checkbox" bind:checked={grandsAxes} /> Grands axes seulement (autoroutes, nationales, départementales principales)</label>
+          {#if !grandsAxes}<label class="case" style="align-self:end"><input type="checkbox" bind:checked={secondaires} /> Inclure chemins de service et pistes</label>{/if}
         </div>
+        <p class="muted petit-txt">Couverture nationale : préparez un paquet par département en « grands axes seulement », puis importez-les l'un après l'autre avec « Importer (fusionner) » : les réseaux sont assemblés. Une zone de détail (cercle) peut s'y ajouter de la même façon.</p>
         <div class="ligne">
           <button class="btn primaire" disabled={!centre || enCours || etat.horsLigne} onclick={chargerReseau}><Icone nom="telecharger" taille={16} /> Télécharger réseau routier et ponts (OSM)</button>
           {#if enCours && annulation}<button class="btn" onclick={() => annulation?.abort()}>Annuler</button>{/if}
@@ -443,7 +475,7 @@
         <p class="muted petit-txt">Les ponts détectés sont « estimés » : OSM ne contient aucune classe MLC. Un rechargement ne crée pas de doublon et n'écrase jamais une classe saisie ou injectée.</p>
         {#if etat.reseau}
           <div class="encadre succes petit-txt">
-            Réseau en place : {etat.zone?.nom ?? '—'} ({etat.zone?.rayonKm ?? '?'} km) — {etat.reseau.aretes.length.toLocaleString('fr-FR')} tronçons, {etat.reseau.aretes.filter((a) => a.pont).length} tronçons de pont — extrait le {new Date(etat.reseau.creeLe).toLocaleDateString('fr-FR')}.
+            Réseau en place : {etat.zone ? libelleZone(etat.zone) : '—'} — {etat.reseau.aretes.length.toLocaleString('fr-FR')} tronçons, {etat.reseau.aretes.filter((a) => a.pont).length} tronçons de pont — extrait le {new Date(etat.reseau.creeLe).toLocaleDateString('fr-FR')}.
           </div>
           <div class="pile ign">
             <h4>Compléter avec l'IGN (Géoplateforme)</h4>
@@ -502,7 +534,7 @@
           <label class="btn" class:desactive={enCours}><Icone nom="envoyer" taille={16} /> Importer (remplacer)
             <input type="file" accept=".franchir,.zip,.json" hidden onchange={(e) => importerFichierProjet(e, true)} />
           </label>
-          <label class="btn" class:desactive={enCours}><Icone nom="fusion" taille={16} /> Importer (fusionner les ouvrages)
+          <label class="btn" class:desactive={enCours}><Icone nom="fusion" taille={16} /> Importer (fusionner : ouvrages et réseau assemblés)
             <input type="file" accept=".franchir,.zip,.json" hidden onchange={(e) => importerFichierProjet(e, false)} />
           </label>
         </div>

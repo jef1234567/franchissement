@@ -10,6 +10,8 @@ export const HIGHWAYS_PRINCIPAUX = [
   'secondary', 'secondary_link', 'tertiary', 'tertiary_link', 'unclassified', 'residential', 'living_street',
 ];
 export const HIGHWAYS_SECONDAIRES = ['service', 'track'];
+/** Grands axes (paquets départementaux) : autoroutes, voies rapides, routes nationales et départementales principales. */
+export const HIGHWAYS_GRANDS_AXES = ['motorway', 'motorway_link', 'trunk', 'trunk_link', 'primary', 'primary_link', 'secondary', 'secondary_link'];
 
 export interface Arete {
   a: number; // indice nœud
@@ -43,8 +45,8 @@ export interface Reseau {
   aretes: Arete[];
 }
 
-export function requeteOverpassReseau(b: BBox, inclureSecondaires: boolean): string {
-  const hw = [...HIGHWAYS_PRINCIPAUX, ...(inclureSecondaires ? HIGHWAYS_SECONDAIRES : [])].join('|');
+export function requeteOverpassReseau(b: BBox, inclureSecondaires: boolean, grandsAxes = false): string {
+  const hw = (grandsAxes ? HIGHWAYS_GRANDS_AXES : [...HIGHWAYS_PRINCIPAUX, ...(inclureSecondaires ? HIGHWAYS_SECONDAIRES : [])]).join('|');
   const bb = `${b.sud.toFixed(5)},${b.ouest.toFixed(5)},${b.nord.toFixed(5)},${b.est.toFixed(5)}`;
   return `[out:json][timeout:240][maxsize:1073741824][bbox:${bb}];
 way["highway"~"^(${hw})$"]["area"!="yes"]["access"!~"^(private|no)$"];

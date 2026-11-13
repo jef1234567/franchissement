@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { etat, type Vue } from './lib/etat.svelte';
+  import { libelleZone } from './core/paquet';
   import Icone from './components/Icone.svelte';
   import Toasts from './components/Toasts.svelte';
   import CarteVue from './views/CarteVue.svelte';
@@ -68,7 +69,7 @@
     </div>
     <div class="zone-info">
       {#if etat.zone}
-        <span class="etiquette" title="Zone de travail chargée">Zone : {etat.zone.nom} · {etat.zone.rayonKm} km</span>
+        <span class="etiquette" title="Zone de travail chargée">Zone : {libelleZone(etat.zone)}</span>
       {:else}
         <button class="etiquette lien-zone" onclick={() => etat.allerA('donnees')}>Aucune zone chargée</button>
       {/if}
