@@ -739,7 +739,7 @@
         <h4>Correspondance des colonnes</h4>
         <div class="correspondance">
           {#each CHAMPS_CIBLES as c (c.cle)}
-            {#if !(table.format !== 'csv' && (c.cle === 'lat' || c.cle === 'lon' || c.cle === 'mgrs') && table.geometries.some(Boolean))}
+            {#if !((c.cle === 'lat' || c.cle === 'lon' || c.cle === 'mgrs') && table.geometries.some(Boolean))}
               <label class="champ">{c.libelle}
                 <select value={corr[c.cle] ?? ''} onchange={(e) => (corr[c.cle] = (e.target as HTMLSelectElement).value || undefined)} class:renseigne={!!corr[c.cle]}>
                   <option value="">— (non importé)</option>

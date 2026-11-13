@@ -160,6 +160,21 @@ Autres points :
   - Les schémas sont non normalisés, avec des métadonnées notées 44 %.
   - Le filtrage spatial n'est pas fiable : `geozone`/`spatial` est rarement renseigné.
 
+### 4b. Maine-et-Loire (49) : trois jeux lus en entier le 13/11/2026 [V]
+
+Exports CSV Opendatasoft (`data.maine-et-loire.fr`), séparateur `;`. Géométrie dans la colonne **`Geo Shape`** (GeoJSON en texte) et point dans **`Geo Point`** (« lat, lon »). L'import lit désormais ces colonnes ; auparavant, aucun CSV n'avait de géométrie.
+
+| Jeu | Lignes | Colonnes utiles | Remarques |
+|---|---|---|---|
+| Limitation de gabarit | 31 lignes | `valeur limitation`, `nature contrainte` (Hauteur 23, Largeur 4, **Longueur 4**), `axe` | Toutes importées. |
+| Limitation de tonnage | 104 lignes, dont 5 MultiLineString | `Limitation` (t), `axe`, `Côté` (0 / 1 / -1) | Valeurs : 3,5 t (57), 7,5 t (24), 16 t (9), puis 19, 12, 32, 30, 15 et 5,5 t. `Côté` n'est pas documenté (sens de circulation ? **[?]**) et n'est pas utilisé. |
+| Ouvrages d'art | 1 063 points | `nom_ouvrage` (231 vides), `identifiant`, `axe`, `Nature`, `ouverture`, `hauteur`, `largeur`, `longueur`, **`voie_rattachement`** | Aucun tonnage ni aucune classe. |
+
+- **`voie_rattachement`** : « Voie portée » (958) signifie que la route `axe` passe sur l'ouvrage. « Voie franchie » (98) signifie qu'elle passe **dessous** ; la route portée est alors inconnue et peut être une voie ferrée. À l'import, une voie franchie ne remplit ni la route portée ni la hauteur libre : une note le signale.
+- **`hauteur`** : sur une voie portée, c'est la hauteur de l'ouverture sous une voûte, une buse ou un dalot (couplée à `ouverture`, par exemple une buse de 2 m avec ouverture 2 et hauteur 2). Elle est **sans rapport** avec le passage sur l'ouvrage. L'alias « hauteur » seul ne propose donc plus « Hauteur libre ». Les hauteurs utiles viennent du jeu « gabarit ».
+- **Rapprochement gabarit / ouvrages** : la moitié environ des limites de hauteur tombent à moins de 40 m d'un passage supérieur « Voie franchie », dont la hauteur est vide dans l'inventaire. Six limites (D210, D751, D132, D52, D4, D109) sont à plus d'un kilomètre de tout ouvrage du fichier : ouvrages d'un autre gestionnaire (SNCF ?) **[S]**.
+- **Axes** : `49 D0323  G` désigne la D323. La lettre isolée après un blanc marque une chaussée et elle est retirée. `D0952A`, `D0107E`, `D0751A` et `D0960E` sont des routes distinctes et sont conservées.
+
 **Recommandation : IMPORT MANUEL** (le module `importation.ts` existe déjà).
 - Au mieux, un **catalogue codé en dur** de quelques URL `…/datasets/r/<id>` en GeoJSON (92, 53, 01, 14), proposé quand la bbox recoupe le département.
 - Pas de recherche dynamique.

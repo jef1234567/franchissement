@@ -24,8 +24,11 @@ import { versWGS84, type CodeSCR } from './projections';
 export interface TableImport {
   colonnes: string[];
   lignes: Record<string, string>[];
-  /** Géométrie éventuelle par ligne (GeoJSON / KML). */
+  /** Géométrie éventuelle par ligne (GeoJSON / KML, ou colonne géométrique d'un CSV Opendatasoft). */
   geometries: ([number, number][] | null)[];
+  /** Parties distinctes d'une géométrie multiple (MultiLineString) : `geometries` les met bout à bout,
+   *  ce qui crée un faux segment entre deux parties ; les restrictions linéaires utilisent donc celles-ci. */
+  parties?: ([number, number][][] | null)[];
   format: 'csv' | 'geojson' | 'kml';
 }
 
@@ -79,7 +82,43 @@ export function tableDepuisCSV(texte: string): TableImport {
   if (brut.length < 2) throw new Error('Fichier vide ou sans ligne de données.');
   const colonnes = dedoublonnerColonnes(brut[0]);
   const lignes = brut.slice(1).map((l) => Object.fromEntries(colonnes.map((c, i) => [c, l[i] ?? ''])));
-  return { colonnes, lignes, geometries: lignes.map(() => null), format: 'csv' };
+  return { colonnes, lignes, ...geometriesCSV(colonnes, lignes), format: 'csv' };
+}
+
+/** Géométrie GeoJSON écrite dans une cellule (« Geo Shape » des exports Opendatasoft), sinon null. */
+function geomCellule(v: string | undefined): GeomGeoJSON | null {
+  const t = (v ?? '').trim();
+  if (!t.startsWith('{')) return null;
+  try {
+    const g = JSON.parse(t) as GeomGeoJSON;
+    return g && typeof g.type === 'string' && (g.coordinates !== undefined || g.geometries) ? g : null;
+  } catch { return null; }
+}
+
+/** Point « lat, lon » (« Geo Point » / « geo_point_2d » des exports Opendatasoft), sinon null. */
+function pointCellule(v: string | undefined): [number, number] | null {
+  const m = /^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/.exec(v ?? '');
+  if (!m) return null;
+  const [lat, lon] = [parseFloat(m[1]), parseFloat(m[2])];
+  return Math.abs(lat) <= 90 && Math.abs(lon) <= 180 ? [lat, lon] : null;
+}
+
+/** Colonne géométrique d'un CSV : GeoJSON dans une cellule (prioritaire), sinon point « lat, lon » dans une colonne nommée geo point. */
+function geometriesCSV(colonnes: string[], lignes: Record<string, string>[]): Pick<TableImport, 'geometries' | 'parties'> {
+  const vide = { geometries: lignes.map(() => null) };
+  const echantillon = lignes.slice(0, 20);
+  const majorite = (f: (v: string) => unknown, c: string) => {
+    const nonVides = echantillon.filter((l) => (l[c] ?? '').trim() !== '');
+    return nonVides.length > 0 && nonVides.filter((l) => f(l[c])).length >= nonVides.length / 2;
+  };
+  const colShape = colonnes.find((c) => majorite(geomCellule, c));
+  if (colShape) {
+    const geoms = lignes.map((l) => geomCellule(l[colShape]));
+    return { geometries: geoms.map(pointsGeometrie), parties: geoms.map(partiesGeometrie) };
+  }
+  const colPoint = colonnes.find((c) => /geo.?point|point.?2d|coordonnees|coordinates/.test(motsCles(c).join(' ')) && majorite(pointCellule, c));
+  if (colPoint) return { geometries: lignes.map((l) => { const p = pointCellule(l[colPoint]); return p ? [p] : null; }) };
+  return vide;
 }
 
 function dedoublonnerColonnes(cols: string[]): string[] {
@@ -112,6 +151,12 @@ function pointsGeometrie(g: GeomGeoJSON | null | undefined): [number, number][] 
   }
 }
 
+/** Parties d'une géométrie multiple linéaire (MultiLineString), sinon null. */
+function partiesGeometrie(g: GeomGeoJSON | null | undefined): [number, number][][] | null {
+  if (!g || g.type !== 'MultiLineString') return null;
+  return (g.coordinates as Pos[][]).map((l) => l.map((p): [number, number] => [p[1], p[0]]));
+}
+
 export function tableDepuisGeoJSON(texte: string | object): TableImport {
   type Entite = { type?: string; properties?: Record<string, unknown>; geometry?: GeomGeoJSON };
   const j = (typeof texte === 'string' ? JSON.parse(texte) : texte) as Entite & { features?: Entite[] };
@@ -126,7 +171,12 @@ export function tableDepuisGeoJSON(texte: string | object): TableImport {
     }
     return l;
   });
-  return { colonnes: [...colonnes], lignes, geometries: features.map((f) => pointsGeometrie(f.geometry)), format: 'geojson' };
+  return {
+    colonnes: [...colonnes], lignes,
+    geometries: features.map((f) => pointsGeometrie(f.geometry)),
+    parties: features.map((f) => partiesGeometrie(f.geometry)),
+    format: 'geojson',
+  };
 }
 
 /* ---------- KML (navigateur : DOMParser) ---------- */
@@ -176,7 +226,7 @@ export type ChampCible =
   | 'classeUnique' | 'classeUniqueRoues' | 'classeUniqueChenilles'
   | 'classeDouble' | 'classeDoubleRoues' | 'classeDoubleChenilles'
   | 'classePrecaution' | 'classeRisque'
-  | 'poidsMax' | 'hauteurMax' | 'largeurMax' | 'essieuMax' | 'fiabilite' | 'reference' | 'notes';
+  | 'poidsMax' | 'hauteurMax' | 'largeurMax' | 'essieuMax' | 'fiabilite' | 'reference' | 'notes' | 'rattachement';
 
 export const CHAMPS_CIBLES: { cle: ChampCible; libelle: string; alias: string[] }[] = [
   { cle: 'nom', libelle: 'Nom', alias: ['nom', 'name', 'pont', 'ouvrage', 'nom ouvrage', 'toponyme', 'libelle'] },
@@ -190,7 +240,9 @@ export const CHAMPS_CIBLES: { cle: ChampCible; libelle: string; alias: string[] 
   { cle: 'mgrs', libelle: 'Position MGRS', alias: ['mgrs', 'position mgrs', 'coordonnees mgrs', 'mgrs position'] },
   { cle: 'longueur', libelle: 'Longueur (m)', alias: ['longueur', 'length', 'long ouvrage', 'portee'] },
   { cle: 'largeur', libelle: 'Largeur utile (m)', alias: ['largeur', 'width', 'largeur utile', 'largeur chaussee'] },
-  { cle: 'hauteurLibre', libelle: 'Hauteur libre (m)', alias: ['hauteur', 'hauteur libre', 'tirant air', 'gabarit', 'height'] },
+  // « hauteur » ou « gabarit » seuls ne sont pas proposés : dans les inventaires départementaux (ex. Maine-et-Loire),
+  // « hauteur » est celle de l'ouverture sous une voûte ou une buse, sans rapport avec le passage sur l'ouvrage.
+  { cle: 'hauteurLibre', libelle: 'Hauteur libre (m)', alias: ['hauteur libre', 'tirant air', 'gabarit en hauteur'] },
   { cle: 'classeUnique', libelle: 'Classe voie unique', alias: ['classe', 'mlc', 'classe unique', 'classe voie unique', 'mlc unique', 'classe 1 voie', 'mlc 1 voie', 'classe sens unique'] },
   { cle: 'classeUniqueRoues', libelle: 'Classe voie unique — roues', alias: ['classe unique roues', 'mlc unique roues', 'classe roues', 'mlc roues', 'mlc wheeled', 'wheeled'] },
   { cle: 'classeUniqueChenilles', libelle: 'Classe voie unique — chenilles', alias: ['classe unique chenilles', 'mlc unique chenilles', 'classe chenilles', 'mlc chenilles', 'mlc tracked', 'tracked'] },
@@ -205,7 +257,13 @@ export const CHAMPS_CIBLES: { cle: ChampCible; libelle: string; alias: string[] 
   { cle: 'essieuMax', libelle: "Charge max. à l'essieu (t)", alias: ['maxaxleload', 'charge essieu', 'charge a l essieu', 'poids essieu', 'restriction essieu'] },
   { cle: 'fiabilite', libelle: 'Fiabilité', alias: ['fiabilite', 'statut', 'etat validation', 'validation'] },
   { cle: 'notes', libelle: 'Notes', alias: ['notes', 'remarques', 'commentaire', 'commentaires', 'observations', 'description'] },
+  { cle: 'rattachement', libelle: 'Voie portée / franchie', alias: ['voie rattachement', 'rattachement', 'position voie'] },
 ];
+
+/** « Voie franchie » (la route de la colonne Route passe SOUS l'ouvrage) → true ; « Voie portée » ou vide → false. */
+export function voieFranchie(txt: string | undefined): boolean {
+  return /franchi|dessous|inferieur/.test(motsCles(txt ?? '').join(' '));
+}
 
 const MOTS_VIDES = new Set(['m', 't', 'en', 'de', 'du', 'la', 'le', 'des', 'l', 'd', 'mlc']);
 
@@ -330,15 +388,25 @@ export function convertirOuvrages(
       }
       return v;
     };
+    // Voie franchie : la route citée passe sous l'ouvrage. Elle n'est pas la route portée, et la hauteur
+    // éventuelle est celle du passage dessous : ni l'une ni l'autre ne s'appliquent aux véhicules sur l'ouvrage.
+    const franchie = voieFranchie(get(l, 'rattachement'));
+    const routeLue = (get(l, 'route') ?? '').trim();
+    const hauteurLue = nombreFR(get(l, 'hauteurLibre'));
+    const notesLues = (get(l, 'notes') ?? '').trim();
+    const noteFranchie = franchie
+      ? [`Ouvrage au-dessus de ${routeLue || 'la route citée'} (voie franchie) ; route portée inconnue.`, hauteurLue != null ? `Hauteur indiquée pour le passage dessous : ${hauteurLue} m.` : '']
+          .filter(Boolean).join(' ')
+      : '';
     const o = nouvelOuvrage({
       nom: nom || 'Ouvrage importé',
-      route: (get(l, 'route') ?? '').trim(),
+      route: franchie ? '' : routeLue,
       type: typeDepuis(get(l, 'type')),
       lat, lon,
       geom: geom && geom.length > 1 ? geom : null,
       longueurM: nombreFR(get(l, 'longueur')) ?? (geom && geom.length > 1 ? Math.round(longueurPolyligne(geom) * 10) / 10 : null),
       largeurM: nombreFR(get(l, 'largeur')),
-      hauteurLibreM: nombreFR(get(l, 'hauteurLibre')),
+      hauteurLibreM: franchie ? null : hauteurLue,
       classes: {
         unique: { generique: classe('classeUnique'), roues: classe('classeUniqueRoues'), chenilles: classe('classeUniqueChenilles') },
         double: { generique: classe('classeDouble'), roues: classe('classeDoubleRoues'), chenilles: classe('classeDoubleChenilles') },
@@ -348,7 +416,7 @@ export function convertirOuvrages(
       civil: { poidsMaxT: nombreFR(get(l, 'poidsMax')), hauteurMaxM: nombreFR(get(l, 'hauteurMax')), largeurMaxM: nombreFR(get(l, 'largeurMax')), essieuMaxT: nombreFR(get(l, 'essieuMax')) },
       fiabilite: fiabiliteDepuis(get(l, 'fiabilite'), fiabiliteDefaut),
       provenance: { ...provenance, reference: (get(l, 'reference') ?? '').trim() || provenance.reference },
-      notes: (get(l, 'notes') ?? '').trim(),
+      notes: [notesLues, noteFranchie].filter(Boolean).join(' '),
     });
     const u = o.classes.unique.generique, d = o.classes.double.generique;
     if (estNombre(u) && estNombre(d) && d > u) avertissements.push({ ligne: n, motif: `« ${o.nom} » : classe double voie (${d}) supérieure à la classe voie unique (${u}) — à vérifier.` });

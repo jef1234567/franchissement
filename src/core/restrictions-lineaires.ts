@@ -33,9 +33,10 @@ export function natureVersType(txt: string | undefined): TypeRestriction | null 
   return null;
 }
 
-/** Numéro de route normalisé : « 49 D0266 » → « D266 », « RD 347 » → « D347 », « N 147 » → « N147 ». */
+/** Numéro de route normalisé : « 49 D0266 » → « D266 », « RD 347 » → « D347 », « N 147 » → « N147 », « 49 D0952A » → « D952A ».
+ *  Une lettre isolée après un blanc (« 49 D0323  G ») désigne une chaussée ou un côté, pas la route : elle est retirée. */
 export function refAxe(txt: string | undefined): string {
-  const t = (txt ?? '').toUpperCase().replace(/^\s*\d{2,3}\s+/, '').replace(/\s+/g, '');
+  const t = (txt ?? '').toUpperCase().replace(/^\s*\d{2,3}\s+/, '').replace(/(\d)\s+[A-Z]\s*$/, '$1').replace(/\s+/g, '');
   const m = /^(?:R?([DNAM]|C|VC))0*(\d+[A-Z]?)$/.exec(t);
   return m ? m[1] + m[2] : '';
 }
@@ -78,7 +79,9 @@ export function entitesRestrictions(t: TableImport, p: ParamRestrictions): Resul
   t.lignes.forEach((l, i) => {
     const n = i + 2;
     const g = t.geometries[i];
-    if (!g || g.length < 2) { res.rejets.push({ ligne: n, motif: 'géométrie non linéaire (importer comme ouvrage)' }); return; }
+    // Géométrie multiple : chaque partie séparément (les mettre bout à bout créerait un faux segment entre elles).
+    const parties = (t.parties?.[i] ?? (g ? [g] : [])).filter((x) => x.length > 1);
+    if (!g || g.length < 2 || !parties.length) { res.rejets.push({ ligne: n, motif: 'géométrie non linéaire (importer comme ouvrage)' }); return; }
     const brut = (l[p.colValeur] ?? '').replace(',', '.');
     const v = parseFloat(brut);
     if (!Number.isFinite(v) || v <= 0) { res.rejets.push({ ligne: n, motif: `valeur illisible « ${l[p.colValeur] ?? ''} »` }); return; }
@@ -90,7 +93,9 @@ export function entitesRestrictions(t: TableImport, p: ParamRestrictions): Resul
     const champ = TYPES_RESTRICTION.find((x) => x.cle === type)!.champ;
     res.entites.push({
       properties: { [champ]: v, cpx_numero: refAxe(p.colAxe ? l[p.colAxe] : undefined) || null },
-      geometry: { type: 'LineString', coordinates: densifier(g).map(([lat, lon]) => [lon, lat]) },
+      geometry: parties.length === 1
+        ? { type: 'LineString', coordinates: densifier(parties[0]).map(([lat, lon]) => [lon, lat]) }
+        : { type: 'MultiLineString', coordinates: parties.map((x) => densifier(x).map(([lat, lon]) => [lon, lat])) },
     });
     res.parType[type] = (res.parType[type] ?? 0) + 1;
   });

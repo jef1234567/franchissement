@@ -1,6 +1,6 @@
 # FRANCHIR — fichier de reprise
 
-Dernière mise à jour : 13/11/2026 (fin de matinée : data.gouv, restrictions linéaires, catégories TE, mesures réelles). Branche `evolution-nationale-convois` du dépôt `jef1234567/franchissement` (privé), partie du commit `ee29fcb` (v2.0 de septembre).
+Dernière mise à jour : 13/11/2026 (fin de matinée : data.gouv, restrictions linéaires, catégories TE, mesures réelles ; puis essai des trois jeux réels du Maine-et-Loire). Branche `evolution-nationale-convois` du dépôt `jef1234567/franchissement` (privé), partie du commit `ee29fcb` (v2.0 de septembre).
 
 ## Pour reprendre dans une nouvelle session
 
@@ -16,7 +16,7 @@ Coller ce texte :
 - Véhicules sans classe MLC : supposés compatibles avec avertissement (décision du 13/11/2026, voir point 5).
 - Tonnage civil → classe MLC : **aucune table de conversion inventée**. L'outil compare la masse réelle du véhicule au tonnage affiché (et la charge à l'essieu à la limite par essieu). Une conversion n'est pas publiée en source ouverte ; à demander au Génie si elle est souhaitée.
 
-## Fait (15 commits, tous testés)
+## Fait (16 commits, tous testés)
 
 | Chantier | Contenu | Où |
 |---|---|---|
@@ -29,9 +29,10 @@ Coller ce texte :
 | Recherche data.gouv | Bloc « Chercher sur data.gouv.fr » dans Données & zone, étape 3 : départements de la zone déduits par geo.api.gouv.fr (grille de 4 × 4 points par emprise, composantes comprises) ou saisis à la main ; 4 requêtes par département (« transports exceptionnels », « ponts », « tonnage », « gabarit » + nom) ; jeux dédoublonnés et triés (département cité, fichier importable) ; badge « hors département ? » ; un clic télécharge la ressource (URL stable `/api/1/datasets/r/<id>`, repli sur l'URL directe) et l'envoie dans l'import existant (correspondance des colonnes, fusion, désaccords). Provenance `datagouv`, fiabilité par défaut ramenée de « validé » à « reconnu » (sinon la valeur importée écraserait la plus contraignante). CSP : `www.data.gouv.fr`, `static.data.gouv.fr`, `geo.api.gouv.fr` ajoutés | `src/core/datagouv.ts`, `src/lib/enligne.ts`, `DonneesVue.svelte`, `index.html` |
 | Restrictions linéaires | Un fichier dont les entités sont surtout des lignes (jeux départementaux « limitation de tonnage / gabarit ») est proposé en **restrictions de tronçons** : colonne valeur, type fixe ou lu ligne par ligne dans une colonne « nature » (Hauteur → hmax, Largeur → lmax…), numéro de route (« 49 D0323 » → D323) ; lignes densifiées à 25 m puis appliquées par `appliquerRestrictionsIGN` (plus contraignant, désaccords, filtre pont / route dessous). Nature non reconnue, valeur vide ou invraisemblable (> 50 m, > 200 t) : ligne rejetée avec motif | `src/core/restrictions-lineaires.ts`, `DonneesVue.svelte` |
 | Catégories TE | Seules `troncon_te` et `franchissement_te` sont proposées ; `troncon_te` porte sa catégorie (`categorie_te` ou `reseau_te`, en t) sur les tronçons du réseau (champ `te`, la plus forte retenue) et annote les ouvrages ; le rapport d'itinéraire affiche les km sur réseau TE et la catégorie la plus basse traversée. **Information civile, jamais convertie en classe MLC** | `ign.ts` (`appliquerTroncsTE`, `categorieTE`, `coucheTEUtile`), `reseau.ts`, `itineraire.ts`, `RapportItineraire.svelte` |
+| Jeux réels du 49 | Essai des trois CSV Opendatasoft complets (gabarit, tonnage, ouvrages d'art). Quatre défauts corrigés : **(1)** un CSV n'avait jamais de géométrie (colonnes `Geo Shape` GeoJSON et `Geo Point` « lat, lon » désormais lues), donc aucun jeu CSV n'était utilisable ; **(2)** les MultiLineString étaient mises bout à bout, avec un faux segment densifié entre les parties : elles restent maintenant séparées (`TableImport.parties`) ; **(3)** `49 D0323  G` donnait D323G et ne correspondait à aucune route OSM : il donne maintenant D323 ; **(4)** « hauteur » seule était proposée comme hauteur libre, alors que dans l'inventaire 49 c'est l'ouverture sous voûte ou buse : elle ne l'est plus. Nouveau champ « Voie portée / franchie » : sur une voie franchie, ni la route portée ni la hauteur n'est appliquée et une note est ajoutée. Résultat : gabarit 31/31, tonnage 104/104, ouvrages 1 063/1 063 positionnés, 0 hauteur libre erronée | `importation.ts` (`geometriesCSV`, `voieFranchie`), `restrictions-lineaires.ts`, `donnees-49.test.ts`, `SOURCES-NATIONALES.md` §4b |
 | Sources IGN | Bloc « Compléter avec l'IGN » dans Données & zone : restrictions BD TOPO (poids total, par essieu, hauteur, largeur) rapprochées des tronçons OSM, valeur la plus contraignante retenue, écarts tracés ; découverte des couches du réseau national des transports exceptionnels dans le catalogue IGN puis annotation des ouvrages concernés (information, sans classe) | `src/core/ign.ts`, `src/lib/enligne.ts`, `DonneesVue.svelte` |
 
-Tests : 124 tests unitaires (`npm test`) ; bout en bout dans Chromium : `npm run e2e` (existant), `npm run e2e:convois`, `npm run e2e:ign` (service IGN simulé), `npm run e2e:assemblage`, `npm run e2e:datagouv` (data.gouv et geo.api simulés). `npm run e2e` exige `tests/e2e/demo-overpass.json`, non versionné : le régénérer par `npx tsx tests/e2e/paquet-demo.ts`. Les fichiers de démonstration se régénèrent par `npx tsx tests/e2e/paquet-demo.ts`. Variable `CHROMIUM` à renseigner si le chemin du navigateur diffère.
+Tests : 137 tests unitaires (`npm test`) ; bout en bout dans Chromium : `npm run e2e` (existant), `npm run e2e:convois`, `npm run e2e:ign` (service IGN simulé), `npm run e2e:assemblage`, `npm run e2e:datagouv` (data.gouv et geo.api simulés). `npm run e2e` exige `tests/e2e/demo-overpass.json`, non versionné : le régénérer par `npx tsx tests/e2e/paquet-demo.ts`. Les fichiers de démonstration se régénèrent par `npx tsx tests/e2e/paquet-demo.ts`. Variable `CHROMIUM` à renseigner si le chemin du navigateur diffère.
 
 ## Mesures réelles du 13/11/2026 (navigateur connecté, depuis une page d'origine « null » comme `file://`)
 
@@ -44,7 +45,9 @@ Tests : 124 tests unitaires (`npm test`) ; bout en bout dans Chromium : `npm run
 
 - ~~Restrictions linéaires départementales~~ et ~~catégories TE~~ : faits (voir « Fait »).
 - Prescriptions TE (`prescritpion_te`, textes) : non reprises ; pourraient être jointes aux franchissements via `franchissement_te_lien_prescription`.
-- Colonne `hauteur` du jeu « Ouvrages d'art 49 » : sens non documenté (hauteur de l'ouvrage ou gabarit sous l'ouvrage ?) ; ne pas la mapper sur « hauteur libre » sans vérification.
+- ~~Colonne `hauteur` du jeu « Ouvrages d'art 49 »~~ : c'est la hauteur de l'ouverture sous l'ouvrage (voûte, buse), elle n'est plus proposée comme hauteur libre (voir « Fait », jeux réels du 49).
+- Colonne `Côté` du jeu « Limitation de tonnage 49 » (0 / 1 / -1) : non documentée, non utilisée (sens de circulation ?). À demander au Département si besoin.
+- Essai du 13/11/2026 fait sans réseau (Overpass et IGN inaccessibles depuis l'environnement) : la lecture des fichiers est vérifiée, mais **pas le rapprochement avec les tronçons OSM**. Ce rapprochement reste à contrôler sur poste connecté (« Non vérifié », point 6).
 
 ## Non vérifié (à faire sur un poste connecté, 15 minutes)
 
