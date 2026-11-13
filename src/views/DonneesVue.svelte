@@ -2,7 +2,8 @@
   import { onMount } from 'svelte';
   import { etat, projetParDefaut } from '../lib/etat.svelte';
   import * as stockage from '../lib/stockage';
-  import { listerCouchesTE, telechargerWFS } from '../lib/enligne';
+  import { chercherDataGouv, departementsDesEmprises, listerCouchesTE, telechargerRessource, telechargerWFS } from '../lib/enligne';
+  import { lireSaisieDepartements, nomFichierRessource, saisieDepartements, type JeuDataGouv, type RessourceDataGouv } from '../core/datagouv';
   import { appliquerRestrictionsIGN, marquerReseauTE, COUCHE_BDTOPO_ROUTES } from '../core/ign';
   import { ErreurAccesBloque, geocoder, telechargerReseauOSM, telechargerTuiles, urlOverpassManuelle, type ResultatGeocodage } from '../lib/enligne';
   import { telecharger, horodatage } from '../lib/exports';
@@ -227,6 +228,7 @@
   let provReference = $state('');
   let provDate = $state(new Date().toISOString().slice(0, 10));
   let provAuteur = $state('');
+  let provType = $state<'geo' | 'datagouv'>('geo');
   let fiabDefaut = $state<Fiabilite>('valide');
   let seuil = $state<number | null>(60);
   let conversion = $state.raw<ResultatConversion | null>(null);
@@ -244,32 +246,41 @@
     const f = (e.target as HTMLInputElement).files?.[0];
     (e.target as HTMLInputElement).value = '';
     if (!f) return;
+    provType = 'geo';
+    if (provLibelle.startsWith('data.gouv')) provLibelle = '28e GG';
+    await chargerTable(f.name, await f.arrayBuffer(), f.name);
+  }
+
+  /** Lit un fichier (shapefile zippé, KML, GeoJSON, CSV) et prépare la correspondance des colonnes. */
+  async function chargerTable(nomF: string, buf: ArrayBuffer, reference: string): Promise<boolean> {
     try {
-      const nom = f.name.toLowerCase();
+      const nom = nomF.toLowerCase();
       let t: TableImport;
-      const texte = nom.endsWith('.zip') ? '' : await lireTexte(f);
-      if (nom.endsWith('.zip')) t = await tableDepuisShapefile(await f.arrayBuffer());
+      const texte = nom.endsWith('.zip') ? '' : decoderTexte(buf);
+      if (nom.endsWith('.zip')) t = await tableDepuisShapefile(buf);
       else if (nom.endsWith('.kml')) t = tableDepuisKML(texte);
       else if (nom.endsWith('.geojson') || nom.endsWith('.json')) {
         const j = JSON.parse(texte);
         if (j.type === 'FeatureCollection' || j.type === 'Feature') t = tableDepuisGeoJSON(texte);
-        else { etat.notifier('Ce fichier JSON est un projet : utilisez « Importer un projet » ci-dessous.', 'err'); return; }
+        else { etat.notifier('Ce fichier JSON n\'est pas du GeoJSON (projet FRANCHIR : utilisez « Importer un projet »).', 'err'); return false; }
       } else t = tableDepuisCSV(texte);
       table = t;
-      nomFichier = f.name;
+      nomFichier = nomF;
       corr = proposerCorrespondance(t.colonnes);
       suggererSCR();
-      provReference = f.name;
+      provReference = reference;
       conversion = null;
       plan = [];
+      return true;
     } catch (err) {
       etat.notifier('Lecture impossible : ' + (err as Error).message, 'err');
+      return false;
     }
   }
 
   /** Lit un fichier texte en UTF-8, avec repli Windows-1252 (exports Excel). */
-  async function lireTexte(f: File): Promise<string> {
-    const buf = new Uint8Array(await f.arrayBuffer());
+  function decoderTexte(ab: ArrayBuffer): string {
+    const buf = new Uint8Array(ab);
     try {
       return new TextDecoder('utf-8', { fatal: true }).decode(buf);
     } catch {
@@ -277,9 +288,65 @@
     }
   }
 
+  /* ---------------- data.gouv.fr ---------------- */
+  let saisieDepts = $state('');
+  let jeuxDG = $state.raw<JeuDataGouv[]>([]);
+  let etatDG = $state('');
+  let dgEnCours = $state(false);
+  let ctrlDG: AbortController | null = null;
+  let seulementImportables = $state(true);
+  const jeuxAffiches = $derived(seulementImportables ? jeuxDG.filter((j) => j.ressources.some((r) => r.format)) : jeuxDG);
+
+  async function departementsDeLaZone() {
+    if (!etat.zone) { etat.notifier('Préparez ou importez d\'abord une zone.', 'err'); return; }
+    if (etat.horsLigne) { etat.notifier('Mode hors ligne strict activé.', 'err'); return; }
+    dgEnCours = true; ctrlDG = new AbortController();
+    try {
+      const emprises = etat.zone.composantes?.length ? etat.zone.composantes.map((c) => c.bbox) : [etat.zone.bbox];
+      const d = await departementsDesEmprises(emprises, (m) => (etatDG = m), ctrlDG.signal);
+      saisieDepts = saisieDepartements(d);
+      etatDG = d.length ? `${d.length} département(s) trouvé(s) ; complétez la liste si besoin (un petit département peut échapper à l'échantillonnage).` : 'Aucun département trouvé : saisissez-les à la main.';
+    } catch (e) {
+      etatDG = 'Échec : ' + (e as Error).message;
+    } finally { dgEnCours = false; }
+  }
+
+  async function lancerRechercheDG() {
+    const depts = lireSaisieDepartements(saisieDepts);
+    if (!depts.length) { etat.notifier('Indiquez au moins un département.', 'err'); return; }
+    if (etat.horsLigne) { etat.notifier('Mode hors ligne strict activé.', 'err'); return; }
+    dgEnCours = true; ctrlDG = new AbortController();
+    try {
+      const { jeux, echecs } = await chercherDataGouv(depts, (m) => (etatDG = m), ctrlDG.signal);
+      jeuxDG = jeux;
+      const imp = jeux.filter((j) => j.ressources.some((r) => r.format)).length;
+      etatDG = `${jeux.length} jeu(x) trouvé(s) pour ${depts.length} département(s), dont ${imp} avec un fichier importable.${echecs.length ? ` Requêtes en échec : ${echecs.join(', ')}.` : ''} Vérifiez le contenu de chaque jeu avant intégration : la recherche par mots-clés ramène aussi des jeux hors sujet.`;
+    } catch (e) {
+      etatDG = 'Échec : ' + (e as Error).message;
+    } finally { dgEnCours = false; }
+  }
+
+  async function importerRessourceDG(j: JeuDataGouv, r: RessourceDataGouv) {
+    dgEnCours = true; ctrlDG = new AbortController();
+    etatDG = `Téléchargement de « ${r.titre} »…`;
+    try {
+      const buf = await telechargerRessource(r, ctrlDG.signal);
+      provType = 'datagouv';
+      provLibelle = `data.gouv – ${j.producteur || j.titre}`.slice(0, 80);
+      if (fiabDefaut === 'valide') fiabDefaut = 'reconnu';
+      provAuteur = j.producteur;
+      if (await chargerTable(nomFichierRessource(r), buf, r.url)) {
+        etatDG = `« ${r.titre} » chargé (${j.titre}) : contrôlez la correspondance des colonnes ci-dessous.`;
+        document.getElementById('correspondance')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else etatDG = `« ${r.titre} » téléchargé mais illisible par l'import (format inattendu).`;
+    } catch (e) {
+      etatDG = 'Échec : ' + (e as Error).message;
+    } finally { dgEnCours = false; }
+  }
+
   function analyser() {
     if (!table) return;
-    conversion = convertirOuvrages(table, $state.snapshot(corr), { type: 'geo', libelle: provLibelle || 'Import', reference: provReference, date: provDate, auteur: provAuteur }, fiabDefaut, scr);
+    conversion = convertirOuvrages(table, $state.snapshot(corr), { type: provType, libelle: provLibelle || 'Import', reference: provReference, date: provDate, auteur: provAuteur }, fiabDefaut, scr);
     plan = planifierFusion($state.snapshot(etat.projet.ouvrages) as Ouvrage[], conversion.ouvrages, seuil ?? 60);
   }
   function appliquer() {
@@ -567,10 +634,44 @@
         </label>
         {#if table}<span class="petit-txt"><strong>{nomFichier}</strong> — {table.lignes.length} ligne(s), {table.colonnes.length} colonne(s)</span>{/if}
       </div>
+      <details class="datagouv">
+        <summary><strong>Chercher sur data.gouv.fr</strong> <span class="muted petit-txt">(poste connecté : ponts, tonnage, gabarit, transports exceptionnels des départements)</span></summary>
+        <div class="pile">
+          <p class="muted petit-txt">Recherche par mots-clés dans le catalogue national, département par département. Les jeux sont hétérogènes (titres, colonnes, formats) : chaque fichier passe par la correspondance des colonnes et la fusion ci-dessous, avec désaccords de sources signalés. Les services WMS/WFS et les formats PDF, tableur ou GeoPackage ne sont pas importés automatiquement.</p>
+          <div class="ligne">
+            <label class="pile" style="flex:1">Départements <span class="muted petit-txt">(séparés par des virgules ; code facultatif)</span>
+              <input type="text" bind:value={saisieDepts} placeholder="49 Maine-et-Loire, 37 Indre-et-Loire" />
+            </label>
+            <button class="btn" style="align-self:end" disabled={dgEnCours || etat.horsLigne || !etat.zone} onclick={departementsDeLaZone}>Départements de la zone</button>
+            <button class="btn primaire" style="align-self:end" disabled={dgEnCours || etat.horsLigne || !saisieDepts.trim()} onclick={lancerRechercheDG}>Chercher sur data.gouv</button>
+            {#if dgEnCours}<button class="btn fantome" style="align-self:end" onclick={() => ctrlDG?.abort()}>Annuler</button>{/if}
+          </div>
+          {#if etatDG}<p class="petit-txt" role="status">{etatDG}</p>{/if}
+          {#if jeuxDG.length}
+            <label class="case petit-txt"><input type="checkbox" bind:checked={seulementImportables} /> Seulement les jeux ayant un fichier importable ({jeuxDG.filter((j) => j.ressources.some((r) => r.format)).length} / {jeuxDG.length})</label>
+            <ul class="jeux-dg">
+              {#each jeuxAffiches as j (j.id)}
+                <li>
+                  <div><a href={j.page} target="_blank" rel="noopener">{j.titre}</a> <span class="muted petit-txt">— {j.producteur || 'producteur non indiqué'} · {j.departements.join(', ')} · {j.themes.join(', ')}{j.maj ? ' · màj ' + j.maj.slice(0, 10) : ''}</span>{#if !j.mentionneDepartement}<span class="badge-dg" title="Le nom du département n'apparaît ni dans le titre, ni dans la description, ni dans le producteur">hors département ?</span>{/if}</div>
+                  <div class="ligne petit-txt">
+                    {#each j.ressources as r (r.id)}
+                      {#if r.format}
+                        <button class="btn petit" disabled={dgEnCours} onclick={() => importerRessourceDG(j, r)}>Importer {r.titre} <span class="mono">({r.format})</span></button>
+                      {:else if !seulementImportables}
+                        <a href={r.url} target="_blank" rel="noopener" class="muted">{r.titre} ({r.formatDeclare || '?'})</a>
+                      {/if}
+                    {/each}
+                  </div>
+                </li>
+              {/each}
+            </ul>
+          {/if}
+        </div>
+      </details>
     </div>
 
     {#if table}
-      <div class="section pile">
+      <div class="section pile" id="correspondance">
         <h4>Correspondance des colonnes</h4>
         <div class="correspondance">
           {#each CHAMPS_CIBLES as c (c.cle)}
@@ -670,6 +771,10 @@
 
 <style>
   .donnees { padding: 16px 18px 40px; display: flex; flex-direction: column; gap: 14px; }
+  .datagouv summary { cursor: pointer; }
+  .jeux-dg { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; max-height: 420px; overflow: auto; }
+  .jeux-dg li { border-left: 3px solid var(--bordure, #ccc); padding-left: 8px; }
+  .badge-dg { margin-left: 6px; font-size: 0.75em; padding: 1px 5px; border-radius: 4px; background: var(--m-indetermine, #eee); }
   .colonnes { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: start; }
   .pas { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: #1b1600; font-weight: 800; font-size: 13px; }
   .horsligne { display: flex; flex-direction: column; gap: 4px; }

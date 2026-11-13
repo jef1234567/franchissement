@@ -2,6 +2,10 @@ import { requeteOverpassReseau } from '../core/reseau';
 import type { BBox } from '../core/geo';
 import { iterTuiles, cleTuile, urlTuile, type SourceTuiles } from '../core/tuiles';
 import { PAGE_WFS, couchesTE, urlCapabilitesIGN, urlGetFeature, type EntiteGeo } from '../core/ign';
+import {
+  departementReponse, integrerReponseRecherche, pointsGrille, requetesDepartement, THEMES_DATAGOUV, trierJeux, urlCommunePoint, urlRechercheDataGouv,
+  type Departement, type JeuDataGouv, type RessourceDataGouv,
+} from '../core/datagouv';
 
 /* =========================================================================
    Accès en ligne (phase de préparation sur poste connecté uniquement)
@@ -198,4 +202,69 @@ export async function listerCouchesTE(signal?: AbortSignal): Promise<{ nom: stri
   }
   if (!r.ok) throw new Error('Catalogue IGN : réponse HTTP ' + r.status);
   return couchesTE(await r.text());
+}
+
+/* ---------------- data.gouv.fr (jeux départementaux) ---------------- */
+
+/** Départements couverts par une ou plusieurs emprises (grille de points interrogée sur geo.api.gouv.fr). */
+export async function departementsDesEmprises(emprises: BBox[], suivi: (msg: string) => void, signal?: AbortSignal): Promise<Departement[]> {
+  const trouves = new Map<string, Departement>();
+  const points = emprises.flatMap((b) => pointsGrille(b, 4));
+  for (let i = 0; i < points.length; i++) {
+    suivi(`Recherche des départements de la zone : point ${i + 1} / ${points.length}…`);
+    let r: Response;
+    try {
+      r = await fetch(urlCommunePoint(points[i][0], points[i][1]), { signal });
+    } catch {
+      if (signal?.aborted) throw new Error('Recherche annulée.');
+      throw new ErreurAccesBloque('Service geo.api.gouv.fr injoignable depuis ce navigateur : saisissez les départements à la main.');
+    }
+    if (!r.ok) continue;
+    const d = departementReponse(await r.json());
+    if (d) trouves.set(d.code, d);
+  }
+  return [...trouves.values()].sort((a, b) => a.code.localeCompare(b.code));
+}
+
+/** Interroge l'API de recherche data.gouv pour chaque département et chaque thème. */
+export async function chercherDataGouv(depts: Departement[], suivi: (msg: string) => void, signal?: AbortSignal): Promise<{ jeux: JeuDataGouv[]; echecs: string[] }> {
+  const acc = new Map<string, JeuDataGouv>();
+  const echecs: string[] = [];
+  const total = depts.length * THEMES_DATAGOUV.length;
+  let fait = 0;
+  for (const d of depts) {
+    const requetes = requetesDepartement(d);
+    for (let k = 0; k < requetes.length; k++) {
+      fait++;
+      suivi(`data.gouv : requête ${fait} / ${total} (« ${requetes[k]} »), ${acc.size} jeu(x) trouvé(s)…`);
+      let r: Response;
+      try {
+        r = await fetch(urlRechercheDataGouv(requetes[k]), { headers: { Accept: 'application/json' }, signal });
+      } catch {
+        if (signal?.aborted) throw new Error('Recherche annulée.');
+        throw new ErreurAccesBloque("API data.gouv.fr injoignable depuis ce navigateur : requête bloquée avant d'atteindre Internet ou refusée (CORS).");
+      }
+      if (r.status === 429) { await new Promise((res) => setTimeout(res, 3000)); k--; fait--; continue; }
+      if (!r.ok) { echecs.push(`${requetes[k]} (HTTP ${r.status})`); continue; }
+      integrerReponseRecherche(acc, await r.json(), d, THEMES_DATAGOUV[k]);
+    }
+  }
+  return { jeux: trierJeux([...acc.values()]), echecs };
+}
+
+/** Télécharge une ressource (URL stable data.gouv, puis URL directe en repli). */
+export async function telechargerRessource(res: RessourceDataGouv, signal?: AbortSignal): Promise<ArrayBuffer> {
+  let derniere = '';
+  for (const url of [res.urlStable, res.url]) {
+    try {
+      const r = await fetch(url, { signal });
+      if (r.ok) return await r.arrayBuffer();
+      derniere = `réponse HTTP ${r.status}`;
+    } catch {
+      if (signal?.aborted) throw new Error('Téléchargement annulé.');
+      derniere = 'bloqué';
+    }
+  }
+  if (derniere === 'bloqué') throw new ErreurAccesBloque("Fichier non téléchargeable depuis ce navigateur (le serveur du producteur refuse probablement l'accès direct, CORS). Ouvrez le lien, enregistrez le fichier, puis « Choisir un fichier ».");
+  throw new Error('Téléchargement impossible : ' + derniere + '.');
 }

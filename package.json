@@ -11,7 +11,8 @@
     "e2e": "node tests/e2e/smoke.mjs",
     "e2e:convois": "node tests/e2e/convois.mjs",
     "e2e:ign": "node tests/e2e/ign.mjs",
-    "e2e:assemblage": "node tests/e2e/assemblage.mjs"
+    "e2e:assemblage": "node tests/e2e/assemblage.mjs",
+    "e2e:datagouv": "node tests/e2e/datagouv.mjs"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5.1.1",
