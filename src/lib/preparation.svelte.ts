@@ -103,7 +103,7 @@ class Preparation {
       for (let i = 0; i < tuiles.length; i++) {
         const t = tuiles[i];
         const json = await enCache(cleEmprise('osm', t), () =>
-          telechargerReseauOSM(t, false, (m) => (this.progression = `Tuile ${i + 1} / ${tuiles.length} : ${m}`), signal));
+          telechargerReseauOSM(t, false, (m) => (this.progression = `Tuile ${i + 1} / ${tuiles.length} : ${m}`), signal, false, true));
         this.progression = `Tuile ${i + 1} / ${tuiles.length} : construction du graphe…`;
         await new Promise((r) => setTimeout(r, 10));
         const r = construireReseau(json as { elements: [] }, t);

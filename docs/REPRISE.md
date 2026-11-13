@@ -35,6 +35,10 @@ Coller ce texte :
 
 Tests : 150 tests unitaires (`npm test`) ; bout en bout dans Chromium : `npm run e2e` (existant), `npm run e2e:convois`, `npm run e2e:ign` (service IGN simulé), `npm run e2e:assemblage`, `npm run e2e:datagouv` (data.gouv et geo.api simulés), `npm run e2e:zone` (préparation en un bouton : Overpass, IGN, geo.api et data.gouv simulés). `npm run e2e` exige `tests/e2e/demo-overpass.json`, non versionné : le régénérer par `npx tsx tests/e2e/paquet-demo.ts`. Les fichiers de démonstration se régénèrent par `npx tsx tests/e2e/paquet-demo.ts`. Variable `CHROMIUM` à renseigner si le chemin du navigateur diffère.
 
+## Premier essai réel de « Préparer la zone » (13/11/2026, 11 h 25)
+
+Saumur, 20 km, une seule requête : échec sur tous les serveurs Overpass (overpass-api.de HTTP 502, private.coffee et kumi.systems HTTP 504, openstreetmap.fr et maps.mail.ru bloqués). Corrigé en reprenant la méthode de l'outil terrain : tuiles de **10 km**, requêtes « modestes » (90 s, 512 Mo déclarés), serveurs **Europe** (`ovp.dresel.systems`, zone en Europe) puis **principal** puis **private.coffee**, trois tours (45, 75, 100 s par requête), pause de 30 s après un refus (429 / 406), pauses croissantes entre les tours. Retirés : maps.mail.ru (serveur russe : chaque requête montrerait la zone étudiée), overpass.openstreetmap.fr (bloqué), kumi.systems (devenu private.coffee). **À réessayer sur poste connecté.**
+
 ## Mesures réelles du 13/11/2026 (navigateur connecté, depuis une page d'origine « null » comme `file://`)
 
 - **CORS : aucun blocage** pour geo.api.gouv.fr, l'API data.gouv (et la redirection `/datasets/r/<id>` vers hub.arcgis.com), data.geopf.fr (WFS), Nominatim, Overpass.

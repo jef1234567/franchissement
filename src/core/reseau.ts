@@ -54,10 +54,12 @@ export interface Reseau {
   aretes: Arete[];
 }
 
-export function requeteOverpassReseau(b: BBox, inclureSecondaires: boolean, grandsAxes = false): string {
+/** Requête Overpass du réseau. `modeste` (tuiles de la préparation en un bouton) : 90 s et 512 Mo déclarés,
+ *  mieux acceptés par un serveur chargé (il refuse d'emblée les requêtes qui annoncent de gros besoins). */
+export function requeteOverpassReseau(b: BBox, inclureSecondaires: boolean, grandsAxes = false, modeste = false): string {
   const hw = (grandsAxes ? HIGHWAYS_GRANDS_AXES : [...HIGHWAYS_PRINCIPAUX, ...(inclureSecondaires ? HIGHWAYS_SECONDAIRES : [])]).join('|');
   const bb = `${b.sud.toFixed(5)},${b.ouest.toFixed(5)},${b.nord.toFixed(5)},${b.est.toFixed(5)}`;
-  return `[out:json][timeout:240][maxsize:1073741824][bbox:${bb}];
+  return `${modeste ? '[out:json][timeout:90][maxsize:536870912]' : '[out:json][timeout:240][maxsize:1073741824]'}[bbox:${bb}];
 way["highway"~"^(${hw})$"]["area"!="yes"]["access"!~"^(private|no)$"];
 (._;>;);
 out body qt;`;

@@ -4,7 +4,7 @@
   import { exporterPaquet } from '../../lib/export-paquet.svelte';
   import { geocoder } from '../../lib/enligne';
   import { analyserPosition } from '../../core/geo';
-  import { TAILLES_CARRE } from '../../core/preparation';
+  import { COTE_TUILE_KM, TAILLES_CARRE } from '../../core/preparation';
   import Icone from '../../components/Icone.svelte';
 
   let { centre, allerA }: { centre: () => [number, number] | null; allerA: (p: [number, number]) => void } = $props();
@@ -48,7 +48,7 @@
       <button type="button" role="radio" aria-checked={preparation.coteKm === t} class="btn petit" class:primaire={preparation.coteKm === t} disabled={preparation.enCours} onclick={() => (preparation.coteKm = t)}>{t} km</button>
     {/each}
   </div>
-  {#if preparation.coteKm > 17}<p class="muted petit-txt">Grande zone : téléchargement par tuiles, compter quelques minutes. Après un arrêt ou un échec, relancer reprend sans retélécharger ce qui est déjà reçu (tant que la page reste ouverte).</p>{/if}
+  {#if preparation.coteKm > COTE_TUILE_KM}<p class="muted petit-txt">Téléchargement en {Math.ceil(preparation.coteKm / COTE_TUILE_KM) ** 2} tuiles de {COTE_TUILE_KM} km, l'une après l'autre : compter de quelques minutes à un quart d'heure selon la charge des serveurs publics. Après un arrêt ou un échec, relancer reprend sans retélécharger ce qui est déjà reçu (tant que la page reste ouverte).</p>{/if}
   {#if preparation.enCours}
     <button class="btn" onclick={() => preparation.arreter()}><Icone nom="fermer" taille={16} /> Arrêter</button>
   {:else}

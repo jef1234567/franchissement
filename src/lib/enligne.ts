@@ -11,17 +11,33 @@ import {
    Accès en ligne (phase de préparation sur poste connecté uniquement)
    ========================================================================= */
 
-export const MIROIRS_OVERPASS = [
-  'https://overpass-api.de/api/interpreter',
-  'https://overpass.private.coffee/api/interpreter',
-  'https://overpass.kumi.systems/api/interpreter',
-  'https://overpass.openstreetmap.fr/api/interpreter',
-  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+/** Serveurs Overpass, dans l'ordre d'essai (mesures de l'outil terrain, 10/11/2026 : Europe 6 s, principal 36 s).
+ *  « Europe » (extrait Geofabrik mis à jour chaque nuit) ne sert que pour une zone en Europe.
+ *  Retirés : maps.mail.ru (VK, Russie : chaque requête montrerait la zone étudiée), overpass.openstreetmap.fr (refuse
+ *  les requêtes d'une page web, CORS), overpass.kumi.systems (devenu private.coffee). */
+export const SERVEURS_OVERPASS: { nom: string; url: string; zone?: (b: BBox) => boolean }[] = [
+  { nom: 'Europe', url: 'https://ovp.dresel.systems/api/interpreter', zone: (b) => b.sud > 34 && b.nord < 72 && b.ouest > -25 && b.est < 45 },
+  { nom: 'principal', url: 'https://overpass-api.de/api/interpreter' },
+  { nom: 'private.coffee', url: 'https://overpass.private.coffee/api/interpreter' },
 ];
+export const MIROIRS_OVERPASS = SERVEURS_OVERPASS.map((s) => s.url);
+/** Délai d'attente par requête (s), selon le tour ; pause après un refus du serveur (429 / 406) ; pause entre deux tours (× n° du tour). */
+const DELAIS_OVERPASS = [45, 75, 100];
+const PAUSE_REFUS_MS = 30_000, PAUSE_TOUR_MS = 10_000;
+
+function attendre(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((res, rej) => {
+    const t = setTimeout(res, ms);
+    signal?.addEventListener('abort', () => { clearTimeout(t); rej(new Error('Téléchargement annulé.')); }, { once: true });
+  });
+}
+
+const texteHTTP = (st: number) => st === 429 ? 'trop de demandes (HTTP 429)' : st === 504 ? 'serveur saturé (HTTP 504)'
+  : st === 406 || st === 400 ? `demande refusée (HTTP ${st})` : st === 403 ? 'accès refusé (HTTP 403, réseau filtré ?)' : st >= 500 ? `panne du serveur (HTTP ${st})` : `HTTP ${st}`;
 
 /** Lien direct de la requête (méthode manuelle : ouverture dans un onglet puis enregistrement du fichier). */
 export function urlOverpassManuelle(bbox: BBox, inclureSecondaires: boolean, grandsAxes = false): string {
-  return MIROIRS_OVERPASS[0] + '?data=' + encodeURIComponent(requeteOverpassReseau(bbox, inclureSecondaires, grandsAxes));
+  return 'https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(requeteOverpassReseau(bbox, inclureSecondaires, grandsAxes));
 }
 
 /** Erreur réseau « muette » (Failed to fetch) : requête bloquée avant d'atteindre le serveur. */
@@ -59,43 +75,62 @@ export async function geocoder(lieu: string, signal?: AbortSignal): Promise<Resu
   return j.map((x) => ({ libelle: x.display_name, lat: parseFloat(x.lat), lon: parseFloat(x.lon), type: x.type, bbox: bboxNominatim(x.boundingbox) }));
 }
 
+/**
+ * Réseau routier d'une emprise. Serveurs dans l'ordre, trois tours avec délai croissant (45, 75, 100 s par requête),
+ * pause de 30 s quand un serveur refuse (429 / 406), pause croissante entre les tours. Une réponse tronquée (remark) est un échec.
+ * Réponse vide du serveur Europe (extrait régional) : vérifiée auprès du serveur suivant ; gardée seulement si personne ne contredit.
+ */
 export async function telechargerReseauOSM(
   bbox: BBox,
   inclureSecondaires: boolean,
   suivi: (msg: string) => void,
   signal?: AbortSignal,
   grandsAxes = false,
+  modeste = false,
 ): Promise<unknown> {
-  const q = requeteOverpassReseau(bbox, inclureSecondaires, grandsAxes);
-  const erreurs: string[] = [];
-  let bloques = 0;
+  const q = requeteOverpassReseau(bbox, inclureSecondaires, grandsAxes, modeste);
+  const serveurs = SERVEURS_OVERPASS.filter((s) => !s.zone || s.zone(bbox));
+  const derniers: string[] = [];
+  let bloques = 0, envois = 0, videEurope: unknown = null;
   violationsCSP = [];
-  for (const url of MIROIRS_OVERPASS) {
-    const hote = new URL(url).host;
-    suivi(`Interrogation de ${hote}…`);
-    // POST puis, en cas d'échec réseau, GET (certains proxys filtrent l'un ou l'autre).
-    for (const methode of ['POST', 'GET'] as const) {
+  for (let tour = 0; tour < DELAIS_OVERPASS.length; tour++) {
+    for (const srv of serveurs) {
+      if (srv.nom === 'Europe' && videEurope) continue;
+      const t0 = Date.now();
+      const minuteur = setInterval(() => suivi(`Serveur ${srv.nom}${tour ? ` (essai ${tour + 1})` : ''} : ${Math.round((Date.now() - t0) / 1000)} s…`), 1000);
+      suivi(`Serveur ${srv.nom}${tour ? ` (essai ${tour + 1})` : ''}…`);
+      const delai = AbortSignal.timeout(DELAIS_OVERPASS[tour] * 1000);
+      const sig = signal ? AbortSignal.any([signal, delai]) : delai;
+      let refus = false;
+      envois++;
       try {
-        const r = methode === 'POST'
-          ? await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal })
-          : await fetch(url + '?data=' + encodeURIComponent(q), { signal });
-        if (!r.ok) throw new Error('HTTP ' + r.status + (r.status === 429 ? ' (quota dépassé)' : r.status === 504 ? ' (serveur saturé)' : ''));
-        suivi('Réception des données…');
-        const j = await r.json();
-        if (j.remark && /runtime error|timed out|out of memory/i.test(j.remark)) throw new Error(j.remark);
+        const r = await fetch(srv.url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal: sig });
+        if (!r.ok) { refus = r.status === 429 || r.status === 406; throw new Error(texteHTTP(r.status)); }
+        suivi(`Serveur ${srv.nom} : réception des données…`);
+        const j = (await r.json()) as { elements?: unknown[]; remark?: string };
+        if (j.remark && /runtime error|timed out|out of memory/i.test(j.remark)) throw new Error('réponse tronquée : ' + j.remark);
+        if (srv.nom === 'Europe' && !j.elements?.length) { videEurope = j; continue; }
         return j;
       } catch (e) {
         if (signal?.aborted) throw new Error('Téléchargement annulé.');
         const muet = e instanceof TypeError;
-        if (!muet || methode === 'GET') {
-          if (muet) bloques++;
-          erreurs.push(`${hote} : ${muet ? 'requête bloquée' : (e as Error).message}`);
-          break;
-        }
+        if (muet) bloques++;
+        const msg = delai.aborted ? `pas de réponse en ${DELAIS_OVERPASS[tour]} s` : muet ? 'requête bloquée' : (e as Error).message;
+        derniers.push(`${srv.nom} : ${msg}`);
+      } finally {
+        clearInterval(minuteur);
       }
+      if (refus) { suivi(`Pause de ${PAUSE_REFUS_MS / 1000} s demandée par le serveur ${srv.nom}…`); await attendre(PAUSE_REFUS_MS, signal); }
+    }
+    if (bloques === envois) break; // tout est bloqué avant Internet : inutile d'insister
+    if (tour < DELAIS_OVERPASS.length - 1) {
+      const ms = PAUSE_TOUR_MS * (tour + 1);
+      suivi(`Tous les serveurs ont échoué, nouvel essai dans ${ms / 1000} s…`);
+      await attendre(ms, signal);
     }
   }
-  if (bloques === MIROIRS_OVERPASS.length) {
+  if (videEurope) return videEurope; // zone sans route d'après le serveur Europe, aucun autre serveur pour contredire
+  if (bloques === envois) {
     const csp = violationsCSP.length > 0;
     throw new ErreurAccesBloque(
       csp
@@ -103,7 +138,7 @@ export async function telechargerReseauOSM(
         : "Aucun serveur Overpass joignable depuis ce navigateur : requêtes bloquées avant d'atteindre Internet (fichier ouvert dans une visionneuse, pare-feu ou proxy, ou pas de connexion).",
     );
   }
-  throw new Error('Échec sur tous les serveurs Overpass. ' + erreurs.join(' ; '));
+  throw new Error(`OpenStreetMap indisponible après ${DELAIS_OVERPASS.length} essais (serveurs publics saturés : réessayer dans quelques minutes). Derniers échecs : ${derniers.slice(-serveurs.length).join(' ; ')}`);
 }
 
 /** Télécharge les tuiles d'une emprise (concurrence limitée, reprise sur erreur, annulable). */

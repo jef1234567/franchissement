@@ -13,11 +13,11 @@ describe('Carré et tuiles', () => {
     expect((b.sud + b.nord) / 2).toBeCloseTo(SAUMUR[0], 9);
   });
 
-  it('pas de découpage jusqu’à 17 km, 2 × 2 à 30 km, 3 × 3 à 50 km', () => {
+  it('tuiles de 10 km au plus : 1 à 10 km, 2 × 2 à 20 km, 3 × 3 à 30 km, 5 × 5 à 50 km', () => {
     expect(decouperEnTuiles(carreAutour(SAUMUR, 10), 10)).toHaveLength(1);
     expect(decouperEnTuiles(carreAutour(SAUMUR, 20), 20)).toHaveLength(4);
-    expect(decouperEnTuiles(carreAutour(SAUMUR, 30), 30)).toHaveLength(4);
-    expect(decouperEnTuiles(carreAutour(SAUMUR, 50), 50)).toHaveLength(9);
+    expect(decouperEnTuiles(carreAutour(SAUMUR, 30), 30)).toHaveLength(9);
+    expect(decouperEnTuiles(carreAutour(SAUMUR, 50), 50)).toHaveLength(25);
   });
 
   it('les tuiles couvrent exactement l’emprise, sans trou ni débord', () => {

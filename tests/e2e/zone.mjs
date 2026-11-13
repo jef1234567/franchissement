@@ -22,11 +22,18 @@ const COVOIT = `Geo Point;nom;identifiant
 const nav = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
 const ctx = await nav.newContext({ viewport: { width: 1500, height: 1000 }, locale: 'fr-FR' });
 const n = { overpass: 0, wfs: 0, dg: 0 };
+const hotes = [];
 await ctx.route(/^https?:/, async (r) => {
   const u = new URL(r.request().url());
   const cors = { 'Access-Control-Allow-Origin': '*' };
   const json = (b) => r.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify(b) });
-  if (u.pathname.endsWith('/interpreter')) { n.overpass++; return r.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: overpass }); }
+  if (u.pathname.endsWith('/interpreter')) {
+    hotes.push(u.host);
+    // Première requête : serveur Europe saturé (cas réel du 13/11/2026) → l'outil doit passer au serveur suivant.
+    if (hotes.length === 1) return r.fulfill({ status: 504, headers: cors, body: '' });
+    n.overpass++;
+    return r.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: overpass });
+  }
   if (u.host === 'data.geopf.fr') {
     if (u.searchParams.get('REQUEST') === 'GetCapabilities') {
       return r.fulfill({ status: 200, headers: cors, contentType: 'text/xml', body: '<wfs:WFS_Capabilities><FeatureTypeList><FeatureType><Name>SECUROUT.TE:troncon_te</Name><Title>Réseau</Title></FeatureType></FeatureTypeList></wfs:WFS_Capabilities>' });
@@ -69,9 +76,11 @@ await page.getByRole('radio', { name: '30 km' }).click();
 await page.getByRole('button', { name: 'Préparer la zone' }).click();
 await page.getByText(/Zone « Zone 30 km » préparée/).waitFor({ timeout: 90000 });
 
-verifier(n.overpass === 4, `30 km : 4 tuiles Overpass (${n.overpass})`);
-verifier(await page.getByText(/tronçons, \d+ ponts .*4 tuiles/).isVisible(), 'réseau assemblé à partir des 4 tuiles');
-verifier(n.wfs === 8, `IGN interrogé tuile par tuile, BD TOPO et TE (${n.wfs} requêtes)`);
+verifier(hotes[0] === 'ovp.dresel.systems' && hotes[1] === 'overpass-api.de', `serveur Europe essayé d'abord ; saturé, relais par le serveur principal (${hotes.slice(0, 2).join(', ')})`);
+verifier(!hotes.some((h) => /mail\.ru|openstreetmap\.fr/.test(h)), 'aucun serveur retiré interrogé');
+verifier(n.overpass === 9, `30 km : 9 tuiles Overpass (${n.overpass})`);
+verifier(await page.getByText(/tronçons, \d+ ponts .*9 tuiles/).isVisible(), 'réseau assemblé à partir des 9 tuiles');
+verifier(n.wfs === 18, `IGN interrogé tuile par tuile, BD TOPO et TE (${n.wfs} requêtes)`);
 verifier(await page.getByText(/1 jeu\(x\) intégré\(s\), [1-9]\d* tronçon\(s\) restreints/).isVisible(), 'jeu « gabarit » du 49 reconnu et appliqué automatiquement (CSV Opendatasoft)');
 verifier(await page.getByText('Jeux à voir à la main (2)').isVisible(), 'covoiturage (hors sujet) et PDF signalés, jeu de l’Ain écarté');
 await page.getByText('Jeux à voir à la main (2)').click();

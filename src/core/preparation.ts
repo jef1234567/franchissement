@@ -11,8 +11,9 @@ import { entitesRestrictions, partLineaire, proposerColonnesRestrictions, type P
 
 export const TAILLES_CARRE = [10, 20, 30, 40, 50] as const;
 
-/** Côté maximal d'une tuile de téléchargement (km) : au-delà, Overpass et le WFS IGN refusent ou tronquent. */
-export const COTE_TUILE_KM = 17;
+/** Côté maximal d'une tuile de téléchargement (km) : comme l'outil terrain, des demandes modestes, mieux acceptées
+ *  par des serveurs Overpass chargés (une tuile de 20 km a été refusée en HTTP 502/504 par tous les serveurs le 13/11/2026). */
+export const COTE_TUILE_KM = 10;
 
 /** Carré de côté coteKm centré sur un point. */
 export function carreAutour(centre: [number, number], coteKm: number): BBox {
