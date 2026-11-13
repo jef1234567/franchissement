@@ -1,6 +1,6 @@
 <script lang="ts">
   import { etat } from '../../lib/etat.svelte';
-  import { preparation } from '../../lib/preparation.svelte';
+  import { preparation, viderCacheTelechargements } from '../../lib/preparation.svelte';
   import { exporterPaquet } from '../../lib/export-paquet.svelte';
   import { geocoder } from '../../lib/enligne';
   import { analyserPosition } from '../../core/geo';
@@ -26,9 +26,15 @@
     }
   }
 
-  function lancer() {
+  function lancer(ajouter = false) {
     const c = centre();
-    if (c) void preparation.preparer(c);
+    if (c) void preparation.preparer(c, ajouter);
+  }
+
+  async function viderCache() {
+    if (!confirm('Oublier les téléchargements gardés sur ce poste (30 jours) ? La prochaine préparation retéléchargera tout.')) return;
+    await viderCacheTelechargements();
+    etat.notifier('Téléchargements gardés effacés.', 'ok');
   }
 
   const SYMBOLE: Record<string, string> = { attente: '○', encours: '◔', ok: '✓', partiel: '◐', echec: '✗', saute: '–' };
@@ -48,11 +54,15 @@
       <button type="button" role="radio" aria-checked={preparation.coteKm === t} class="btn petit" class:primaire={preparation.coteKm === t} disabled={preparation.enCours} onclick={() => (preparation.coteKm = t)}>{t} km</button>
     {/each}
   </div>
-  {#if preparation.coteKm > COTE_TUILE_KM}<p class="muted petit-txt">Téléchargement en {Math.ceil(preparation.coteKm / COTE_TUILE_KM) ** 2} tuiles de {COTE_TUILE_KM} km, l'une après l'autre : compter de quelques minutes à un quart d'heure selon la charge des serveurs publics. Après un arrêt ou un échec, relancer reprend sans retélécharger ce qui est déjà reçu (tant que la page reste ouverte).</p>{/if}
+  {#if preparation.coteKm > COTE_TUILE_KM}<p class="muted petit-txt">Téléchargement en {Math.ceil(preparation.coteKm / COTE_TUILE_KM) ** 2} tuiles de {COTE_TUILE_KM} km, l'une après l'autre : compter de quelques minutes à un quart d'heure selon la charge des serveurs publics. </p>{/if}
+  <p class="muted petit-txt">Les téléchargements sont gardés 30 jours dans ce navigateur : après un arrêt ou un échec, même page fermée, relancer reprend sans retélécharger ce qui est déjà reçu.</p>
   {#if preparation.enCours}
     <button class="btn" onclick={() => preparation.arreter()}><Icone nom="fermer" taille={16} /> Arrêter</button>
   {:else}
-    <button class="btn primaire" onclick={lancer} disabled={etat.horsLigne}><Icone nom="telecharger" taille={16} /> Préparer la zone</button>
+    <button class="btn primaire" onclick={() => lancer()} disabled={etat.horsLigne}><Icone nom="telecharger" taille={16} /> Préparer la zone</button>
+    {#if etat.reseau}
+      <button class="btn" onclick={() => lancer(true)} disabled={etat.horsLigne} title="Assemble le carré jaune au réseau déjà chargé (la zone actuelle est gardée)"><Icone nom="telecharger" taille={16} /> Ajouter ce carré à la zone</button>
+    {/if}
     {#if etat.horsLigne}<p class="muted petit-txt">Mode hors ligne strict : la préparation se fait sur un poste connecté.</p>{/if}
   {/if}
 </div>
@@ -86,6 +96,12 @@
     <h4>Poste isolé</h4>
     <label class="case"><input type="checkbox" bind:checked={avecTuiles} /> Inclure les fonds de carte stockés</label>
     <button class="btn" onclick={() => exporterPaquet(avecTuiles)}><Icone nom="paquet" taille={16} /> Exporter le paquet</button>
+  </div>
+{/if}
+
+{#if !preparation.enCours && !etat.horsLigne}
+  <div class="section">
+    <button class="btn petit fantome" onclick={viderCache}><Icone nom="corbeille" taille={15} /> Oublier les téléchargements gardés</button>
   </div>
 {/if}
 

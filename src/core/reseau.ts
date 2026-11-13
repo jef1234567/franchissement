@@ -52,6 +52,8 @@ export interface Reseau {
   /** Coordonnées des nœuds du graphe, aplaties [lat, lon, …]. */
   noeuds: number[];
   aretes: Arete[];
+  /** Tuiles dont le téléchargement a échoué (réseau partiel) : tracées en rouge, itinéraire refusé s'il en traverse une. */
+  trous?: BBox[];
 }
 
 /** Requête Overpass du réseau. `modeste` (tuiles de la préparation en un bouton) : 90 s et 512 Mo déclarés,

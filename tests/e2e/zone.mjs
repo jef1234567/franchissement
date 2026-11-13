@@ -23,14 +23,27 @@ const nav = await chromium.launch({ executablePath: process.env.CHROMIUM || '/op
 const ctx = await nav.newContext({ viewport: { width: 1500, height: 1000 }, locale: 'fr-FR' });
 const n = { overpass: 0, wfs: 0, dg: 0 };
 const hotes = [];
+// Requêtes Overpass simultanées par serveur (maximum observé) ; panne simulée d'une tuile.
+const enVol = {}, maxEnVol = {};
+let panne = false, bboxEnPanne = null;
+const bboxRequete = (r) => /\[bbox:([^\]]+)\]/.exec(decodeURIComponent((r.request().postData() || '').replace(/^data=/, '').replace(/\+/g, ' ')))?.[1];
 await ctx.route(/^https?:/, async (r) => {
   const u = new URL(r.request().url());
   const cors = { 'Access-Control-Allow-Origin': '*' };
   const json = (b) => r.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify(b) });
   if (u.pathname.endsWith('/interpreter')) {
-    hotes.push(u.host);
+    const rang = hotes.push(u.host);
+    enVol[u.host] = (enVol[u.host] ?? 0) + 1;
+    maxEnVol[u.host] = Math.max(maxEnVol[u.host] ?? 0, enVol[u.host]);
+    await new Promise((res) => setTimeout(res, 300));
+    enVol[u.host]--;
     // Première requête : serveur Europe saturé (cas réel du 13/11/2026) → l'outil doit passer au serveur suivant.
-    if (hotes.length === 1) return r.fulfill({ status: 504, headers: cors, body: '' });
+    if (rang === 1) return r.fulfill({ status: 504, headers: cors, body: '' });
+    if (panne) {
+      const bb = bboxRequete(r);
+      bboxEnPanne ??= bb;
+      if (bb === bboxEnPanne) return r.fulfill({ status: 504, headers: cors, body: '' });
+    }
     n.overpass++;
     return r.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: overpass });
   }
@@ -64,6 +77,11 @@ await ctx.route(/^https?:/, async (r) => {
 });
 
 const page = await ctx.newPage();
+await page.addInitScript(() => {
+  window.__toasts = [];
+  new MutationObserver(() => document.querySelectorAll('.toasts > *').forEach((t) => { if (!window.__toasts.includes(t.textContent)) window.__toasts.push(t.textContent); }))
+    .observe(document, { childList: true, subtree: true });
+});
 const erreurs = [];
 page.on('pageerror', (e) => erreurs.push(e.message));
 await page.goto('file://' + path.join(racine, 'dist/index.html'));
@@ -76,7 +94,9 @@ await page.getByRole('radio', { name: '30 km' }).click();
 await page.getByRole('button', { name: 'Préparer la zone' }).click();
 await page.getByText(/Zone « Zone 30 km » préparée/).waitFor({ timeout: 90000 });
 
-verifier(hotes[0] === 'ovp.dresel.systems' && hotes[1] === 'overpass-api.de', `serveur Europe essayé d'abord ; saturé, relais par le serveur principal (${hotes.slice(0, 2).join(', ')})`);
+verifier(hotes[0] === 'ovp.dresel.systems' && hotes.includes('overpass-api.de'), `serveur Europe essayé d'abord ; saturé, relais par le serveur principal (${[...new Set(hotes)].join(', ')})`);
+verifier(maxEnVol['ovp.dresel.systems'] === 2, `deux tuiles à la fois sur le serveur Europe (${maxEnVol['ovp.dresel.systems']})`);
+verifier((maxEnVol['overpass-api.de'] ?? 0) <= 1, `une seule requête à la fois sur le serveur principal (${maxEnVol['overpass-api.de']})`);
 verifier(!hotes.some((h) => /mail\.ru|openstreetmap\.fr/.test(h)), 'aucun serveur retiré interrogé');
 verifier(n.overpass === 9, `30 km : 9 tuiles Overpass (${n.overpass})`);
 verifier(await page.getByText(/tronçons, \d+ ponts .*9 tuiles/).isVisible(), 'réseau assemblé à partir des 9 tuiles');
@@ -93,6 +113,41 @@ await page.getByRole('button', { name: 'Préparer la zone' }).click();
 await page.getByText(/Zone « Zone 30 km » préparée/).nth(1).waitFor({ timeout: 60000 }).catch(() => {});
 await page.waitForFunction(() => !document.querySelector('button')?.textContent?.includes('Arrêter'));
 verifier(n.overpass === avant.overpass && n.wfs === avant.wfs && n.dg === avant.dg, 'relance sur la même zone : aucun nouveau téléchargement');
+
+// Page rechargée : les téléchargements sont gardés dans le navigateur (30 jours), rien n'est retéléchargé.
+await page.reload();
+await page.getByText('FRANCHIR', { exact: true }).waitFor();
+await page.getByRole('tab', { name: /Zone/ }).click();
+await page.getByRole('radio', { name: '30 km' }).click();
+await page.getByRole('button', { name: 'Préparer la zone' }).click();
+await page.getByText(/préparée en .*repris du cache/).waitFor({ timeout: 60000 });
+verifier(n.overpass === avant.overpass && n.wfs === avant.wfs && n.dg === avant.dg, 'page rechargée : tout repris du cache du navigateur, aucun téléchargement');
+
+// Ajouter un carré voisin, une tuile en panne : réseau partiel gardé, trou signalé.
+panne = true;
+const avantAjout = n.overpass;
+await page.getByRole('textbox', { name: 'Aller à' }).fill('47.27, 0.37');
+await page.getByRole('button', { name: 'Centrer la carte' }).click();
+await page.getByRole('button', { name: 'Ajouter ce carré à la zone' }).click();
+await page.getByText(/agrandie en .*1 tuile\(s\) manquante\(s\), en rouge/).waitFor({ timeout: 180000 }).catch(async (e) => { console.log(await page.locator('body').innerText()); console.log(hotes.length, n, bboxEnPanne, await page.evaluate(() => window.__toasts)); throw e; });
+verifier(n.overpass - avantAjout === 8, `carré ajouté : 8 tuiles reçues sur 9 (${n.overpass - avantAjout})`);
+verifier(await page.getByText(/assemblé à la zone existante ; 1 tuile\(s\) non reçue\(s\)/).isVisible(), 'étape OSM partielle, réseau assemblé à la zone existante');
+const trous = await page.evaluate(() => new Promise((res) => {
+  const req = indexedDB.open('franchir');
+  req.onsuccess = () => { const g = req.result.transaction('kv').objectStore('kv').get('reseau'); g.onsuccess = () => res(g.result?.trous?.length ?? 0); };
+}));
+verifier(trous === 1, `un trou enregistré dans le réseau (${trous})`);
+// Panne levée, même carré : seule la tuile manquante est téléchargée, le trou disparaît.
+panne = false;
+const avantReprise = n.overpass;
+await page.getByRole('button', { name: 'Ajouter ce carré à la zone' }).click();
+await page.getByText(/agrandie en \d+ min ; \d+ téléchargement/).waitFor({ timeout: 60000 });
+verifier(n.overpass - avantReprise === 1, `reprise : seule la tuile manquante est retéléchargée (${n.overpass - avantReprise})`);
+const trous2 = await page.evaluate(() => new Promise((res) => {
+  const req = indexedDB.open('franchir');
+  req.onsuccess = () => { const g = req.result.transaction('kv').objectStore('kv').get('reseau'); g.onsuccess = () => res(g.result?.trous?.length ?? 0); };
+}));
+verifier(trous2 === 0, `trou comblé après la reprise (${trous2})`);
 
 // Restrictions visibles sur la carte.
 await page.getByLabel('Restrictions et gués').check();

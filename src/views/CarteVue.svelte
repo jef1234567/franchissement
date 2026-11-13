@@ -82,7 +82,8 @@
     });
   });
   function centrerCarre(p: [number, number]) {
-    carte?.setView(p, carte.getZoom() < 9 ? 11 : carte.getZoom());
+    // Sans animation : le carré jaune est aussitôt à sa place (un clic immédiat sur « Préparer » vise le bon carré).
+    carte?.setView(p, carte.getZoom() < 9 ? 11 : carte.getZoom(), { animate: false });
   }
 
   // Couleur des ouvrages : verdict pour le convoi courant, sinon disponibilité de la classe.
@@ -135,14 +136,23 @@
   });
   // Après une préparation : le carré cède la place à la zone préparée.
   $effect(() => {
-    if (!preparation.enCours && preparation.etapes.length) untrack(() => carte && etat.zone && carte.fitBounds([[etat.zone.bbox.sud, etat.zone.bbox.ouest], [etat.zone.bbox.nord, etat.zone.bbox.est]]));
+    // Après « Ajouter ce carré » : la vue reste sur le carré (une relance doit retomber sur le même carré).
+    if (!preparation.enCours && preparation.etapes.length && !preparation.ajout) untrack(() => carte && etat.zone && carte.fitBounds([[etat.zone.bbox.sud, etat.zone.bbox.ouest], [etat.zone.bbox.nord, etat.zone.bbox.est]]));
   });
   // Zone de travail
   $effect(() => {
     const z = etat.zone;
+    const trous = etat.reseau?.trous ?? [];
     coucheZone.clearLayers();
-    if (!z) return;
-    L.rectangle([[z.bbox.sud, z.bbox.ouest], [z.bbox.nord, z.bbox.est]], { color: '#c9a227', weight: 2, dashArray: '6 6', fill: false, interactive: false }).addTo(coucheZone);
+    if (z) {
+      for (const c of z.composantes ?? [z]) L.rectangle([[c.bbox.sud, c.bbox.ouest], [c.bbox.nord, c.bbox.est]], { color: '#c9a227', weight: 2, dashArray: '6 6', fill: false, interactive: false }).addTo(coucheZone);
+    }
+    // Tuiles non téléchargées : réseau inconnu, itinéraire refusé s'il les traverse.
+    for (const t of trous) {
+      L.rectangle([[t.sud, t.ouest], [t.nord, t.est]], { color: '#cf2e24', weight: 2, fillColor: '#cf2e24', fillOpacity: 0.25 })
+        .bindTooltip('Réseau non téléchargé (tuile en échec) : itinéraire refusé à travers cette partie. Relancez la préparation pour la compléter.')
+        .addTo(coucheZone);
+    }
   });
 
   // Ouvrages

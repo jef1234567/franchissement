@@ -1,5 +1,6 @@
 import { etat } from './etat.svelte';
-import { chercherDataGouv, departementsDesEmprises, listerCouchesTE, telechargerReseauOSM, telechargerRessource, telechargerWFS } from './enligne';
+import { chercherDataGouv, departementsDesEmprises, listerCouchesTE, SERVEURS_OVERPASS, telechargerReseauOSM, telechargerRessource, telechargerWFS } from './enligne';
+import * as stockage from './stockage';
 import { assemblerReseaux } from '../core/assemblage';
 import { nomFichierRessource, type JeuDataGouv, type RessourceDataGouv } from '../core/datagouv';
 import { appliquerRestrictionsIGN, appliquerTroncsTE, coucheTEUtile, marquerReseauTE, COUCHE_BDTOPO_ROUTES, type EntiteGeo } from '../core/ign';
@@ -9,15 +10,18 @@ import { entitesRestrictions } from '../core/restrictions-lineaires';
 import { construireReseau, extraireOuvrages, type Reseau } from '../core/reseau';
 import { tableDepuisShapefile } from '../core/shapefile';
 import { haversine, type BBox } from '../core/geo';
-import type { Zone } from '../core/paquet';
+import { assemblerZones, type Zone } from '../core/paquet';
 import type { Ouvrage } from '../core/model';
 
 /* =========================================================================
    Préparation d'une zone en un bouton : réseau OSM (par tuiles au-delà de 17 km),
    restrictions IGN BD TOPO, réseau TE IGN, jeux data.gouv reconnus automatiquement.
    Chaque étape a son bilan ; l'échec d'une étape n'arrête que celles qui en dépendent.
-   Les téléchargements réussis sont gardés en mémoire : « Préparer » relancé sur la même
-   zone (après un arrêt ou un échec) reprend sans retélécharger.
+   Les téléchargements réussis sont gardés 30 jours dans le navigateur (IndexedDB) :
+   « Préparer » relancé sur la même zone, même après fermeture de la page, reprend sans
+   retélécharger. Une tuile OSM en échec n'arrête pas tout : le réseau partiel est gardé,
+   la tuile manquante devient un « trou » (rouge sur la carte, itinéraire refusé s'il la traverse).
+   « Ajouter ce carré à la zone » assemble un nouveau carré au réseau déjà chargé.
    ========================================================================= */
 
 export type StatutEtape = 'attente' | 'encours' | 'ok' | 'partiel' | 'echec' | 'saute';
@@ -34,12 +38,35 @@ const ETAPES: Pick<Etape, 'id' | 'libelle'>[] = [
 /** Taille maximale d'un fichier data.gouv importé automatiquement (au-delà : signalé, import manuel). */
 const TAILLE_MAX_AUTO = 50e6;
 
+/** Tuiles OSM téléchargées en même temps quand le serveur Europe sert la zone (les autres serveurs : une à la fois). */
+export const TUILES_SIMULTANEES_EUROPE = 2;
+
+/** Cache à deux niveaux : mémoire (page ouverte), puis navigateur (30 jours). Seules les réussites sont gardées. */
 const cache = new Map<string, unknown>();
+let reutilisees = 0;
 async function enCache<T>(cle: string, f: () => Promise<T>): Promise<T> {
-  if (cache.has(cle)) return cache.get(cle) as T;
+  if (cache.has(cle)) { reutilisees++; return cache.get(cle) as T; }
+  const garde = await stockage.lireCache<T>(cle);
+  if (garde !== undefined) { cache.set(cle, garde); reutilisees++; return garde; }
   const v = await f();
   cache.set(cle, v);
+  await stockage.ecrireCache(cle, v);
   return v;
+}
+
+/** Oublie les téléchargements gardés (mémoire et navigateur). */
+export async function viderCacheTelechargements() {
+  cache.clear();
+  await stockage.viderCache();
+}
+
+/** Exécute f sur chaque élément, n à la fois au plus, résultats dans l'ordre. */
+async function parLots<T, R>(xs: T[], n: number, f: (x: T, i: number) => Promise<R>): Promise<R[]> {
+  const res: R[] = new Array(xs.length);
+  let suivant = 0;
+  const travailleur = async () => { while (suivant < xs.length) { const i = suivant++; res[i] = await f(xs[i], i); } };
+  await Promise.all(Array.from({ length: Math.min(n, xs.length) }, travailleur));
+  return res;
 }
 
 class Preparation {
@@ -49,6 +76,8 @@ class Preparation {
   etapes = $state<Etape[]>([]);
   progression = $state('');
   nonReconnus = $state.raw<JeuNonReconnu[]>([]);
+  /** Dernière action : ajout d'un carré à la zone (la carte ne se recadre pas sur toute la zone). */
+  ajout = $state(false);
   private ctrl: AbortController | null = null;
 
   arreter() { this.ctrl?.abort(); }
@@ -58,13 +87,15 @@ class Preparation {
     if (e) { e.statut = statut; e.message = message; }
   }
 
-  async preparer(centre: [number, number]) {
+  /** Prépare le carré centré sur `centre`. `ajouter` : le carré est assemblé au réseau déjà chargé au lieu de le remplacer. */
+  async preparer(centre: [number, number], ajouter = false) {
     if (this.enCours) return;
     if (etat.horsLigne) { etat.notifier('Mode hors ligne strict activé : la préparation demande un poste connecté.', 'err'); return; }
+    if (ajouter && !etat.reseau) ajouter = false;
     const cote = this.coteKm;
     // Relance sur la zone déjà préparée (carte recadrée entre-temps) : même carré exactement, donc reprise depuis le cache.
     const z = etat.zone;
-    if (z && Math.abs(z.rayonKm * 2 - cote) < 1e-6 && haversine(centre[0], centre[1], z.centre[0], z.centre[1]) < cote * 50) centre = z.centre;
+    if (!ajouter && z && !z.composantes && Math.abs(z.rayonKm * 2 - cote) < 1e-6 && haversine(centre[0], centre[1], z.centre[0], z.centre[1]) < cote * 50) centre = z.centre;
     const bbox = carreAutour(centre, cote);
     const nom = this.nom.trim() || `Zone ${cote} km`;
     this.enCours = true;
@@ -72,10 +103,13 @@ class Preparation {
     const signal = this.ctrl.signal;
     this.etapes = ETAPES.map((e) => ({ ...e, statut: 'attente', message: '' }));
     this.nonReconnus = [];
+    reutilisees = 0;
+    this.ajout = ajouter;
     const t0 = Date.now();
     try {
+      void stockage.purgerCache();
       const tuiles = decouperEnTuiles(bbox, cote);
-      const reseau = await this.etapeOSM(bbox, tuiles, centre, cote, nom, signal);
+      const reseau = await this.etapeOSM(bbox, tuiles, centre, cote, nom, ajouter, signal);
       if (!reseau) {
         for (const id of ['bdtopo', 'te', 'datagouv'] as const) this.etape(id, 'saute', 'sans réseau routier, rien à compléter');
         return;
@@ -88,7 +122,9 @@ class Preparation {
       etat.projet.ouvrages = ouvrages;
       const mn = Math.max(1, Math.round((Date.now() - t0) / 60000));
       const echecs = this.etapes.filter((e) => e.statut === 'echec').length;
-      etat.notifier(`Zone « ${nom} » préparée en ${mn} min${echecs ? ` (${echecs} étape(s) en échec : relancez « Préparer » pour reprendre)` : ''}.`, echecs ? 'err' : 'ok');
+      const trous = reseau.trous?.length ?? 0;
+      const reprise = reutilisees ? ` ; ${reutilisees} téléchargement(s) repris du cache (moins de 30 jours)` : '';
+      etat.notifier(`Zone « ${etat.zone?.nom ?? nom} » ${ajouter ? 'agrandie' : 'préparée'} en ${mn} min${echecs ? ` (${echecs} étape(s) en échec : relancez « Préparer » pour reprendre)` : ''}${trous ? ` ; ${trous} tuile(s) manquante(s), en rouge sur la carte` : ''}${reprise}.`, echecs || trous ? 'err' : 'ok');
     } finally {
       this.enCours = false;
       this.progression = '';
@@ -96,28 +132,52 @@ class Preparation {
     }
   }
 
-  private async etapeOSM(bbox: BBox, tuiles: BBox[], centre: [number, number], cote: number, nom: string, signal: AbortSignal): Promise<Reseau | null> {
+  private async etapeOSM(bbox: BBox, tuiles: BBox[], centre: [number, number], cote: number, nom: string, ajouter: boolean, signal: AbortSignal): Promise<Reseau | null> {
     this.etape('osm', 'encours');
     try {
-      const morceaux: Reseau[] = [];
-      for (let i = 0; i < tuiles.length; i++) {
-        const t = tuiles[i];
-        const json = await enCache(cleEmprise('osm', t), () =>
-          telechargerReseauOSM(t, false, (m) => (this.progression = `Tuile ${i + 1} / ${tuiles.length} : ${m}`), signal, false, true));
-        this.progression = `Tuile ${i + 1} / ${tuiles.length} : construction du graphe…`;
-        await new Promise((r) => setTimeout(r, 10));
-        const r = construireReseau(json as { elements: [] }, t);
-        if (r.aretes.length) morceaux.push(r);
-      }
-      if (!morceaux.length) throw new Error('aucune route dans la zone');
+      const europe = SERVEURS_OVERPASS.some((s) => s.zone?.(bbox));
+      const simultanees = europe ? TUILES_SIMULTANEES_EUROPE : 1;
+      const echecs: { tuile: BBox; motif: string }[] = [];
+      let recues = 0;
+      const resultats = await parLots(tuiles, simultanees, async (t, i) => {
+        try {
+          const json = await enCache(cleEmprise('osm', t), () =>
+            telechargerReseauOSM(t, false, (m) => (this.progression = `Tuile ${i + 1} / ${tuiles.length} : ${m}`), signal, false, true));
+          await new Promise((r) => setTimeout(r, 10));
+          recues++;
+          this.progression = `${recues} tuile(s) reçue(s) sur ${tuiles.length}…`;
+          return construireReseau(json as { elements: [] }, t);
+        } catch (e) {
+          if (signal.aborted) throw e;
+          echecs.push({ tuile: t, motif: (e as Error).message });
+          return null;
+        }
+      });
+      const morceaux = resultats.filter((r): r is Reseau => !!r && r.aretes.length > 0);
+      if (!morceaux.length) throw new Error(echecs.length ? `aucune tuile reçue (${echecs[0].motif})` : 'aucune route dans la zone');
+      // Tuile en échec : réseau partiel gardé, la tuile devient un trou.
+      const trous = echecs.map((x) => x.tuile);
+      morceaux[0] = { ...morceaux[0], trous: [...(morceaux[0].trous ?? []), ...trous] };
+      const zoneCarre: Zone = { nom, centre, rayonKm: cote / 2, bbox };
+      const existant = ajouter && etat.reseau ? (structuredClone($state.snapshot(etat.reseau)) as Reseau) : null;
       this.progression = 'Assemblage des tuiles…';
-      const reseau = morceaux.length > 1 ? assemblerReseaux(morceaux).reseau : morceaux[0];
-      const zone: Zone = { nom, centre, rayonKm: cote / 2, bbox };
+      // Le carré doit couvrir ses propres trous : son emprise est le carré entier, pas l'union des tuiles reçues.
+      const carre = morceaux.length > 1 ? assemblerReseaux(morceaux).reseau : morceaux[0];
+      carre.bbox = bbox;
+      let reseau = carre;
+      let zone = zoneCarre;
+      if (existant) {
+        this.progression = 'Assemblage avec la zone déjà chargée…';
+        reseau = assemblerReseaux([existant, carre]).reseau;
+        zone = assemblerZones(etat.zone ? ($state.snapshot(etat.zone) as Zone) : null, zoneCarre, reseau.bbox) ?? zoneCarre;
+      }
       await etat.definirReseau(reseau, zone);
       const osm = extraireOuvrages(reseau);
       const { ouvrages, ajoutes, completes } = integrerOuvragesOSM($state.snapshot(etat.projet.ouvrages) as Ouvrage[], osm);
       etat.projet.ouvrages = ouvrages;
-      this.etape('osm', 'ok', `${reseau.aretes.length.toLocaleString('fr-FR')} tronçons, ${osm.length} ponts (${ajoutes} nouveaux, ${completes} complétés)${tuiles.length > 1 ? `, ${tuiles.length} tuiles` : ''}`);
+      const base = `${reseau.aretes.length.toLocaleString('fr-FR')} tronçons, ${osm.length} ponts (${ajoutes} nouveaux, ${completes} complétés)${tuiles.length > 1 ? `, ${tuiles.length} tuiles` : ''}${existant ? ', assemblé à la zone existante' : ''}`;
+      if (echecs.length) this.etape('osm', 'partiel', `${base} ; ${echecs.length} tuile(s) non reçue(s), en rouge sur la carte (itinéraire refusé s'il les traverse) : relancez « ${existant ? 'Ajouter ce carré à la zone' : 'Préparer la zone'} » sans bouger la carte pour les compléter. Motif : ${echecs[0].motif}`);
+      else this.etape('osm', 'ok', base);
       return structuredClone($state.snapshot(etat.reseau)) as Reseau;
     } catch (e) {
       this.etape('osm', 'echec', signal.aborted ? 'arrêté' : (e as Error).message);

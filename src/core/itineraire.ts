@@ -2,6 +2,7 @@ import { chargeEssieuVehicule } from './verification';
 import { estNombre, type Ouvrage, type Referentiel, type Voies } from './model';
 import { coordsArete, ouvragesParArete, type Arete, type Reseau } from './reseau';
 import { distancePointSegment, haversine } from './geo';
+import { trouTraverse } from './trous';
 import { classeVehicule, RANG_MODE, verifierConvoi, type ElementConvoi, type ModeRequis, type VerdictConvoi } from './verification';
 
 /* =========================================================================
@@ -371,6 +372,9 @@ export function calculerItineraire(
     pk += e.long;
     duree += tempsArete(e, opt.vitesseConvoiKmh);
   }
+
+  const trou = trouTraverse(coords, r.trous);
+  if (trou) return echec(`Itinéraire refusé : il traverse une partie de la zone dont le réseau n'a pas pu être téléchargé (tracée en rouge sur la carte, ${trou.sud.toFixed(3)}, ${trou.ouest.toFixed(3)} → ${trou.nord.toFixed(3)}, ${trou.est.toFixed(3)}). Relancez « Préparer la zone » pour la compléter.`);
 
   let classeItineraire: number | null = null;
   let maillonFaible: Ouvrage | null = null;

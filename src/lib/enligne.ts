@@ -35,6 +35,15 @@ function attendre(ms: number, signal?: AbortSignal): Promise<void> {
 const texteHTTP = (st: number) => st === 429 ? 'trop de demandes (HTTP 429)' : st === 504 ? 'serveur saturé (HTTP 504)'
   : st === 406 || st === 400 ? `demande refusée (HTTP ${st})` : st === 403 ? 'accès refusé (HTTP 403, réseau filtré ?)' : st >= 500 ? `panne du serveur (HTTP ${st})` : `HTTP ${st}`;
 
+/** File d'attente des serveurs Overpass autres que « Europe » : une seule requête à la fois depuis ce poste
+ *  (le serveur principal n'accorde que deux créneaux par adresse et refuse au-delà). */
+let fileOverpass: Promise<unknown> = Promise.resolve();
+function uneALaFois<T>(f: () => Promise<T>): Promise<T> {
+  const r = fileOverpass.then(f, f);
+  fileOverpass = r.catch(() => undefined);
+  return r;
+}
+
 /** Lien direct de la requête (méthode manuelle : ouverture dans un onglet puis enregistrement du fichier). */
 export function urlOverpassManuelle(bbox: BBox, inclureSecondaires: boolean, grandsAxes = false): string {
   return 'https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(requeteOverpassReseau(bbox, inclureSecondaires, grandsAxes));
@@ -96,18 +105,30 @@ export async function telechargerReseauOSM(
   for (let tour = 0; tour < DELAIS_OVERPASS.length; tour++) {
     for (const srv of serveurs) {
       if (srv.nom === 'Europe' && videEurope) continue;
-      const t0 = Date.now();
-      const minuteur = setInterval(() => suivi(`Serveur ${srv.nom}${tour ? ` (essai ${tour + 1})` : ''} : ${Math.round((Date.now() - t0) / 1000)} s…`), 1000);
-      suivi(`Serveur ${srv.nom}${tour ? ` (essai ${tour + 1})` : ''}…`);
-      const delai = AbortSignal.timeout(DELAIS_OVERPASS[tour] * 1000);
-      const sig = signal ? AbortSignal.any([signal, delai]) : delai;
-      let refus = false;
-      envois++;
+      const libelle = `Serveur ${srv.nom}${tour ? ` (essai ${tour + 1})` : ''}`;
+      let refus = false, delaiEcoule = false;
+      const essai = async (): Promise<{ elements?: unknown[]; remark?: string }> => {
+        const t0 = Date.now();
+        const minuteur = setInterval(() => suivi(`${libelle} : ${Math.round((Date.now() - t0) / 1000)} s…`), 1000);
+        suivi(`${libelle}…`);
+        const delai = AbortSignal.timeout(DELAIS_OVERPASS[tour] * 1000);
+        const sig = signal ? AbortSignal.any([signal, delai]) : delai;
+        envois++;
+        try {
+          const r = await fetch(srv.url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal: sig });
+          if (!r.ok) { refus = r.status === 429 || r.status === 406; throw new Error(texteHTTP(r.status)); }
+          suivi(`Serveur ${srv.nom} : réception des données…`);
+          return (await r.json()) as { elements?: unknown[]; remark?: string };
+        } catch (e) {
+          delaiEcoule = delai.aborted;
+          throw e;
+        } finally {
+          clearInterval(minuteur);
+        }
+      };
       try {
-        const r = await fetch(srv.url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal: sig });
-        if (!r.ok) { refus = r.status === 429 || r.status === 406; throw new Error(texteHTTP(r.status)); }
-        suivi(`Serveur ${srv.nom} : réception des données…`);
-        const j = (await r.json()) as { elements?: unknown[]; remark?: string };
+        // Serveur Europe : plusieurs tuiles à la fois (deux au plus, voir la préparation) ; les autres, une seule requête à la fois.
+        const j = srv.nom === 'Europe' ? await essai() : await uneALaFois(essai);
         if (j.remark && /runtime error|timed out|out of memory/i.test(j.remark)) throw new Error('réponse tronquée : ' + j.remark);
         if (srv.nom === 'Europe' && !j.elements?.length) { videEurope = j; continue; }
         return j;
@@ -115,10 +136,8 @@ export async function telechargerReseauOSM(
         if (signal?.aborted) throw new Error('Téléchargement annulé.');
         const muet = e instanceof TypeError;
         if (muet) bloques++;
-        const msg = delai.aborted ? `pas de réponse en ${DELAIS_OVERPASS[tour]} s` : muet ? 'requête bloquée' : (e as Error).message;
+        const msg = delaiEcoule ? `pas de réponse en ${DELAIS_OVERPASS[tour]} s` : muet ? 'requête bloquée' : (e as Error).message;
         derniers.push(`${srv.nom} : ${msg}`);
-      } finally {
-        clearInterval(minuteur);
       }
       if (refus) { suivi(`Pause de ${PAUSE_REFUS_MS / 1000} s demandée par le serveur ${srv.nom}…`); await attendre(PAUSE_REFUS_MS, signal); }
     }
