@@ -217,8 +217,7 @@ export function appliquerRestrictionsIGN(r: Reseau, ouvrages: Ouvrage[], entites
         if (res.gue && !e.gue) { e.gue = 1; change = true; }
         if (res.barre && !e.barre) { e.barre = 1; change = true; }
         if (change) modifiees.add(a.arete);
-        const o = parArete.get(ia)?.at(-1);
-        if (o) {
+        for (const o of parArete.get(ia) ?? []) {
           const nAvant = o.desaccords?.length ?? 0;
           for (const [k, champ, libelle] of CHAMPS) {
             const v = res[k];
@@ -251,8 +250,7 @@ export function marquerReseauTE(r: Reseau, ouvrages: Ouvrage[], entites: EntiteG
       for (const p of l) {
         const a = areteLaPlusProche(r, p, { pontsSeuls: true, rayonM });
         if (!a) continue;
-        const o = parArete.get(a.arete)?.at(-1);
-        if (o && !o.notes.includes(marque)) { o.notes = [o.notes, marque].filter(Boolean).join('\n'); n++; }
+        for (const o of parArete.get(a.arete) ?? []) if (!o.notes.includes(marque)) { o.notes = [o.notes, marque].filter(Boolean).join('\n'); n++; }
       }
     }
   }
@@ -297,8 +295,7 @@ export function appliquerTroncsTE(r: Reseau, ouvrages: Ouvrage[], entites: Entit
         rapproche = true;
         if (!estNombre(e.te) || cat > e.te) e.te = cat;
         aretes.add(c[0].arete);
-        const o = parArete.get(c[0].arete)?.at(-1);
-        if (o) {
+        for (const o of parArete.get(c[0].arete) ?? []) {
           const note = `[IGN TE] Réseau des transports exceptionnels, catégorie ${cat} t (information ; prescriptions locales à consulter ; pas une classe MLC).`;
           if (!o.notes.includes(note)) { o.notes = [o.notes, note].filter(Boolean).join('\n'); touches.add(o.id); }
         }

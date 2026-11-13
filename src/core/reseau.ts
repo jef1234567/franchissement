@@ -54,6 +54,8 @@ export interface Reseau {
   aretes: Arete[];
   /** Tuiles dont le téléchargement a échoué (réseau partiel) : tracées en rouge, itinéraire refusé s'il en traverse une. */
   trous?: BBox[];
+  /** Emprises réellement téléchargées (un assemblage de carrés n'est pas son rectangle englobant). Absent : `bbox`. */
+  emprises?: BBox[];
 }
 
 /** Requête Overpass du réseau. `modeste` (tuiles de la préparation en un bouton) : 90 s et 512 Mo déclarés,

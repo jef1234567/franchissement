@@ -7,7 +7,7 @@ import { appliquerRestrictionsIGN, appliquerTroncsTE, coucheTEUtile, marquerRese
 import { appliquerFusion, convertirOuvrages, integrerOuvragesOSM, planifierFusion, tableDepuisCSV, tableDepuisGeoJSON, tableDepuisKML, type TableImport } from '../core/importation';
 import { carreAutour, cleEmprise, decouperEnTuiles, dedoublonnerEntites, filtrerDansEmprise, reconnaitreJeu } from '../core/preparation';
 import { entitesRestrictions } from '../core/restrictions-lineaires';
-import { construireReseau, extraireOuvrages, type Reseau } from '../core/reseau';
+import { construireReseau, extraireOuvrages, requeteOverpassReseau, type Reseau } from '../core/reseau';
 import { tableDepuisShapefile } from '../core/shapefile';
 import { haversine, type BBox } from '../core/geo';
 import { assemblerZones, type Zone } from '../core/paquet';
@@ -44,11 +44,23 @@ export const TUILES_SIMULTANEES_EUROPE = 2;
 /** Cache à deux niveaux : mémoire (page ouverte), puis navigateur (30 jours). Seules les réussites sont gardées. */
 const cache = new Map<string, unknown>();
 let reutilisees = 0;
-async function enCache<T>(cle: string, f: () => Promise<T>): Promise<T> {
+/** À augmenter dès que les requêtes ou leur lecture changent : les réponses gardées sous l'ancienne version sont ignorées. */
+const VERSION_CACHE = 1;
+/** Empreinte courte d'un texte (requête Overpass) : une requête modifiée ne réutilise pas une réponse gardée. */
+function empreinte(t: string): string {
+  let h = 2166136261;
+  for (let i = 0; i < t.length; i++) h = Math.imul(h ^ t.charCodeAt(i), 16777619);
+  return (h >>> 0).toString(36);
+}
+/** Réponse Overpass vide du seul serveur Europe, non confirmée par un autre serveur : ni gardée, ni prise pour une zone sans route. */
+const nonConfirmee = (v: unknown) => !!v && typeof v === 'object' && Array.isArray((v as { elements?: unknown[] }).elements) && !(v as { elements: unknown[] }).elements.length && !!(v as { nonConfirme?: boolean }).nonConfirme;
+async function enCache<T>(cleBrute: string, f: () => Promise<T>): Promise<T> {
+  const cle = `v${VERSION_CACHE}:${cleBrute}`;
   if (cache.has(cle)) { reutilisees++; return cache.get(cle) as T; }
   const garde = await stockage.lireCache<T>(cle);
   if (garde !== undefined) { cache.set(cle, garde); reutilisees++; return garde; }
   const v = await f();
+  if (nonConfirmee(v)) return v;
   cache.set(cle, v);
   await stockage.ecrireCache(cle, v);
   return v;
@@ -59,6 +71,9 @@ export async function viderCacheTelechargements() {
   cache.clear();
   await stockage.viderCache();
 }
+
+/** Oubli en mémoire seulement (après « Tout effacer », qui vide déjà le navigateur). */
+export function oublierCacheMemoire() { cache.clear(); }
 
 /** Exécute f sur chaque élément, n à la fois au plus, résultats dans l'ordre. */
 async function parLots<T, R>(xs: T[], n: number, f: (x: T, i: number) => Promise<R>): Promise<R[]> {
@@ -95,7 +110,9 @@ class Preparation {
     const cote = this.coteKm;
     // Relance sur la zone déjà préparée (carte recadrée entre-temps) : même carré exactement, donc reprise depuis le cache.
     const z = etat.zone;
-    if (!ajouter && z && !z.composantes && Math.abs(z.rayonKm * 2 - cote) < 1e-6 && haversine(centre[0], centre[1], z.centre[0], z.centre[1]) < cote * 50) centre = z.centre;
+    // Même chose pour un ajout : recalage sur le carré déjà ajouté le plus proche (sinon les tuiles changent et un trou n'est jamais comblé).
+    const proches = (z?.composantes ?? (z ? [z] : [])).filter((c) => Math.abs(c.rayonKm * 2 - cote) < 1e-6 && haversine(centre[0], centre[1], c.centre[0], c.centre[1]) < cote * 50);
+    if (z && (ajouter || !z.composantes) && proches.length) centre = proches.sort((a, b) => haversine(centre[0], centre[1], a.centre[0], a.centre[1]) - haversine(centre[0], centre[1], b.centre[0], b.centre[1]))[0].centre;
     const bbox = carreAutour(centre, cote);
     const nom = this.nom.trim() || `Zone ${cote} km`;
     this.enCours = true;
@@ -141,8 +158,9 @@ class Preparation {
       let recues = 0;
       const resultats = await parLots(tuiles, simultanees, async (t, i) => {
         try {
-          const json = await enCache(cleEmprise('osm', t), () =>
+          const json = await enCache(cleEmprise('osm-' + empreinte(requeteOverpassReseau(t, false, false, true)), t), () =>
             telechargerReseauOSM(t, false, (m) => (this.progression = `Tuile ${i + 1} / ${tuiles.length} : ${m}`), signal, false, true));
+          if (nonConfirmee(json)) throw new Error('réponse vide du serveur Europe, non confirmée par un autre serveur');
           await new Promise((r) => setTimeout(r, 10));
           recues++;
           this.progression = `${recues} tuile(s) reçue(s) sur ${tuiles.length}…`;
@@ -164,6 +182,7 @@ class Preparation {
       // Le carré doit couvrir ses propres trous : son emprise est le carré entier, pas l'union des tuiles reçues.
       const carre = morceaux.length > 1 ? assemblerReseaux(morceaux).reseau : morceaux[0];
       carre.bbox = bbox;
+      carre.emprises = [bbox];
       let reseau = carre;
       let zone = zoneCarre;
       if (existant) {

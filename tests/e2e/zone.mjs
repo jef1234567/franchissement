@@ -42,7 +42,11 @@ await ctx.route(/^https?:/, async (r) => {
     if (panne) {
       const bb = bboxRequete(r);
       bboxEnPanne ??= bb;
-      if (bb === bboxEnPanne) return r.fulfill({ status: 504, headers: cors, body: '' });
+      // Tuile en panne : le serveur Europe répond « aucune route » (réponse vide), les autres sont saturés.
+      // Cette réponse non confirmée ne doit ni être gardée en cache ni prise pour une zone sans route : c'est un trou.
+      if (bb === bboxEnPanne) return u.host === 'ovp.dresel.systems'
+        ? r.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: '{"elements":[]}' })
+        : r.fulfill({ status: 504, headers: cors, body: '' });
     }
     n.overpass++;
     return r.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: overpass });
@@ -130,7 +134,7 @@ await page.getByRole('textbox', { name: 'Aller à' }).fill('47.27, 0.37');
 await page.getByRole('button', { name: 'Centrer la carte' }).click();
 await page.getByRole('button', { name: 'Ajouter ce carré à la zone' }).click();
 await page.getByText(/agrandie en .*1 tuile\(s\) manquante\(s\), en rouge/).waitFor({ timeout: 180000 }).catch(async (e) => { console.log(await page.locator('body').innerText()); console.log(hotes.length, n, bboxEnPanne, await page.evaluate(() => window.__toasts)); throw e; });
-verifier(n.overpass - avantAjout === 8, `carré ajouté : 8 tuiles reçues sur 9 (${n.overpass - avantAjout})`);
+verifier(n.overpass - avantAjout === 8, `carré ajouté : 8 tuiles reçues sur 9, la 9e vide « non confirmée » traitée en trou (${n.overpass - avantAjout})`);
 verifier(await page.getByText(/assemblé à la zone existante ; 1 tuile\(s\) non reçue\(s\)/).isVisible(), 'étape OSM partielle, réseau assemblé à la zone existante');
 const trous = await page.evaluate(() => new Promise((res) => {
   const req = indexedDB.open('franchir');

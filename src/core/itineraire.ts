@@ -123,7 +123,7 @@ class Tas {
 
 interface ContexteContraintes {
   /** tronçon → ouvrage (un ouvrage rattaché à une voie ordinaire ne porte que les tronçons proches de sa position) */
-  ouvrageParArete: Map<Arete, Ouvrage>;
+  ouvrageParArete: Map<Arete, Ouvrage[]>;
   /** tronçon → petits ouvrages sous chaussée (avertissement seulement, jamais de verdict ni de blocage). */
   petitsParArete: Map<Arete, Ouvrage[]>;
   verdicts: Map<string, VerdictConvoi>;
@@ -147,9 +147,9 @@ export function dimensionsConvoi(elements: ElementConvoi[]) {
 }
 
 function preparer(r: Reseau, ouvrages: Ouvrage[], elements: ElementConvoi[], ref: Referentiel, opt: OptionsItineraire): ContexteContraintes {
-  const ouvrageParArete = new Map<Arete, Ouvrage>();
-  // Deux ouvrages sur un même tronçon : le dernier l'emporte (comme avant, par voie).
-  for (const [i, l] of ouvragesParArete(r, ouvrages)) ouvrageParArete.set(r.aretes[i], l[l.length - 1]);
+  // Plusieurs ouvrages sur un même tronçon (sources non fusionnées) : tous comptent, le plus contraignant décide.
+  const ouvrageParArete = new Map<Arete, Ouvrage[]>();
+  for (const [i, l] of ouvragesParArete(r, ouvrages)) ouvrageParArete.set(r.aretes[i], l);
   const petitsParArete = new Map<Arete, Ouvrage[]>();
   for (const [i, l] of ouvragesParArete(r, ouvrages, { petits: true })) petitsParArete.set(r.aretes[i], l);
   const verdicts = new Map<string, VerdictConvoi>();
@@ -181,22 +181,23 @@ function preparer(r: Reseau, ouvrages: Ouvrage[], elements: ElementConvoi[], ref
       if (!opt.autoroutes && (e.hw === 'motorway' || e.hw === 'motorway_link')) return true;
       if (civilBloque(e)) return true;
       if (e.gue && (opt.gues ?? 'eviter') === 'eviter') return true;
-      const o = ouvrageParArete.get(e);
-      if (!o) return false;
-      if (exclus.has(o.id)) return true;
-      const m = verdict(o).mode;
-      if (m === 'interdit') return true;
-      if (m === 'inconnu') return opt.inconnus === 'bloquer';
-      return RANG_MODE[m] > rangMax;
+      return (ouvrageParArete.get(e) ?? []).some((o) => {
+        if (exclus.has(o.id)) return true;
+        const m = verdict(o).mode;
+        if (m === 'interdit') return true;
+        if (m === 'inconnu') return opt.inconnus === 'bloquer';
+        return RANG_MODE[m] > rangMax;
+      });
     },
     surcout: (e) => {
-      const o = ouvrageParArete.get(e);
-      if (!o) return 0;
-      const m = verdict(o).mode;
-      if (m === 'inconnu' && opt.inconnus === 'penaliser') return opt.penaliteInconnuMin * 60;
-      if (m === 'precaution') return 120; // ralentissement / mise en place
-      if (m === 'risque') return 600;
-      return 0;
+      let s = 0;
+      for (const o of ouvrageParArete.get(e) ?? []) {
+        const m = verdict(o).mode;
+        if (m === 'inconnu' && opt.inconnus === 'penaliser') s = Math.max(s, opt.penaliteInconnuMin * 60);
+        if (m === 'precaution') s = Math.max(s, 120); // ralentissement / mise en place
+        if (m === 'risque') s = Math.max(s, 600);
+      }
+      return s;
     },
   };
 }
@@ -324,7 +325,7 @@ export function calculerItineraire(
   const traverses: OuvrageTraverse[] = [];
   // Un ouvrage est compté à chaque passage : tronçons consécutifs d'un même ouvrage = un passage ;
   // un aller-retour sur le même pont = deux passages (deux fenêtres d'occupation).
-  let ouvragePrecedent: string | null = null;
+  let ouvragesPrecedents = new Set<string>();
   const petitsSignales = new Set<string>();
   let precedente: Arete | null = null;
   const dimsConvoi = dimensionsConvoi(elements);
@@ -339,9 +340,9 @@ export function calculerItineraire(
     if (depuis !== e.a) pts = pts.reverse();
     if (coords.length) pts = pts.slice(1);
     coords.push(...pts);
-    const o = ctx.ouvrageParArete.get(e);
-    if (o && o.id !== ouvragePrecedent) {
-      traverses.push({ ouvrage: o, verdict: ctx.verdicts.get(o.id) ?? verifierConvoi(o, elements, opt.voies, ref), pk, tS: duree });
+    const surArete = ctx.ouvrageParArete.get(e) ?? [];
+    for (const o of surArete) {
+      if (!ouvragesPrecedents.has(o.id)) traverses.push({ ouvrage: o, verdict: ctx.verdicts.get(o.id) ?? verifierConvoi(o, elements, opt.voies, ref), pk, tS: duree });
     }
     // Petits ouvrages sous chaussée : avertissement quand l'ouvrage est sur ce tronçon (à 25 m près), une fois par ouvrage.
     for (const p of ctx.petitsParArete.get(e) ?? []) {
@@ -368,7 +369,7 @@ export function calculerItineraire(
     }
     if (estNombre(e.te)) { surTE += e.long; catTE = catTE === null ? e.te : Math.min(catTE, e.te); }
     precedente = e;
-    ouvragePrecedent = o?.id ?? null;
+    ouvragesPrecedents = new Set(surArete.map((o) => o.id));
     pk += e.long;
     duree += tempsArete(e, opt.vitesseConvoiKmh);
   }

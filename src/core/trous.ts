@@ -7,18 +7,23 @@ import type { BBox } from './geo';
    refusé : on n'y connaît ni les routes ni les ponts.
    ========================================================================= */
 
-/** Marge intérieure (degrés, ≈ 10 m) : un tronçon qui longe le bord commun d'une tuile reçue ne compte pas. */
-const MARGE = 1e-4;
+/** Tolérance (degrés, ≈ 0,1 m) : un tronçon posé exactement sur le bord commun avec une tuile reçue ne compte pas.
+ *  Volontairement minuscule : un tracé qui mord le trou, même de quelques mètres, est refusé (sens prudent). */
+const MARGE = 1e-6;
 
 const contient = (b: BBox, c: BBox) => c.sud >= b.sud - 1e-9 && c.nord <= b.nord + 1e-9 && c.ouest >= b.ouest - 1e-9 && c.est <= b.est + 1e-9;
 const recoupe = (a: BBox, b: BBox) => a.sud < b.nord && b.sud < a.nord && a.ouest < b.est && b.ouest < a.est;
 
-/** Trous d'un assemblage : un trou d'un réseau est comblé par un autre réseau dont l'emprise le contient et qui n'a pas de trou à cet endroit. */
-export function trousAssembles(reseaux: { bbox: BBox; trous?: BBox[] }[]): BBox[] {
+/** Emprises réellement téléchargées d'un réseau (jamais le rectangle englobant d'un assemblage). */
+export const emprisesDe = (r: { bbox: BBox; emprises?: BBox[] }) => r.emprises?.length ? r.emprises : [r.bbox];
+
+/** Trous d'un assemblage : un trou d'un réseau est comblé par un autre réseau dont une emprise téléchargée le contient
+ *  et qui n'a pas de trou à cet endroit. Un trou à cheval sur deux emprises reste un trou (sens prudent). */
+export function trousAssembles(reseaux: { bbox: BBox; trous?: BBox[]; emprises?: BBox[] }[]): BBox[] {
   const res: BBox[] = [];
   reseaux.forEach((r, i) => {
     for (const t of r.trous ?? []) {
-      const comble = reseaux.some((x, j) => j !== i && contient(x.bbox, t) && !(x.trous ?? []).some((u) => recoupe(u, t)));
+      const comble = reseaux.some((x, j) => j !== i && emprisesDe(x).some((e) => contient(e, t)) && !(x.trous ?? []).some((u) => recoupe(u, t)));
       if (!comble && !res.some((u) => contient(u, t))) res.push(t);
     }
   });

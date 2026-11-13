@@ -1,6 +1,6 @@
 import { longueurPolyligne, type BBox } from './geo';
 import { coordsArete, type Arete, type Reseau } from './reseau';
-import { trousAssembles } from './trous';
+import { emprisesDe, trousAssembles } from './trous';
 
 /* =========================================================================
    Assemblage de plusieurs réseaux routiers (paquets départementaux, zones)
@@ -172,8 +172,9 @@ export function assemblerReseaux(reseaux: Reseau[]): { reseau: Reseau; bilan: Bi
 
   const sources = [...new Set(reseaux.map((r) => r.source))];
   const trous = trousAssembles(reseaux);
+  const emprises = reseaux.flatMap(emprisesDe);
   return {
-    reseau: { version: 1, bbox: unionBBox(reseaux.map((r) => r.bbox)), creeLe: new Date().toISOString(), source: sources.join(' + '), noeuds, aretes, ...(trous.length ? { trous } : {}) },
+    reseau: { version: 1, bbox: unionBBox(reseaux.map((r) => r.bbox)), creeLe: new Date().toISOString(), source: sources.join(' + '), noeuds, aretes, emprises, ...(trous.length ? { trous } : {}) },
     bilan: { reseaux: reseaux.length, aretesAvant, aretes: aretes.length, noeuds: noeuds.length / 2, waysCommunes, waysDivergentes },
   };
 }

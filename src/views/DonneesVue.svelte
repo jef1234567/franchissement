@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { oublierCacheMemoire } from '../lib/preparation.svelte';
   import { onMount } from 'svelte';
   import { etat, projetParDefaut } from '../lib/etat.svelte';
   import * as stockage from '../lib/stockage';
@@ -471,6 +472,7 @@
   async function toutEffacer() {
     if (!confirm('Effacer TOUTES les données de ce poste (projet, réseau, tuiles) ? Exportez un paquet avant si nécessaire.')) return;
     await stockage.toutEffacer();
+    oublierCacheMemoire();
     etat.projet = projetParDefaut();
     await etat.definirReseau(null, null);
     await etat.definirTuiles([]);

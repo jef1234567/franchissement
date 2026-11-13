@@ -5,8 +5,8 @@
    ========================================================================= */
 
 const NOM_BASE = 'franchir';
-const VERSION_BASE = 2;
-type Magasin = 'kv' | 'tuiles' | 'cache';
+const VERSION_BASE = 1;
+type Magasin = 'kv' | 'tuiles';
 
 let base: Promise<IDBDatabase> | null = null;
 let memoire: Map<string, unknown> | null = null;
@@ -22,7 +22,6 @@ function ouvrir(): Promise<IDBDatabase> {
           const db = req.result;
           if (!db.objectStoreNames.contains('kv')) db.createObjectStore('kv');
           if (!db.objectStoreNames.contains('tuiles')) db.createObjectStore('tuiles');
-          if (!db.objectStoreNames.contains('cache')) db.createObjectStore('cache');
         };
         req.onsuccess = () => resolve(req.result);
         req.onerror = () => reject(req.error);
@@ -103,15 +102,19 @@ export async function viderTuiles(): Promise<void> {
 }
 
 export async function toutEffacer(): Promise<void> {
-  if (memoire) { memoire.clear(); memoireTuiles.clear(); return; }
+  if (memoire) { memoire.clear(); memoireTuiles.clear(); memoireCache.clear(); return; }
   await tx('kv', 'readwrite', (s) => s.clear());
   await tx('tuiles', 'readwrite', (s) => s.clear());
-  await tx('cache', 'readwrite', (s) => s.clear());
 }
 
 /* ---------------- Cache des téléchargements de la préparation de zone ----------------
    Réponses Overpass, IGN, geo.api et data.gouv gardées 30 jours (comme l'outil terrain) :
-   une préparation relancée, même après fermeture de la page, ne retélécharge que ce qui manque. */
+   une préparation relancée, même après fermeture de la page, ne retélécharge que ce qui manque.
+   Rangées dans le magasin « kv » sous le préfixe « cache: » : pas de montée de version de la base
+   (une montée bloquerait les onglets ouverts sur une version antérieure de l'outil). */
+
+const PREFIXE = 'cache:';
+const PLAGE = () => IDBKeyRange.bound(PREFIXE, PREFIXE + '\uffff');
 
 export const DUREE_CACHE_MS = 30 * 24 * 3600 * 1000;
 interface EntreeCache { date: number; valeur: unknown }
@@ -119,7 +122,7 @@ interface EntreeCache { date: number; valeur: unknown }
 /** Valeur en cache si elle a moins de 30 jours, sinon undefined. Une erreur de lecture vaut une absence. */
 export async function lireCache<T>(cle: string): Promise<T | undefined> {
   try {
-    const e = memoire ? memoireCache.get(cle) : await tx<EntreeCache | undefined>('cache', 'readonly', (s) => s.get(cle) as IDBRequest<EntreeCache | undefined>);
+    const e = memoire ? memoireCache.get(cle) : await tx<EntreeCache | undefined>('kv', 'readonly', (s) => s.get(PREFIXE + cle) as IDBRequest<EntreeCache | undefined>);
     if (!e || !(Date.now() - e.date < DUREE_CACHE_MS)) return undefined;
     return e.valeur as T;
   } catch {
@@ -131,7 +134,7 @@ export async function lireCache<T>(cle: string): Promise<T | undefined> {
 export async function ecrireCache(cle: string, valeur: unknown): Promise<boolean> {
   const e: EntreeCache = { date: Date.now(), valeur };
   if (memoire) { memoireCache.set(cle, e); return true; }
-  try { await tx('cache', 'readwrite', (s) => s.put(e, cle)); return true; } catch { return false; }
+  try { await tx('kv', 'readwrite', (s) => s.put(e, PREFIXE + cle)); return true; } catch { return false; }
 }
 
 /** Supprime les entrées de plus de 30 jours ; renvoie le nombre d'entrées restantes. */
@@ -144,9 +147,9 @@ export async function purgerCache(): Promise<number> {
   try {
     const db = await ouvrir();
     return await new Promise<number>((resolve, reject) => {
-      const t = db.transaction('cache', 'readwrite');
+      const t = db.transaction('kv', 'readwrite');
       let restantes = 0;
-      const req = t.objectStore('cache').openCursor();
+      const req = t.objectStore('kv').openCursor(PLAGE());
       req.onsuccess = () => {
         const c = req.result;
         if (!c) return;
@@ -163,7 +166,7 @@ export async function purgerCache(): Promise<number> {
 
 export async function viderCache(): Promise<void> {
   if (memoire) { memoireCache.clear(); return; }
-  await tx('cache', 'readwrite', (s) => s.clear());
+  await tx('kv', 'readwrite', (s) => s.delete(PLAGE()));
 }
 
 export async function estimationQuota(): Promise<{ utilise: number; quota: number } | null> {

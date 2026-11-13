@@ -67,4 +67,20 @@ describe('Rattachement d’un ouvrage au tronçon, pas à toute la voie', () => 
     expect(r.aretes[ouest.i].hmax).toBe(3.2);
     expect(o.civil.hauteurMaxM).toBeNull();
   });
+
+  it('deux ouvrages sur le même tronçon : le plus contraignant décide, quel que soit l’ordre (relecture du lot 2)', () => {
+    const pontWay = reseau.aretes.find((e) => e.pont)!.way;
+    const a = nouvelOuvrage({ id: 'restrictif', nom: 'A', osmWayIds: [pontWay] });
+    const b = nouvelOuvrage({ id: 'autre', nom: 'B', osmWayIds: [pontWay] });
+    const e = reseau.aretes.find((x) => x.way === pontWay)!;
+    const pts: [number, number][] = [[reseau.noeuds[2 * e.a], reseau.noeuds[2 * e.a + 1]], [reseau.noeuds[2 * e.b], reseau.noeuds[2 * e.b + 1]]];
+    const opt = { ...OPTIONS_ITINERAIRE_DEFAUT, ouvragesExclus: ['restrictif'] };
+    const d1 = calculerItineraire(reseau, [a, b], [vbl], ref, pts, opt);
+    const d2 = calculerItineraire(reseau, [b, a], [vbl], ref, pts, opt);
+    expect(d1.ouvrages.map((t) => t.ouvrage.id)).not.toContain('restrictif');
+    expect(d1.ok).toBe(d2.ok);
+    expect(d1.distanceM).toBeCloseTo(d2.distanceM, 3);
+    const libre = calculerItineraire(reseau, [a, b], [vbl], ref, pts, { ...OPTIONS_ITINERAIRE_DEFAUT, penaliteInconnuMin: 0 });
+    expect(libre.ouvrages.map((t) => t.ouvrage.id).sort()).toEqual(['autre', 'restrictif']);
+  });
 });

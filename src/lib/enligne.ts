@@ -148,7 +148,8 @@ export async function telechargerReseauOSM(
       await attendre(ms, signal);
     }
   }
-  if (videEurope) return videEurope; // zone sans route d'après le serveur Europe, aucun autre serveur pour contredire
+  // Zone sans route d'après le seul serveur Europe, aucun autre serveur pour confirmer : marquée (la préparation en fait un trou).
+  if (videEurope) return { ...(videEurope as object), nonConfirme: true };
   if (bloques === envois) {
     const csp = violationsCSP.length > 0;
     throw new ErreurAccesBloque(

@@ -27,6 +27,14 @@ describe('Trous du réseau (tuiles en échec)', () => {
     expect(trousAssembles([a, a])).toEqual([trou]); // pas de doublon
   });
 
+  it('assemblage : le rectangle englobant de carrés assemblés ne comble pas un trou (relecture du lot 2)', () => {
+    const A = { sud: 0, nord: 1, ouest: 0, est: 1 }, B = { sud: 1, nord: 2, ouest: 1, est: 2 }, C = { sud: 1, nord: 2, ouest: 0, est: 1 };
+    const t = { sud: 1.2, nord: 1.4, ouest: 0.2, est: 0.4 };
+    const ab = { bbox: { sud: 0, nord: 2, ouest: 0, est: 2 }, emprises: [A, B] };
+    expect(trousAssembles([ab, { bbox: C, trous: [t] }])).toEqual([t]);
+    expect(trousAssembles([{ bbox: ab.bbox, emprises: [A, B, C] }, { bbox: C, trous: [t] }])).toEqual([]); // C déjà téléchargé ailleurs
+  });
+
   const ref = referentielParDefaut();
   const vbl = { vehicule: vehiculesParDefaut().find((x) => x.id === 'vbl')!, quantite: 1, etat: 'charge' as const };
   const reseau = construireReseau(overpassSynthetique() as never, { sud: 47.2, nord: 47.3, ouest: -0.2, est: 0 });
@@ -47,5 +55,6 @@ describe('Trous du réseau (tuiles en échec)', () => {
     expect(assemblerReseaux([avecTrou, reseau]).reseau.trous).toEqual([trou]);
     const couvrant = { ...reseau, bbox: { sud: 46.5, nord: 47.5, ouest: -0.5, est: 0.5 } };
     expect(assemblerReseaux([avecTrou, couvrant]).reseau.trous).toBeUndefined();
+    expect(assemblerReseaux([avecTrou, couvrant]).reseau.emprises).toEqual([reseau.bbox, couvrant.bbox]);
   });
 });
