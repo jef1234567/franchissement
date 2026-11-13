@@ -32,6 +32,13 @@ export interface Arete {
   lmax?: number;
   /** Charge maximale à l'essieu signalée (t). */
   emax?: number;
+  /** Longueur maximale de véhicule signalée (m) — BD TOPO restriction_de_longueur, OSM maxlength. */
+  lgmax?: number;
+  /** Gué ou radier (BD TOPO position « Gué ou radier », OSM ford). */
+  gue?: 1;
+  /** Passage barré (BD TOPO nature_de_la_restriction, OSM barrier/access=no non retenus). */
+  barre?: 1;
+  /** Largeur de chaussée (m), indicative. */
   largeur?: number;
 }
 
@@ -102,6 +109,7 @@ function sensOSM(tags: Record<string, string>): 0 | 1 | -1 {
 
 const EST_PONT = (t: Record<string, string>) => !!t.bridge && t.bridge !== 'no';
 const EST_TUNNEL = (t: Record<string, string>) => !!t.tunnel && t.tunnel !== 'no';
+const EST_GUE = (t: Record<string, string>) => !!t.ford && t.ford !== 'no';
 
 interface ElemOSM {
   type: 'node' | 'way' | 'relation';
@@ -147,6 +155,7 @@ export function construireReseau(json: { elements?: ElemOSM[] }, bbox: BBox, sou
       sens: sensOSM(t),
       ...(EST_PONT(t) ? { pont: 1 as const } : {}),
       ...(EST_TUNNEL(t) ? { tunnel: 1 as const } : {}),
+      ...(EST_GUE(t) ? { gue: 1 as const } : {}),
       ...(t['bridge:name'] || t.name ? { nom: t['bridge:name'] || t.name } : {}),
       ...(t.ref ? { ref: t.ref } : {}),
     };
@@ -154,12 +163,14 @@ export function construireReseau(json: { elements?: ElemOSM[] }, bbox: BBox, sou
     const lmax = analyserLongueurOSM(t.maxwidth ?? t['maxwidth:physical']);
     const pmax = analyserMasseOSM(t.maxweight ?? t['maxweight:signed']);
     const emax = analyserMasseOSM(t.maxaxleload);
+    const lgmax = analyserLongueurOSM(t.maxlength);
     const largeur = analyserLongueurOSM(t.width ?? t.est_width);
     const restr = {
       ...(hmax !== null ? { hmax } : {}),
       ...(lmax !== null ? { lmax } : {}),
       ...(pmax !== null ? { pmax } : {}),
       ...(emax !== null ? { emax } : {}),
+      ...(lgmax !== null ? { lgmax } : {}),
       ...(largeur !== null ? { largeur } : {}),
     };
     let debut = 0;

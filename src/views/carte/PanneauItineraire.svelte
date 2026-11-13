@@ -96,6 +96,7 @@
       <div class="pile" style="gap:6px;justify-content:flex-end">
         <label class="case"><input type="checkbox" bind:checked={iti.options.restrictionsCiviles} /> Respecter les restrictions civiles</label>
         <label class="case"><input type="checkbox" bind:checked={iti.options.autoroutes} /> Autoroutes autorisées</label>
+        <label class="case"><input type="checkbox" checked={iti.options.gues === 'autoriser'} onchange={(e) => (iti.options.gues = (e.target as HTMLInputElement).checked ? 'autoriser' : 'eviter')} /> Gués et radiers autorisés <span class="muted">(signalés, à reconnaître)</span></label>
       </div>
     </div>
     {#if iti.options.ouvragesExclus.length}

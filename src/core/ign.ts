@@ -64,7 +64,17 @@ export interface RestrictionsIGN {
   emax: number | null;
   hmax: number | null;
   lmax: number | null;
+  /** Longueur maximale (m) : restriction_de_longueur. */
+  lgmax: number | null;
+  /** Largeur de chaussée (m), indicative : largeur_de_chaussee. */
+  largeur: number | null;
+  /** position_par_rapport_au_sol = « Gué ou radier ». */
+  gue: boolean;
+  /** nature_de_la_restriction = « Passage barré » (route fermée par une barrière). */
+  barre: boolean;
 }
+
+const sansAccents = (s: unknown) => String(s ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
 
 export function restrictionsBDTOPO(p: Record<string, unknown>): RestrictionsIGN {
   return {
@@ -72,7 +82,16 @@ export function restrictionsBDTOPO(p: Record<string, unknown>): RestrictionsIGN 
     emax: nombreIGN(p.restriction_de_poids_par_essieu),
     hmax: nombreIGN(p.restriction_de_hauteur),
     lmax: nombreIGN(p.restriction_de_largeur),
+    lgmax: nombreIGN(p.restriction_de_longueur),
+    largeur: nombreIGN(p.largeur_de_chaussee),
+    gue: sansAccents(p.position_par_rapport_au_sol) === 'gue ou radier',
+    barre: sansAccents(p.nature_de_la_restriction) === 'passage barre',
   };
+}
+
+/** Le tronçon porte-t-il une information utile à FRANCHIR (hors largeur de chaussée, trop courante pour justifier un rapprochement à elle seule) ? */
+export function restrictionUtile(r: RestrictionsIGN): boolean {
+  return r.pmax != null || r.emax != null || r.hmax != null || r.lmax != null || r.lgmax != null || r.gue || r.barre;
 }
 
 /** Points [lat, lon] d'une géométrie linéaire.
@@ -111,6 +130,7 @@ export function pointsEchantillon(l: [number, number][]): [number, number][] {
 export function niveauBDTOPO(p: Record<string, unknown>): number | null {
   const v = p.position_par_rapport_au_sol;
   if (v == null || v === '') return null;
+  if (sansAccents(v) === 'gue ou radier') return 0; // au niveau du sol
   const n = parseInt(String(v), 10);
   return Number.isFinite(n) ? n : null;
 }
@@ -146,7 +166,7 @@ export interface BilanIGN {
   ambigus: number;
 }
 
-const CHAMPS: [keyof RestrictionsIGN, keyof Ouvrage['civil'], string][] = [
+const CHAMPS: ['pmax' | 'emax' | 'hmax' | 'lmax', keyof Ouvrage['civil'], string][] = [
   ['pmax', 'poidsMaxT', 'tonnage civil'],
   ['emax', 'essieuMaxT', "charge civile à l'essieu"],
   ['hmax', 'hauteurMaxM', 'hauteur civile'],
@@ -165,7 +185,7 @@ export function appliquerRestrictionsIGN(r: Reseau, ouvrages: Ouvrage[], entites
   const date = new Date().toISOString();
   for (const f of entites) {
     const res = restrictionsBDTOPO(f.properties ?? {});
-    if (res.pmax == null && res.emax == null && res.hmax == null && res.lmax == null) continue;
+    if (!restrictionUtile(res)) continue;
     bilan.avecRestriction++;
     const props = f.properties ?? {};
     const niveau = niveauBDTOPO(props);
@@ -192,6 +212,11 @@ export function appliquerRestrictionsIGN(r: Reseau, ouvrages: Ouvrage[], entites
           const actuel = e[k];
           if (!estNombre(actuel) || v < actuel) { e[k] = v; change = true; }
         }
+        // Champs propres aux tronçons (pas de report sur la fiche d'ouvrage).
+        if (res.lgmax != null && (!estNombre(e.lgmax) || res.lgmax < e.lgmax)) { e.lgmax = res.lgmax; change = true; }
+        if (res.largeur != null && (!estNombre(e.largeur) || res.largeur < e.largeur)) { e.largeur = res.largeur; change = true; }
+        if (res.gue && !e.gue) { e.gue = 1; change = true; }
+        if (res.barre && !e.barre) { e.barre = 1; change = true; }
         if (change) modifiees.add(a.arete);
         const o = parWay.get(e.way);
         if (o) {

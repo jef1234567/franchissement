@@ -50,7 +50,7 @@ class EtatItineraire {
       this.resultat = calculerItineraire(r, ouvrages, dev.elements, ref, pts, opts);
       // Itinéraire de comparaison : plus court sans contrainte de franchissement.
       this.reference = calculerItineraire(r, ouvrages, dev.elements, ref, pts, {
-        ...opts, modeMax: 'risque', inconnus: 'autoriser', restrictionsCiviles: false, ouvragesExclus: [],
+        ...opts, modeMax: 'risque', inconnus: 'autoriser', restrictionsCiviles: false, ouvragesExclus: [], gues: 'autoriser',
         voies: opts.voies,
       });
       // Délai cumulé de franchissement des ouvrages traversés (écoulement du convoi à chaque ouvrage).

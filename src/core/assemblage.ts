@@ -25,7 +25,7 @@ import { coordsArete, type Arete, type Reseau } from './reseau';
    (connexion manquante : sens prudent, l'itinéraire n'y passe pas).
    ========================================================================= */
 
-const CHAMPS_MIN = ['hmax', 'pmax', 'lmax', 'emax', 'largeur'] as const;
+const CHAMPS_MIN = ['hmax', 'pmax', 'lmax', 'emax', 'lgmax', 'largeur'] as const;
 
 export interface BilanAssemblage {
   reseaux: number;
@@ -63,6 +63,8 @@ function combiner(sources: Arete[]): Omit<Arete, 'a' | 'b' | 'long' | 'geom'> {
   for (const s of sources.slice(1)) {
     if (s.pont) r.pont = 1;
     if (s.tunnel) r.tunnel = 1;
+    if (s.gue) r.gue = 1;
+    if (s.barre) r.barre = 1;
     if (r.nom == null && s.nom != null) r.nom = s.nom;
     if (r.ref == null && s.ref != null) r.ref = s.ref;
     if (r.sens === 0 && s.sens !== 0) r.sens = s.sens; // sens unique : plus restrictif

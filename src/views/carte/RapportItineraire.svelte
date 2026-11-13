@@ -31,7 +31,7 @@
       <tr><th>Durée de marche</th><td>{formatDuree(res.dureeS)} (vitesse max. {iti.options.vitesseConvoiKmh} km/h)</td></tr>
       <tr><th>Classe d'itinéraire</th><td>{res.classeItineraire ?? '—'}{res.maillonFaible ? ` — maillon faible : ${res.maillonFaible.nom}` : ''}</td></tr>
       <tr><th>Écoulement cumulé aux ouvrages</th><td>{iti.ecoulementTotalS != null ? formatDuree(iti.ecoulementTotalS) : '—'}</td></tr>
-      <tr><th>Contraintes</th><td>{iti.options.voies === 'unique' ? 'Voie unique' : 'Double voie'} ; franchissement toléré : {iti.options.modeMax} ; restrictions civiles {iti.options.restrictionsCiviles ? 'respectées' : 'ignorées'}</td></tr>
+      <tr><th>Contraintes</th><td>{iti.options.voies === 'unique' ? 'Voie unique' : 'Double voie'} ; franchissement toléré : {iti.options.modeMax} ; restrictions civiles {iti.options.restrictionsCiviles ? 'respectées' : 'ignorées'} ; gués {iti.options.gues === 'autoriser' ? 'autorisés' : 'évités'}</td></tr>
     </tbody>
   </table>
   {#if mlcSupposees.length}

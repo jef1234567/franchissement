@@ -147,17 +147,18 @@
     untrack(dessinerReseau);
   });
 
-  // Restrictions civiles du réseau (hauteur, largeur, tonnage)
+  // Restrictions civiles du réseau (hauteur, largeur, tonnage, essieu, longueur, passage barré) et gués
   $effect(() => {
     const r = etat.reseau;
     const aff = afficherRestrictions;
     coucheRestrictions.clearLayers();
     if (!r || !aff) return;
     for (const e of r.aretes) {
-      if (e.hmax == null && e.lmax == null && e.pmax == null) continue;
-      const txt = [e.hmax != null && `hauteur ${e.hmax} m`, e.lmax != null && `largeur ${e.lmax} m`, e.pmax != null && `${e.pmax} t`].filter(Boolean).join(' · ');
-      L.polyline(coordsArete(r, e), { renderer: rendu, color: '#7a3cc8', weight: 6, opacity: 0.75 })
-        .bindTooltip(`Restriction civile : ${txt}${e.nom ? ' — ' + e.nom : ''}`)
+      if (e.hmax == null && e.lmax == null && e.pmax == null && e.emax == null && e.lgmax == null && !e.barre && !e.gue) continue;
+      const txt = [e.hmax != null && `hauteur ${e.hmax} m`, e.lmax != null && `largeur ${e.lmax} m`, e.pmax != null && `${e.pmax} t`, e.emax != null && `${e.emax} t/essieu`, e.lgmax != null && `longueur ${e.lgmax} m`, e.barre && 'passage barré'].filter(Boolean).join(' · ');
+      const titre = [txt && `Restriction civile : ${txt}`, e.gue && 'Gué ou radier (à reconnaître)'].filter(Boolean).join(' — ');
+      L.polyline(coordsArete(r, e), { renderer: rendu, color: e.gue && !txt ? '#0e7490' : '#7a3cc8', weight: 6, opacity: 0.75, dashArray: e.gue ? '6 4' : undefined })
+        .bindTooltip(`${titre}${e.nom ? ' — ' + e.nom : ''}`)
         .addTo(coucheRestrictions);
     }
   });
@@ -259,7 +260,7 @@
       </select>
     </label>
     <label class="case"><input type="checkbox" bind:checked={afficherReseau} disabled={!etat.reseau} /> Réseau</label>
-    <label class="case"><input type="checkbox" bind:checked={afficherRestrictions} disabled={!etat.reseau} /> Restrictions civiles</label>
+    <label class="case"><input type="checkbox" bind:checked={afficherRestrictions} disabled={!etat.reseau} /> Restrictions et gués</label>
     {#if convoisTraces.length}<label class="case"><input type="checkbox" bind:checked={afficherConvois} /> Convois ({convoisTraces.length})</label>{/if}
     <button class="btn petit" onclick={cadrerZone}><Icone nom="viseur" taille={15} /> Cadrer</button>
     {#if etat.horsLigne}<span class="etiquette" title="Aucune requête réseau n'est émise">Hors ligne strict</span>{/if}

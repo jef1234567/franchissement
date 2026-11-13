@@ -31,6 +31,8 @@ export interface OptionsItineraire {
   ouvragesExclus: string[];
   /** Autoroutes autorisées. */
   autoroutes: boolean;
+  /** Gués et radiers : « eviter » (défaut, praticabilité inconnue) ou « autoriser » (signalés en alerte). */
+  gues?: 'eviter' | 'autoriser';
 }
 
 export const OPTIONS_ITINERAIRE_DEFAUT: OptionsItineraire = {
@@ -42,6 +44,7 @@ export const OPTIONS_ITINERAIRE_DEFAUT: OptionsItineraire = {
   vitesseConvoiKmh: 50,
   ouvragesExclus: [],
   autoroutes: true,
+  gues: 'eviter',
 };
 
 export interface OuvrageTraverse {
@@ -131,6 +134,7 @@ export function dimensionsConvoi(elements: ElementConvoi[]) {
   return {
     hauteur: max((e) => e.vehicule.hauteurM),
     largeur: max((e) => e.vehicule.largeurM),
+    longueur: max((e) => e.vehicule.longueurM),
     masse: max((e) => e.vehicule.masseT),
     essieu: max((e) => chargeEssieuVehicule(e.vehicule)),
     classe: max((e) => classeVehicule(e.vehicule, e.etat)),
@@ -157,7 +161,9 @@ function preparer(r: Reseau, ouvrages: Ouvrage[], elements: ElementConvoi[], ref
     ((estNombre(e.hmax) && estNombre(dims.hauteur) && dims.hauteur > e.hmax) ||
       (estNombre(e.lmax) && estNombre(dims.largeur) && dims.largeur > e.lmax) ||
       (estNombre(e.pmax) && estNombre(dims.masse) && dims.masse > e.pmax) ||
-      (estNombre(e.emax) && estNombre(dims.essieu) && dims.essieu > e.emax));
+      (estNombre(e.emax) && estNombre(dims.essieu) && dims.essieu > e.emax) ||
+      (estNombre(e.lgmax) && estNombre(dims.longueur) && dims.longueur > e.lgmax) ||
+      !!e.barre);
 
   return {
     ouvrageParWay,
@@ -165,6 +171,7 @@ function preparer(r: Reseau, ouvrages: Ouvrage[], elements: ElementConvoi[], ref
     bloque: (e) => {
       if (!opt.autoroutes && (e.hw === 'motorway' || e.hw === 'motorway_link')) return true;
       if (civilBloque(e)) return true;
+      if (e.gue && (opt.gues ?? 'eviter') === 'eviter') return true;
       const o = ouvrageParWay.get(e.way);
       if (!o) return false;
       if (exclus.has(o.id)) return true;
@@ -309,6 +316,8 @@ export function calculerItineraire(
   // Un ouvrage est compté à chaque passage : tronçons consécutifs d'un même ouvrage = un passage ;
   // un aller-retour sur le même pont = deux passages (deux fenêtres d'occupation).
   let ouvragePrecedent: string | null = null;
+  let precedente: Arete | null = null;
+  const dimsConvoi = dimensionsConvoi(elements);
   const alertes: AlerteTroncon[] = [];
   let pk = 0;
   let duree = 0;
@@ -322,9 +331,19 @@ export function calculerItineraire(
     if (o && o.id !== ouvragePrecedent) {
       traverses.push({ ouvrage: o, verdict: ctx.verdicts.get(o.id) ?? verifierConvoi(o, elements, opt.voies, ref), pk, tS: duree });
     }
-    if (!opt.restrictionsCiviles && (e.hmax || e.lmax || e.pmax || e.emax)) {
-      alertes.push({ pk, texte: `Restriction civile signalée (${[e.hmax && `h ${e.hmax} m`, e.lmax && `l ${e.lmax} m`, e.pmax && `${e.pmax} t`, e.emax && `${e.emax} t/essieu`].filter(Boolean).join(', ')}) sur ${e.nom || e.ref || 'tronçon'}.` });
+    if (!opt.restrictionsCiviles && (e.hmax || e.lmax || e.pmax || e.emax || e.lgmax || e.barre)) {
+      alertes.push({ pk, texte: `Restriction civile signalée (${[e.hmax && `h ${e.hmax} m`, e.lmax && `l ${e.lmax} m`, e.pmax && `${e.pmax} t`, e.emax && `${e.emax} t/essieu`, e.lgmax && `longueur ${e.lgmax} m`, e.barre && 'passage barré'].filter(Boolean).join(', ')}) sur ${e.nom || e.ref || 'tronçon'}.` });
     }
+    // Alertes de tronçon, une seule fois par voie OSM traversée d'un seul tenant.
+    const memeVoie = precedente !== null && precedente.way === e.way;
+    if (e.gue && !(memeVoie && precedente!.gue)) {
+      alertes.push({ pk, texte: `Gué ou radier sur ${e.nom || e.ref || 'tronçon'} : praticabilité à reconnaître (hauteur d'eau, portance du fond, berges).` });
+    }
+    const etroite = estNombre(e.largeur) && estNombre(dimsConvoi.largeur) && dimsConvoi.largeur > e.largeur;
+    if (etroite && !(memeVoie && estNombre(precedente!.largeur) && dimsConvoi.largeur! > precedente!.largeur)) {
+      alertes.push({ pk, texte: `Chaussée étroite sur ${e.nom || e.ref || 'tronçon'} : ${e.largeur} m (valeur indicative) pour ${dimsConvoi.largeur} m de largeur de véhicule.` });
+    }
+    precedente = e;
     ouvragePrecedent = o?.id ?? null;
     pk += e.long;
     duree += tempsArete(e, opt.vitesseConvoiKmh);

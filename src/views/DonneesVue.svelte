@@ -479,7 +479,7 @@
           </div>
           <div class="pile ign">
             <h4>Compléter avec l'IGN (Géoplateforme)</h4>
-            <p class="muted petit-txt">Restrictions réglementaires de la BD TOPO (poids total, poids par essieu, hauteur, largeur) rapprochées des tronçons ; la valeur la plus contraignante est retenue et les écarts entre sources sont signalés. Le réseau national des transports exceptionnels annote les ouvrages concernés.</p>
+            <p class="muted petit-txt">Restrictions réglementaires de la BD TOPO (poids total, poids par essieu, hauteur, largeur, longueur, passage barré), gués et radiers, largeur de chaussée, rapprochés des tronçons ; la valeur la plus contraignante est retenue et les écarts entre sources sont signalés. Le réseau national des transports exceptionnels annote les ouvrages concernés.</p>
             <div class="ligne">
               <button class="btn" disabled={ignEnCours || etat.horsLigne} onclick={() => completerIGN('bdtopo')}>Restrictions BD TOPO</button>
               <button class="btn" disabled={ignEnCours || etat.horsLigne || (couchesTEdispo != null && !couchesTEchoisies.length)} onclick={() => completerIGN('te')}>{couchesTEdispo ? 'Télécharger le réseau TE' : 'Réseau transports exceptionnels'}</button>
