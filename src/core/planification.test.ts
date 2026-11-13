@@ -64,6 +64,16 @@ describe('Planification multi-convois', () => {
     expect(p.convois[0].occupations).toHaveLength(0);
     expect(p.convois[0].arriveeS).toBeNull();
   });
+  it('ouvrage sans classe : durée estimée non nulle, conflit détecté', () => {
+    const p = planifier(reseau, ouvragesBase, ref, [
+      { ...mvt('A', 'vbl', 10, '06:00'), options: { ...OPTIONS_ITINERAIRE_DEFAUT, inconnus: 'autoriser' } },
+      { ...mvt('B', 'vbl', 10, '06:05'), options: { ...OPTIONS_ITINERAIRE_DEFAUT, inconnus: 'autoriser' } },
+    ], 600);
+    const o = p.convois[0].occupations[0];
+    expect(o.dureeIncertaine).toBe(true);
+    expect(o.finS - o.debutS).toBeGreaterThan(30);
+    expect(p.conflits.length).toBeGreaterThan(0);
+  });
   it('la marge élargit la détection', () => {
     const o = ouvrages[0];
     const occ = (id: string, d: number, f: number): OccupationOuvrage => ({ convoiId: id, convoi: id, ouvrage: o, debutS: d, finS: f, mode: 'normal', dureeIncertaine: false });
@@ -95,8 +105,8 @@ describe('Charge à l’essieu et migration du schéma 2', () => {
   });
   it('un projet schéma 2 se charge avec les nouveaux champs vides', () => {
     const r = lireProjet({ schema: 2, ouvrages: [{ nom: 'X', civil: { poidsMaxT: 12 } }], vehicules: [{ nom: 'Y', masseT: 10 }] });
-    expect(r.projet.ouvrages[0].civil.essieuMaxT).toBeNull();
-    expect(r.projet.ouvrages[0].civil.poidsMaxT).toBe(12);
-    expect(r.projet.vehicules.find((x) => x.nom === 'Y')!.essieux).toBeNull();
+    expect(r.projet.ouvrages![0].civil.essieuMaxT).toBeNull();
+    expect(r.projet.ouvrages![0].civil.poidsMaxT).toBe(12);
+    expect(r.projet.vehicules!.find((x) => x.nom === 'Y')!.essieux).toBeNull();
   });
 });

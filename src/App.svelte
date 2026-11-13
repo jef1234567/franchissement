@@ -6,6 +6,7 @@
   import CarteVue from './views/CarteVue.svelte';
   import OuvragesVue from './views/OuvragesVue.svelte';
   import EcoulementVue from './views/EcoulementVue.svelte';
+  import ConvoisVue from './views/ConvoisVue.svelte';
   import UnitesVue from './views/UnitesVue.svelte';
   import VehiculesVue from './views/VehiculesVue.svelte';
   import DonneesVue from './views/DonneesVue.svelte';
@@ -13,12 +14,13 @@
 
   const NAV: { vue: Vue; libelle: string; icone: string; raccourci: string }[] = [
     { vue: 'carte', libelle: 'Carte & itinéraire', icone: 'route', raccourci: '1' },
-    { vue: 'ecoulement', libelle: 'Écoulement', icone: 'chrono', raccourci: '2' },
-    { vue: 'ouvrages', libelle: 'Ouvrages', icone: 'pont', raccourci: '3' },
-    { vue: 'unites', libelle: 'Unités', icone: 'unites', raccourci: '4' },
-    { vue: 'vehicules', libelle: 'Véhicules', icone: 'camion', raccourci: '5' },
-    { vue: 'donnees', libelle: 'Données & zone', icone: 'donnees', raccourci: '6' },
-    { vue: 'referentiel', libelle: 'Référentiel STANAG', icone: 'livre', raccourci: '7' },
+    { vue: 'convois', libelle: 'Convois', icone: 'camion', raccourci: '2' },
+    { vue: 'ecoulement', libelle: 'Écoulement', icone: 'chrono', raccourci: '3' },
+    { vue: 'ouvrages', libelle: 'Ouvrages', icone: 'pont', raccourci: '4' },
+    { vue: 'unites', libelle: 'Unités', icone: 'unites', raccourci: '5' },
+    { vue: 'vehicules', libelle: 'Véhicules', icone: 'camion', raccourci: '6' },
+    { vue: 'donnees', libelle: 'Données & zone', icone: 'donnees', raccourci: '7' },
+    { vue: 'referentiel', libelle: 'Référentiel STANAG', icone: 'livre', raccourci: '8' },
   ];
 
   onMount(() => {
@@ -128,6 +130,7 @@
       <!-- La carte reste montée pour conserver son état (zoom, itinéraire). -->
       <div class="vue" class:cachee={etat.vue !== 'carte'}><CarteVue visible={etat.vue === 'carte'} /></div>
       {#if etat.vue === 'ouvrages'}<div class="vue"><OuvragesVue /></div>{/if}
+      {#if etat.vue === 'convois'}<div class="vue defile"><ConvoisVue /></div>{/if}
       {#if etat.vue === 'ecoulement'}<div class="vue defile"><EcoulementVue /></div>{/if}
       {#if etat.vue === 'unites'}<div class="vue"><UnitesVue /></div>{/if}
       {#if etat.vue === 'vehicules'}<div class="vue defile"><VehiculesVue /></div>{/if}

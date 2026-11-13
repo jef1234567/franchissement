@@ -80,6 +80,16 @@ export function sEnHeure(s: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}${j > 0 ? ` (J+${j})` : ''}`;
 }
 
+/** Durée de repli quand l'écoulement n'est pas calculable (ouvrage sans classe…) :
+ *  passage de toute la colonne en franchissement normal, longueurs inconnues comptées 10 m. */
+export function dureeEstimee(o: Ouvrage, elements: ElementConvoi[], ref: Referentiel): number {
+  const p = ref.modes.normal;
+  let n = 0, longueur = 0;
+  for (const e of elements) { n += e.quantite; longueur += e.quantite * (e.vehicule.longueurM ?? 10); }
+  const colonne = longueur + Math.max(0, n - 1) * p.espacementM;
+  return (colonne + (o.longueurM ?? 0)) / (p.vitesseKmh / 3.6);
+}
+
 export function planifierConvoi(r: Reseau, ouvrages: Ouvrage[], ref: Referentiel, m: MouvementConvoi): ResultatConvoi {
   const departS = heureEnS(m.heureH) ?? 0;
   const itineraire = calculerItineraire(r, ouvrages, m.elements, ref, m.etapes, m.options);
@@ -91,7 +101,7 @@ export function planifierConvoi(r: Reseau, ouvrages: Ouvrage[], ref: Referentiel
       const ok = e.ok && e.dureeTotaleS > 0;
       occupations.push({
         convoiId: m.id, convoi: m.nom, ouvrage: t.ouvrage, debutS,
-        finS: debutS + (ok ? e.dureeTotaleS : 0), mode: t.verdict.mode, dureeIncertaine: !ok,
+        finS: debutS + (ok ? e.dureeTotaleS : dureeEstimee(t.ouvrage, m.elements, ref)), mode: t.verdict.mode, dureeIncertaine: !ok,
       });
     }
   }

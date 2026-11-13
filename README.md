@@ -26,7 +26,7 @@ Il s'ouvre par double-clic (Edge, Firefox, Chrome) sur un poste Intradef ou isol
 | 5. Valider le référentiel STANAG (valeurs, nom du valideur) | *Référentiel* | isolé |
 | 6. Calculer itinéraires et écoulements, imprimer / exporter (GeoJSON, KML, CSV) | *Carte*, *Écoulement* | isolé |
 
-Raccourcis : `Alt+1…7` (écrans), `Ctrl+Z` / `Ctrl+Y` (annuler / rétablir).
+Raccourcis : `Alt+1…8` (écrans), `Ctrl+Z` / `Ctrl+Y` (annuler / rétablir).
 
 ## Capacités
 
