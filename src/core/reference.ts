@@ -1,4 +1,5 @@
 import type { Propulsion, Referentiel, Unite, Vehicule } from './model';
+import { RELEVE_SOURCES, type FicheSource } from './vehicules-ouverts';
 
 /* =========================================================================
    Référentiel de franchissement (STANAG 2021)
@@ -119,7 +120,49 @@ export const FICHES_OUVERTES: Record<string, FicheOuverte> = {
   vt4: { longueurM: 5.3, largeurM: 2.16, hauteurM: 2.06, masseT: 3.5, source: 'Fiche LPM VT4 (ministère)', notes: 'Largeur avec rétroviseurs (1,86 m sans). Masse = PTAC.' },
 };
 
+/* Relevé de novembre 2026 : corrige les fiches existantes (valeurs hautes) et ajoute les essieux. */
+const RELEVE = new Map(RELEVE_SOURCES.map((r) => [r.id, r]));
+for (const [id, f] of Object.entries(FICHES_OUVERTES)) {
+  const r = RELEVE.get(id);
+  if (!r) continue;
+  if (r.longueurM != null) f.longueurM = Math.max(f.longueurM, r.longueurM);
+  if (r.largeurM != null) f.largeurM = Math.max(f.largeurM ?? 0, r.largeurM);
+  if (r.hauteurM != null) f.hauteurM = Math.max(f.hauteurM ?? 0, r.hauteurM);
+  if (r.masseChargeT != null) f.masseT = Math.max(f.masseT ?? 0, r.masseChargeT);
+  f.essieux = r.essieux;
+  f.chargeEssieuT = r.chargeEssieuMaxT;
+  f.source = r.sources.map((s) => s.split(' — ')[0]).join(' ; ') || f.source;
+  if (r.notes) f.notes = r.notes;
+}
+
+function libelleMLC(r: FicheSource) {
+  return r.mlc != null ? `MLC ${r.mlc} : ${r.mlcSource ?? 'source citée'}` : 'MLC non publiée : à renseigner (STAT / SIMMT)';
+}
+
+/** Véhicules absents de l'outil v1, ajoutés par le relevé en sources ouvertes (MLC vide sauf publication explicite). */
+export function vehiculesReleve(): Vehicule[] {
+  return RELEVE_SOURCES.filter((r) => r.nouveau).map((r) => ({
+    id: r.id,
+    nom: r.nom,
+    propulsion: r.propulsion,
+    mlcCharge: r.mlc,
+    mlcVide: null,
+    longueurM: r.longueurM,
+    largeurM: r.largeurM,
+    hauteurM: r.hauteurM,
+    masseT: r.masseChargeT,
+    essieux: r.essieux,
+    chargeEssieuT: r.chargeEssieuMaxT,
+    provenance: { type: 'reference', libelle: `Sources ouvertes : ${r.sources.map((s) => s.split(' — ')[0]).join(' ; ')} — ${libelleMLC(r)}` },
+    notes: r.notes,
+  }));
+}
+
 export function vehiculesParDefaut(): Vehicule[] {
+  return [...vehiculesV1(), ...vehiculesReleve()];
+}
+
+function vehiculesV1(): Vehicule[] {
   return V1.map(([id, nom, propulsion, mlc, longueur]) => {
     const f = FICHES_OUVERTES[id];
     return {
@@ -154,6 +197,7 @@ export function completerVehicules(vehicules: Vehicule[]): { vehicules: Vehicule
     remplir('largeurM', f.largeurM);
     remplir('hauteurM', f.hauteurM);
     remplir('masseT', f.masseT);
+    if (n.essieux == null && f.essieux != null) { n.essieux = f.essieux; change = true; }
     // Longueur : remplacée seulement si elle venait de l'outil v1 (non sourcée).
     if ((n.longueurM == null || v.provenance.type === 'v1') && n.longueurM !== f.longueurM) { n.longueurM = f.longueurM; change = true; }
     if (change) {
@@ -163,6 +207,9 @@ export function completerVehicules(vehicules: Vehicule[]): { vehicules: Vehicule
     }
     return n;
   });
+  // Ajout des véhicules du relevé absents du projet (identifiant inconnu).
+  const ids = new Set(res.map((v) => v.id));
+  for (const nv of vehiculesReleve()) if (!ids.has(nv.id)) { res.push(nv); modifies.push(nv.nom + ' (ajouté)'); }
   return { vehicules: res, modifies };
 }
 

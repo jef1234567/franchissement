@@ -130,3 +130,16 @@ describe('Désaccords entre sources', () => {
     expect(valeursEnDesaccord(40, 30)).toBe(true);
   });
 });
+
+describe('Relevé véhicules en sources ouvertes', () => {
+  it('ajoute les véhicules sans inventer de classe MLC', async () => {
+    const { vehiculesReleve, completerVehicules } = await import('./reference');
+    const nv = vehiculesReleve();
+    expect(nv.find((x) => x.id === 'serval')).toBeTruthy();
+    for (const x of nv) if (x.id !== 'm1a2') expect(x.mlcCharge).toBeNull();
+    expect(nv.find((x) => x.id === 'm1a2')!.mlcCharge).toBe(73);
+    const base = vehiculesParDefaut().filter((x) => !nv.some((n) => n.id === x.id));
+    const { vehicules } = completerVehicules(base);
+    expect(vehicules.length).toBe(base.length + nv.length);
+  });
+});
