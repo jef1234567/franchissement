@@ -17,13 +17,13 @@ const filtrer = (els: ElemOSM[], garder: (w: ElemOSM) => boolean) => {
 };
 
 describe('Requête grands axes', () => {
-  it('limite aux autoroutes, nationales et départementales principales', () => {
+  it('limite aux autoroutes, nationales et départementales (petites comprises)', () => {
     const q = requeteOverpassReseau(BB, true, true);
     for (const h of HIGHWAYS_GRANDS_AXES) expect(q).toContain(h);
-    expect(q).not.toMatch(/tertiary|residential|track|service/);
+    expect(q).not.toMatch(/residential|unclassified|living_street|track|service/);
   });
   it('sans l\'option, la requête complète est inchangée', () => {
-    expect(requeteOverpassReseau(BB, false)).toContain('tertiary');
+    expect(requeteOverpassReseau(BB, false)).toContain('residential');
   });
 });
 

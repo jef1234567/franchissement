@@ -22,6 +22,20 @@ describe('IGN', () => {
     expect(pointsLigne({ type: 'LineString', coordinates: [[-0.08, 47.26]] })[0][0]).toEqual([47.26, -0.08]);
     expect(pointsLigne({ type: 'LineString', coordinates: [[47.26, -0.08]] })[0][0]).toEqual([47.26, -0.08]);
   });
+  it('ordre des axes déterminé par l\'emprise, y compris outre-mer', () => {
+    // Martinique : lat 14,6 ; lon -61,0 (l'heuristique métropole échouerait sur l'ordre [lat, lon]).
+    const mq = { sud: 14.3, nord: 14.9, ouest: -61.3, est: -60.8 };
+    expect(pointsLigne({ type: 'LineString', coordinates: [[-61.0, 14.6]] }, mq)[0][0]).toEqual([14.6, -61.0]);
+    expect(pointsLigne({ type: 'LineString', coordinates: [[14.6, -61.0]] }, mq)[0][0]).toEqual([14.6, -61.0]);
+    // La Réunion (hémisphère sud).
+    const re = { sud: -21.4, nord: -20.85, ouest: 55.2, est: 55.85 };
+    expect(pointsLigne({ type: 'LineString', coordinates: [[55.45, -21.1], [55.46, -21.11]] }, re)[0]).toEqual([[-21.1, 55.45], [-21.11, 55.46]]);
+    expect(pointsLigne({ type: 'LineString', coordinates: [[-21.1, 55.45]] }, re)[0][0]).toEqual([-21.1, 55.45]);
+    // Métropole avec emprise : inchangé.
+    const sa = { sud: 47.2, nord: 47.3, ouest: -0.2, est: 0 };
+    expect(pointsLigne({ type: 'LineString', coordinates: [[-0.08, 47.26]] }, sa)[0][0]).toEqual([47.26, -0.08]);
+    expect(pointsLigne({ type: 'LineString', coordinates: [[47.26, -0.08]] }, sa)[0][0]).toEqual([47.26, -0.08]);
+  });
   it('URL GetFeature paginée en EPSG:4326', () => {
     const u = new URL(urlGetFeature('BDTOPO_V3:troncon_de_route', bbox, 5000));
     expect(u.searchParams.get('STARTINDEX')).toBe('5000');

@@ -79,7 +79,7 @@ const octets = creerPaquet({
 writeFileSync(new URL('./demo.franchir', import.meta.url), octets);
 // Paquet « grands axes » de la même zone (test de l'assemblage par fusion).
 {
-  const garder = new Set(['motorway', 'trunk', 'primary', 'secondary']);
+  const garder = new Set(['motorway', 'trunk', 'primary', 'secondary', 'tertiary']);
   const ways = el.filter((e) => e.type === 'way' && garder.has(e.tags!.highway.replace('_link', '')));
   const ids = new Set(ways.flatMap((w) => w.nodes!));
   const ga = construireReseau({ elements: [...el.filter((e) => e.type === 'node' && ids.has(e.id)), ...ways] } as never, bbox);

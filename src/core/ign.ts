@@ -75,15 +75,25 @@ export function restrictionsBDTOPO(p: Record<string, unknown>): RestrictionsIGN 
   };
 }
 
-/** Points [lat, lon] d'une géométrie linéaire ; l'ordre des axes est détecté (métropole et outre-mer : |lat| < 52, lon souvent < 10). */
-export function pointsLigne(g: EntiteGeo['geometry']): [number, number][][] {
+/** Points [lat, lon] d'une géométrie linéaire.
+ *  GeoJSON impose [lon, lat], mais certains serveurs renvoient [lat, lon] en EPSG:4326.
+ *  Avec une emprise de référence (celle du réseau), l'ordre retenu est celui qui place le plus de points
+ *  dans l'emprise : valable partout (métropole, outre-mer). À égalité, ordre GeoJSON.
+ *  Sans emprise : heuristique métropole (lat entre 40 et 52, |lon| < 11). */
+export function pointsLigne(g: EntiteGeo['geometry'], ref?: BBox): [number, number][][] {
   if (!g) return [];
-  const lignes = g.type === 'LineString' ? [g.coordinates as number[][]] : g.type === 'MultiLineString' ? (g.coordinates as number[][][]) : [];
-  return lignes.map((l) => l.filter((c) => c.length >= 2).map((c) => {
-    const [x, y] = c;
-    // GeoJSON : [lon, lat]. Certains serveurs renvoient [lat, lon] en EPSG:4326 : en France métropolitaine lat > 40 et lon < 11.
-    return (x > 40 && x < 52 && Math.abs(y) < 11 ? [x, y] : [y, x]) as [number, number];
-  }));
+  const lignes = (g.type === 'LineString' ? [g.coordinates as number[][]] : g.type === 'MultiLineString' ? (g.coordinates as number[][][]) : [])
+    .map((l) => l.filter((c) => c.length >= 2));
+  let inverser: (x: number, y: number) => boolean;
+  if (ref) {
+    const m = 0.05; // marge en degrés : tronçons qui débordent de l'emprise
+    const dedans = (lat: number, lon: number) => lat >= ref.sud - m && lat <= ref.nord + m && lon >= ref.ouest - m && lon <= ref.est + m;
+    let geojson = 0, latLon = 0;
+    for (const l of lignes) for (const [x, y] of l) { if (dedans(y, x)) geojson++; if (dedans(x, y)) latLon++; }
+    const ordreLatLon = latLon > geojson;
+    inverser = () => ordreLatLon;
+  } else inverser = (x, y) => x > 40 && x < 52 && Math.abs(y) < 11;
+  return lignes.map((l) => l.map(([x, y]) => (inverser(x, y) ? [x, y] : [y, x]) as [number, number]));
 }
 
 /** Points d'échantillonnage : milieux de segments et sommets intérieurs. Les extrémités sont exclues :
@@ -161,7 +171,7 @@ export function appliquerRestrictionsIGN(r: Reseau, ouvrages: Ouvrage[], entites
     const niveau = niveauBDTOPO(props);
     const ref = normRef(props.cpx_numero);
     const touchees = new Set<number>();
-    for (const l of pointsLigne(f.geometry)) {
+    for (const l of pointsLigne(f.geometry, r.bbox)) {
       for (const p of pointsEchantillon(l)) {
         const c = candidats(r, p, rayonM, niveau, ref);
         if (!c.length) continue;
@@ -214,7 +224,7 @@ export function marquerReseauTE(r: Reseau, ouvrages: Ouvrage[], entites: EntiteG
   const marque = `[IGN TE] Sur le réseau « ${couche} ».`;
   let n = 0;
   for (const f of entites) {
-    for (const l of pointsLigne(f.geometry)) {
+    for (const l of pointsLigne(f.geometry, r.bbox)) {
       for (const p of l) {
         const a = areteLaPlusProche(r, p, { pontsSeuls: true, rayonM });
         if (!a) continue;

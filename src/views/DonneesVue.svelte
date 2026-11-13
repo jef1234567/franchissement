@@ -447,7 +447,7 @@
           {:else if bboxAdmin}
             <p class="petit-txt" style="align-self:end">Emprise ≈ {Math.round(haversine(bboxAdmin.sud, bboxAdmin.ouest, bboxAdmin.sud, bboxAdmin.est) / 1000)} × {Math.round(haversine(bboxAdmin.sud, bboxAdmin.ouest, bboxAdmin.nord, bboxAdmin.ouest) / 1000)} km (rectangle englobant)</p>
           {/if}
-          <label class="case" style="align-self:end"><input type="checkbox" bind:checked={grandsAxes} /> Grands axes seulement (autoroutes, nationales, départementales principales)</label>
+          <label class="case" style="align-self:end"><input type="checkbox" bind:checked={grandsAxes} /> Grands axes seulement (autoroutes, nationales, départementales)</label>
           {#if !grandsAxes}<label class="case" style="align-self:end"><input type="checkbox" bind:checked={secondaires} /> Inclure chemins de service et pistes</label>{/if}
         </div>
         <p class="muted petit-txt">Couverture nationale : préparez un paquet par département en « grands axes seulement », puis importez-les l'un après l'autre avec « Importer (fusionner) » : les réseaux sont assemblés. Une zone de détail (cercle) peut s'y ajouter de la même façon.</p>

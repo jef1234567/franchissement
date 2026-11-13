@@ -12,10 +12,10 @@ Coller ce texte :
 
 - Réseau national : grands axes sur la France entière, détail fin par zone (**confirmé le 13/11/2026**).
 - Conflits entre convois : simple alerte, sans proposition automatique de décalage.
-- Import militaire : l'import générique existant (CSV, shapefile, GeoJSON, KML avec correspondance des colonnes) couvre les données du 28e GG ; à confirmer s'il s'agit d'un autre outil.
+- Import militaire : l'import générique existant (CSV, shapefile, GeoJSON, KML avec correspondance des colonnes) couvre les données du 28e GG ; format réel inconnu (13/11/2026) : à demander au 28e GG.
 - Tonnage civil → classe MLC : **aucune table de conversion inventée**. L'outil compare la masse réelle du véhicule au tonnage affiché (et la charge à l'essieu à la limite par essieu). Une conversion n'est pas publiée en source ouverte ; à demander au Génie si elle est souhaitée.
 
-## Fait (8 commits, tous testés)
+## Fait (9 commits, tous testés)
 
 | Chantier | Contenu | Où |
 |---|---|---|
@@ -23,11 +23,11 @@ Coller ce texte :
 | Plusieurs convois | Nouvel écran **Convois** (Alt+2) : chaque convoi a son unité, départ, arrivée, heure H, voies, mode maximal ; tableau « qui passe où », conflits sur un même ouvrage (marge réglable), chronogramme d'occupation. Ouvrage sans classe : durée estimée sur la longueur de colonne (sinon aucun conflit n'était détecté) | `src/core/planification.ts`, `src/lib/convois.svelte.ts`, `src/views/ConvoisVue.svelte` |
 | Désaccords entre sources | À chaque fusion, la valeur écartée est conservée (champ, valeur retenue, autre valeur, sources). Filtre « Sources en désaccord » et pastille ≠ dans Ouvrages, bloc dédié dans la fiche, bouton « Traité » | `importation.ts` (`noterDesaccord`), `OuvragesVue.svelte`, `FicheOuvrage.svelte` |
 | Base véhicules | 39 véhicules dont 17 ajoutés (Serval, Griffon EPC/MEPAC, CAESAR Mk II, porte-char TRM 700-100 + SRPB à vide et avec Leclerc, SRPB, VBHP, SPRAT, EFA, PFM, TRM 10000 citerne, VLTP-NP, Boxer, Leopard 2A6, M1A2, Stryker). Corrections à la hausse (VBL, PVP, VBCI, VAB, CAESAR, PPLOG/PPLD, Griffon). Aucune MLC inventée : nouveaux véhicules sans classe (donc jamais déclarés compatibles), sauf M1A2 = 73 (US Army). Le bouton « Compléter (sources ouvertes) » ajoute les nouveaux véhicules aux projets existants | `src/core/vehicules-ouverts.ts`, `reference.ts` |
-| Couverture nationale | Préparation d'une zone par **emprise administrative** (rectangle englobant renvoyé par Nominatim : département, commune…) ou par cercle ; option **« Grands axes seulement »** (`motorway` → `secondary` et bretelles). **Assemblage** de paquets par « Importer (fusionner) » : nœuds reconnus par leurs coordonnées, chaque voie OSM redécoupée à l'union des coupures des paquets, valeur la plus contraignante retenue ; voie de géométrie différente entre paquets → restriction la plus forte appliquée à toute la voie. Zone composite affichée avec ses composantes | `src/core/assemblage.ts`, `paquet.ts` (`assemblerZones`, `libelleZone`), `reseau.ts` (`HIGHWAYS_GRANDS_AXES`), `enligne.ts` (`bboxNominatim`), `DonneesVue.svelte` |
+| Couverture nationale | Préparation d'une zone par **emprise administrative** (rectangle englobant renvoyé par Nominatim : département, commune…) ou par cercle ; option **« Grands axes seulement »** (`motorway` → `tertiary` et bretelles ; petites départementales incluses à la demande du 13/11/2026). **Assemblage** de paquets par « Importer (fusionner) » : nœuds reconnus par leurs coordonnées, chaque voie OSM redécoupée à l'union des coupures des paquets, valeur la plus contraignante retenue ; voie de géométrie différente entre paquets → restriction la plus forte appliquée à toute la voie. Zone composite affichée avec ses composantes | `src/core/assemblage.ts`, `paquet.ts` (`assemblerZones`, `libelleZone`), `reseau.ts` (`HIGHWAYS_GRANDS_AXES`), `enligne.ts` (`bboxNominatim`), `DonneesVue.svelte` |
 | Carte des convois | Itinéraires de tous les convois calculés dans l'écran Convois tracés sur la carte avec leur couleur (départ D, arrivée A, info-bulle nom et distance), légende, case « Convois (n) » pour masquer. Sur un tronçon commun, épaisseurs décroissantes : chaque convoi reste visible en liseré | `src/views/CarteVue.svelte`, `src/lib/convois.svelte.ts` (`couleurConvoi`) |
 | Sources IGN | Bloc « Compléter avec l'IGN » dans Données & zone : restrictions BD TOPO (poids total, par essieu, hauteur, largeur) rapprochées des tronçons OSM, valeur la plus contraignante retenue, écarts tracés ; découverte des couches du réseau national des transports exceptionnels dans le catalogue IGN puis annotation des ouvrages concernés (information, sans classe) | `src/core/ign.ts`, `src/lib/enligne.ts`, `DonneesVue.svelte` |
 
-Tests : 92 tests unitaires (`npm test`) ; bout en bout dans Chromium : `npm run e2e` (existant), `npm run e2e:convois`, `npm run e2e:ign` (service IGN simulé), `npm run e2e:assemblage`. Les fichiers de démonstration se régénèrent par `npx tsx tests/e2e/paquet-demo.ts`. Variable `CHROMIUM` à renseigner si le chemin du navigateur diffère.
+Tests : 95 tests unitaires (`npm test`) ; bout en bout dans Chromium : `npm run e2e` (existant), `npm run e2e:convois`, `npm run e2e:ign` (service IGN simulé), `npm run e2e:assemblage`. Les fichiers de démonstration se régénèrent par `npx tsx tests/e2e/paquet-demo.ts`. Variable `CHROMIUM` à renseigner si le chemin du navigateur diffère.
 
 ## Non vérifié (à faire sur un poste connecté, 15 minutes)
 
@@ -42,13 +42,13 @@ Ordre de grandeur mesuré hors navigateur (Node, réseau synthétique en grille,
 
 ## Reste à faire (ordre proposé)
 
-1. ~~Couverture nationale~~ : fait (voir ci-dessus) ; mesure réelle à faire (« Non vérifié », point 4). À trancher : faut-il ajouter les `tertiary` (petites départementales) aux grands axes ? Limite connue : l'emprise administrative est un rectangle englobant (déborde sur les départements voisins, sans gravité puisque l'assemblage dédoublonne).
+1. ~~Couverture nationale~~ : fait (voir ci-dessus) ; mesure réelle à faire (« Non vérifié », point 4). Limite connue : l'emprise administrative est un rectangle englobant (déborde sur les départements voisins, sans gravité puisque l'assemblage dédoublonne).
 2. ~~Carte~~ : fait (voir ci-dessus).
 3. **Jeux data.gouv départementaux** (ponts, tonnage, réseaux TE locaux) : passer par l'import manuel existant ; liste des jeux repérés dans `docs/SOURCES-NATIONALES.md`.
 4. **Contraintes hors ponts** : tunnels et passages inférieurs (déjà via `maxheight`), gués, giratoires, rétrécissements, selon ce que la BD TOPO fournit vraiment.
 5. **Classes MLC des véhicules** : à faire confirmer par la STAT / SIMMT (aucune n'est publiée en source ouverte). Charge à l'essieu : publiée pour aucun véhicule.
 6. Passer la pull request (brouillon) en prête et la fusionner dans `main` une fois la section « Non vérifié » traitée.
-7. Points d'audit restants (mineurs) : aller-retour sur un même pont compté une seule fois dans les fenêtres d'occupation (`itineraire.ts`, dédoublonnage) ; détection de l'ordre des axes IGN valable pour la métropole seulement ; hauteur du porte-char avec Leclerc inconnue (contrôle signalé incomplet).
+7. ~~Points d'audit restants~~ : aller-retour sur un même ouvrage compté à chaque passage (deux fenêtres d'occupation ; tronçons consécutifs d'un même pont = un passage) ; ordre des axes IGN déterminé par l'emprise du réseau (valable outre-mer). Reste : hauteur du porte-char avec Leclerc **non publiée** (recherche du 13/11/2026 sans résultat : plateau SRPB sans hauteur publiée) ; contrôle de gabarit signalé incomplet, à demander à la SIMMT avec les classes MLC (point 5).
 
 ## Points de vigilance
 

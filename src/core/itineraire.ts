@@ -306,7 +306,9 @@ export function calculerItineraire(
 
   const coords: [number, number][] = [];
   const traverses: OuvrageTraverse[] = [];
-  const vus = new Set<string>();
+  // Un ouvrage est compté à chaque passage : tronçons consécutifs d'un même ouvrage = un passage ;
+  // un aller-retour sur le même pont = deux passages (deux fenêtres d'occupation).
+  let ouvragePrecedent: string | null = null;
   const alertes: AlerteTroncon[] = [];
   let pk = 0;
   let duree = 0;
@@ -317,13 +319,13 @@ export function calculerItineraire(
     if (coords.length) pts = pts.slice(1);
     coords.push(...pts);
     const o = ctx.ouvrageParWay.get(e.way);
-    if (o && !vus.has(o.id)) {
-      vus.add(o.id);
+    if (o && o.id !== ouvragePrecedent) {
       traverses.push({ ouvrage: o, verdict: ctx.verdicts.get(o.id) ?? verifierConvoi(o, elements, opt.voies, ref), pk, tS: duree });
     }
     if (!opt.restrictionsCiviles && (e.hmax || e.lmax || e.pmax || e.emax)) {
       alertes.push({ pk, texte: `Restriction civile signalée (${[e.hmax && `h ${e.hmax} m`, e.lmax && `l ${e.lmax} m`, e.pmax && `${e.pmax} t`, e.emax && `${e.emax} t/essieu`].filter(Boolean).join(', ')}) sur ${e.nom || e.ref || 'tronçon'}.` });
     }
+    ouvragePrecedent = o?.id ?? null;
     pk += e.long;
     duree += tempsArete(e, opt.vitesseConvoiKmh);
   }
@@ -339,7 +341,7 @@ export function calculerItineraire(
       maillonFaible = t.ouvrage;
     }
   }
-  const ouvragesInconnus = traverses.filter((t) => t.verdict.mode === 'inconnu').map((t) => t.ouvrage);
+  const ouvragesInconnus = [...new Set(traverses.filter((t) => t.verdict.mode === 'inconnu').map((t) => t.ouvrage))];
   return { ok: true, coords, distanceM: pk, dureeS: duree, ouvrages: traverses, alertes, classeItineraire, maillonFaible, ouvragesInconnus };
 }
 

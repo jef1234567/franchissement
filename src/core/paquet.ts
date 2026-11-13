@@ -22,7 +22,7 @@ export interface Zone {
   bbox: BBox;
   /** « cercle » (défaut, rayon autour du centre) ou « administrative » (emprise du département, de la commune…). */
   emprise?: 'cercle' | 'administrative';
-  /** Réseau limité aux grands axes (autoroutes, nationales, départementales principales). */
+  /** Réseau limité aux grands axes (autoroutes, nationales, départementales). */
   grandsAxes?: boolean;
   /** Zones assemblées (paquets importés en fusion). */
   composantes?: Zone[];

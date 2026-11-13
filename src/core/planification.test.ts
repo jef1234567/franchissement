@@ -182,3 +182,23 @@ describe('Planification — correctifs de l’audit', () => {
     expect(p.ouvragesPartages[0].convois).toHaveLength(2);
   });
 });
+
+describe('Aller-retour sur un même ouvrage', () => {
+  it('deux passages, deux fenêtres d’occupation distinctes', () => {
+    const m = { ...mvt('AR', 'vbl', 4, '06:00'), etapes: [[47.24, -0.12], [47.28, -0.12], [47.24, -0.12]] as [number, number][] };
+    const p = planifier(reseau, ouvrages, ref, [m], 600);
+    const c = p.convois[0];
+    expect(c.itineraire.ok).toBe(true);
+    const passages = c.itineraire.ouvrages.filter((t) => t.ouvrage.nom === 'Pont Faible');
+    expect(passages.length).toBe(2);
+    expect(passages[1].tS).toBeGreaterThan(passages[0].tS);
+    const occ = c.occupations.filter((o) => o.ouvrage.nom === 'Pont Faible');
+    expect(occ.length).toBe(2);
+    expect(occ[1].debutS).toBeGreaterThanOrEqual(occ[0].finS);
+  });
+  it('pont découpé en plusieurs tronçons : un seul passage', () => {
+    const r = calculerItineraire(reseau, ouvrages, [{ vehicule: v('pplog'), quantite: 1, etat: 'charge' }], ref, [[47.24, -0.08], [47.28, -0.08]], { ...OPTIONS_ITINERAIRE_DEFAUT, inconnus: 'bloquer' });
+    expect(r.ok).toBe(true);
+    expect(r.ouvrages.filter((t) => t.ouvrage.nom === 'Pont Fort').length).toBe(1);
+  });
+});

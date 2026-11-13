@@ -10,8 +10,8 @@ export const HIGHWAYS_PRINCIPAUX = [
   'secondary', 'secondary_link', 'tertiary', 'tertiary_link', 'unclassified', 'residential', 'living_street',
 ];
 export const HIGHWAYS_SECONDAIRES = ['service', 'track'];
-/** Grands axes (paquets départementaux) : autoroutes, voies rapides, routes nationales et départementales principales. */
-export const HIGHWAYS_GRANDS_AXES = ['motorway', 'motorway_link', 'trunk', 'trunk_link', 'primary', 'primary_link', 'secondary', 'secondary_link'];
+/** Grands axes (paquets départementaux) : autoroutes, voies rapides, nationales, départementales (y compris petites départementales, pour les délestages). */
+export const HIGHWAYS_GRANDS_AXES = ['motorway', 'motorway_link', 'trunk', 'trunk_link', 'primary', 'primary_link', 'secondary', 'secondary_link', 'tertiary', 'tertiary_link'];
 
 export interface Arete {
   a: number; // indice nœud
