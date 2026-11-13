@@ -47,6 +47,17 @@ await page.getByRole('button', { name: 'Calculer le plan' }).click();
 await page.getByText(/Aucun conflit/).waitFor();
 verifier(true, 'plus de conflit après décalage de l\'heure H');
 
+// Carte : itinéraires de tous les convois, avec leurs couleurs.
+await page.getByRole('button', { name: /Carte & itinéraire/ }).click();
+await page.getByLabel(/Convois \(2\)/).waitFor();
+const legende = page.locator('.legende-convois');
+verifier((await legende.innerText()).includes('Convoi 1') && (await legende.innerText()).includes('Convoi 2'), 'légende de la carte : les deux convois');
+const couleurs = await legende.locator('i').evaluateAll((l) => l.map((i) => getComputedStyle(i).backgroundColor));
+verifier(couleurs.length === 2 && couleurs[0] !== couleurs[1], 'une couleur distincte par convoi');
+await page.screenshot({ path: path.join(captures, 'carte-convois.png') });
+await page.getByLabel(/Convois \(2\)/).uncheck();
+verifier(!(await legende.isVisible()), 'affichage des convois désactivable');
+
 verifier(erreurs.length === 0, 'aucune erreur JavaScript ' + erreurs.join(' | '));
 await nav.close();
 if (echecs.length) { console.error(echecs.length + ' échec(s)'); process.exit(1); }

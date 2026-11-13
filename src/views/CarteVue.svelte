@@ -3,6 +3,7 @@
   import L from 'leaflet';
   import { etat } from '../lib/etat.svelte';
   import { iti } from '../lib/itineraire.svelte';
+  import { convois, couleurConvoi } from '../lib/convois.svelte';
   import { creerCoucheTuiles, COULEURS_MODE } from '../lib/carte';
   import { SOURCES_TUILES } from '../core/tuiles';
   import { developper } from '../lib/convoi';
@@ -25,6 +26,10 @@
   const coucheEtapes = L.layerGroup();
   const coucheZone = L.layerGroup();
   const coucheReseau = L.layerGroup();
+  const coucheConvois = L.layerGroup();
+  let afficherConvois = $state(true);
+  /** Convois calculés dont l'itinéraire a abouti (écran Convois). */
+  const convoisTraces = $derived((convois.resultat?.convois ?? []).filter((c) => c.itineraire.ok && c.itineraire.coords.length > 1));
   let afficherRestrictions = $state(false);
   // Réseau routier dessiné localement : fond de secours quand aucune tuile n'est disponible.
   let afficherReseau = $state(etat.tuiles.length === 0);
@@ -70,7 +75,7 @@
     L.control.zoom({ position: 'topleft', zoomInTitle: 'Zoom avant', zoomOutTitle: 'Zoom arrière' }).addTo(carte);
     L.control.scale({ imperial: false, position: 'bottomleft' }).addTo(carte);
     carte.attributionControl.setPrefix('Leaflet');
-    for (const c of [coucheReseau, coucheZone, coucheRestrictions, coucheItineraire, coucheOuvrages, coucheEtapes]) c.addTo(carte);
+    for (const c of [coucheReseau, coucheZone, coucheRestrictions, coucheConvois, coucheItineraire, coucheOuvrages, coucheEtapes]) c.addTo(carte);
     carte.on('moveend', dessinerReseau);
     carte.on('mousemove', (e: L.LeafletMouseEvent) => (coordsSouris = versMGRS(e.latlng.lat, e.latlng.lng) ?? ''));
     carte.on('click', (e: L.LeafletMouseEvent) => {
@@ -172,6 +177,28 @@
     }
   });
 
+  // Itinéraires de tous les convois (écran Convois), avec leurs couleurs.
+  $effect(() => {
+    coucheConvois.clearLayers();
+    if (!afficherConvois) return;
+    // Épaisseur décroissante : sur un tronçon commun, chaque convoi reste visible en liseré autour du suivant.
+    const n = convoisTraces.length;
+    convoisTraces.forEach((c, k) => {
+      const coul = couleurConvoi(c.mouvement.id);
+      const pts = c.itineraire.coords;
+      const ep = 4 + 3.5 * (n - 1 - k);
+      if (k === 0) L.polyline(pts, { renderer: rendu, color: '#ffffff', weight: ep + 3.5, opacity: 0.85, interactive: false }).addTo(coucheConvois);
+      L.polyline(pts, { renderer: rendu, color: coul, weight: ep, opacity: 1 })
+        .bindTooltip(`${c.mouvement.nom} — ${(c.itineraire.distanceM / 1000).toFixed(1)} km`, { sticky: true })
+        .addTo(coucheConvois);
+      for (const [p, lettre] of [[pts[0], 'D'], [pts[pts.length - 1], 'A']] as const) {
+        L.circleMarker(p, { renderer: rendu, radius: 6, color: '#ffffff', weight: 2, fillColor: coul, fillOpacity: 1 })
+          .bindTooltip(`${c.mouvement.nom} : ${lettre === 'D' ? 'départ' : 'arrivée'}`)
+          .addTo(coucheConvois);
+      }
+    });
+  });
+
   // Étapes
   $effect(() => {
     coucheEtapes.clearLayers();
@@ -233,6 +260,7 @@
     </label>
     <label class="case"><input type="checkbox" bind:checked={afficherReseau} disabled={!etat.reseau} /> Réseau</label>
     <label class="case"><input type="checkbox" bind:checked={afficherRestrictions} disabled={!etat.reseau} /> Restrictions civiles</label>
+    {#if convoisTraces.length}<label class="case"><input type="checkbox" bind:checked={afficherConvois} /> Convois ({convoisTraces.length})</label>{/if}
     <button class="btn petit" onclick={cadrerZone}><Icone nom="viseur" taille={15} /> Cadrer</button>
     {#if etat.horsLigne}<span class="etiquette" title="Aucune requête réseau n'est émise">Hors ligne strict</span>{/if}
   </div>
@@ -248,6 +276,9 @@
       <span><i style="background:#2f6fd1"></i>Classé</span>
       <span><i style="background:#8a93a3"></i>Sans classe</span>
       <span class="muted">Choisissez un convoi pour voir les verdicts</span>
+    {/if}
+    {#if afficherConvois && convoisTraces.length}
+      <span class="legende-convois">{#each convoisTraces as c (c.mouvement.id)}<span><i style="background:{couleurConvoi(c.mouvement.id)}"></i>{c.mouvement.nom}</span>{/each}</span>
     {/if}
     {#if coordsSouris}<span class="mono coord">{coordsSouris}</span>{/if}
   </div>
@@ -288,6 +319,8 @@
   .legende span { display: inline-flex; align-items: center; gap: 5px; }
   .legende i { width: 11px; height: 11px; border-radius: 50%; border: 1.5px solid #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25); }
   .legende .coord { color: var(--muted); }
+  .legende-convois { display: inline-flex; gap: 10px; flex-wrap: wrap; border-left: 1px solid var(--border); padding-left: 10px; }
+  .legende .legende-convois i { width: 18px; height: 4px; border-radius: 2px; border: none; box-shadow: none; }
   .consigne { position: absolute; top: 60px; left: 50%; transform: translateX(-50%); z-index: 900; background: var(--primary); color: #fff; padding: 7px 12px; border-radius: 8px; box-shadow: var(--ombre-haute); display: flex; gap: 10px; align-items: center; }
   :global(.repere-etape span) { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%; background: #0b2545; color: #fff; font-weight: 700; font-size: 12px; border: 2px solid #c9a227; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35); }
   :global(.leaflet-container) { font: inherit; }

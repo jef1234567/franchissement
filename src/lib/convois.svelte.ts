@@ -17,6 +17,9 @@ export interface SaisieConvoi {
   options: OptionsItineraire;
 }
 
+/** Couleurs des convois (écran Convois, chronogramme et carte). */
+export const COULEURS_CONVOIS = ['#1f5fa8', '#c2410c', '#6d28d9', '#0f766e', '#b91c1c', '#4d7c0f', '#a16207', '#be185d'];
+
 let n = 1;
 export function nouvelleSaisie(): SaisieConvoi {
   const k = n++;
@@ -56,3 +59,8 @@ class EtatConvois {
 }
 
 export const convois = new EtatConvois();
+
+/** Couleur d'un convoi, d'après son rang dans la liste des saisies. */
+export function couleurConvoi(id: string): string {
+  return COULEURS_CONVOIS[Math.max(0, convois.saisies.findIndex((s) => s.id === id)) % COULEURS_CONVOIS.length];
+}

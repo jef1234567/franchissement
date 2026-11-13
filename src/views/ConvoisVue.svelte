@@ -1,12 +1,12 @@
 <script lang="ts">
   import { etat } from '../lib/etat.svelte';
-  import { convois, nouvelleSaisie } from '../lib/convois.svelte';
+  import { convois, nouvelleSaisie, couleurConvoi, COULEURS_CONVOIS } from '../lib/convois.svelte';
   import { sEnHeure } from '../core/planification';
   import ChoixConvoi from '../components/ChoixConvoi.svelte';
   import Icone from '../components/Icone.svelte';
 
-  const COULEURS = ['#1f5fa8', '#c2410c', '#6d28d9', '#0f766e', '#b91c1c', '#4d7c0f', '#a16207', '#be185d'];
-  const couleur = (id: string) => COULEURS[Math.max(0, convois.saisies.findIndex((s) => s.id === id)) % COULEURS.length];
+  const COULEURS = COULEURS_CONVOIS;
+  const couleur = couleurConvoi;
   const res = $derived(convois.resultat);
   const LIB_MODE: Record<string, string> = { normal: 'Normal', precaution: 'Précaution', risque: 'Risque', interdit: 'Interdit', inconnu: 'Inconnu' };
   const km = (m: number) => (m / 1000).toFixed(1).replace('.', ',') + ' km';
