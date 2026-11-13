@@ -123,6 +123,8 @@ class Tas {
 interface ContexteContraintes {
   /** way OSM → ouvrage */
   ouvrageParWay: Map<number, Ouvrage>;
+  /** way OSM → petits ouvrages sous chaussée (avertissement seulement, jamais de verdict ni de blocage). */
+  petitsParWay: Map<number, Ouvrage[]>;
   verdicts: Map<string, VerdictConvoi>;
   bloque: (e: Arete) => boolean;
   surcout: (e: Arete) => number;
@@ -145,7 +147,13 @@ export function dimensionsConvoi(elements: ElementConvoi[]) {
 
 function preparer(r: Reseau, ouvrages: Ouvrage[], elements: ElementConvoi[], ref: Referentiel, opt: OptionsItineraire): ContexteContraintes {
   const ouvrageParWay = new Map<number, Ouvrage>();
-  for (const o of ouvrages) for (const w of o.osmWayIds) ouvrageParWay.set(w, o);
+  const petitsParWay = new Map<number, Ouvrage[]>();
+  for (const o of ouvrages) {
+    for (const w of o.osmWayIds) {
+      if (o.petitOuvrage) (petitsParWay.get(w) ?? petitsParWay.set(w, []).get(w)!).push(o);
+      else ouvrageParWay.set(w, o);
+    }
+  }
   const verdicts = new Map<string, VerdictConvoi>();
   const exclus = new Set(opt.ouvragesExclus);
   const dims = dimensionsConvoi(elements);
@@ -169,6 +177,7 @@ function preparer(r: Reseau, ouvrages: Ouvrage[], elements: ElementConvoi[], ref
 
   return {
     ouvrageParWay,
+    petitsParWay,
     verdicts,
     bloque: (e) => {
       if (!opt.autoroutes && (e.hw === 'motorway' || e.hw === 'motorway_link')) return true;
@@ -318,6 +327,7 @@ export function calculerItineraire(
   // Un ouvrage est compté à chaque passage : tronçons consécutifs d'un même ouvrage = un passage ;
   // un aller-retour sur le même pont = deux passages (deux fenêtres d'occupation).
   let ouvragePrecedent: string | null = null;
+  const petitsSignales = new Set<string>();
   let precedente: Arete | null = null;
   const dimsConvoi = dimensionsConvoi(elements);
   const alertes: AlerteTroncon[] = [];
@@ -334,6 +344,17 @@ export function calculerItineraire(
     const o = ctx.ouvrageParWay.get(e.way);
     if (o && o.id !== ouvragePrecedent) {
       traverses.push({ ouvrage: o, verdict: ctx.verdicts.get(o.id) ?? verifierConvoi(o, elements, opt.voies, ref), pk, tS: duree });
+    }
+    // Petits ouvrages sous chaussée : avertissement quand l'ouvrage est sur ce tronçon (à 25 m près), une fois par ouvrage.
+    for (const p of ctx.petitsParWay.get(e.way) ?? []) {
+      if (petitsSignales.has(p.id) || !estNombre(p.lat) || !estNombre(p.lon)) continue;
+      const q: [number, number] = [p.lat, p.lon];
+      const geomE = coordsArete(r, e);
+      let d = Infinity;
+      for (let k = 1; k < geomE.length; k++) d = Math.min(d, distancePointSegment(q, geomE[k - 1], geomE[k]));
+      if (d > 25) continue;
+      petitsSignales.add(p.id);
+      alertes.push({ pk, texte: `Petit ouvrage sous chaussée « ${p.nom} »${p.route ? ` (${p.route})` : ''} : buse, dalot ou petite voûte, portance inconnue. À reconnaître pour les véhicules lourds.` });
     }
     if (!opt.restrictionsCiviles && (e.hmax || e.lmax || e.pmax || e.emax || e.lgmax || e.barre)) {
       alertes.push({ pk, texte: `Restriction civile signalée (${[e.hmax && `h ${e.hmax} m`, e.lmax && `l ${e.lmax} m`, e.pmax && `${e.pmax} t`, e.emax && `${e.emax} t/essieu`, e.lgmax && `longueur ${e.lgmax} m`, e.barre && 'passage barré'].filter(Boolean).join(', ')}) sur ${e.nom || e.ref || 'tronçon'}.` });

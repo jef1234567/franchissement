@@ -226,7 +226,7 @@ export type ChampCible =
   | 'classeUnique' | 'classeUniqueRoues' | 'classeUniqueChenilles'
   | 'classeDouble' | 'classeDoubleRoues' | 'classeDoubleChenilles'
   | 'classePrecaution' | 'classeRisque'
-  | 'poidsMax' | 'hauteurMax' | 'largeurMax' | 'essieuMax' | 'fiabilite' | 'reference' | 'notes' | 'rattachement';
+  | 'poidsMax' | 'hauteurMax' | 'largeurMax' | 'essieuMax' | 'fiabilite' | 'reference' | 'notes' | 'rattachement' | 'ouverture';
 
 export const CHAMPS_CIBLES: { cle: ChampCible; libelle: string; alias: string[] }[] = [
   { cle: 'nom', libelle: 'Nom', alias: ['nom', 'name', 'pont', 'ouvrage', 'nom ouvrage', 'toponyme', 'libelle'] },
@@ -258,7 +258,22 @@ export const CHAMPS_CIBLES: { cle: ChampCible; libelle: string; alias: string[] 
   { cle: 'fiabilite', libelle: 'Fiabilité', alias: ['fiabilite', 'statut', 'etat validation', 'validation'] },
   { cle: 'notes', libelle: 'Notes', alias: ['notes', 'remarques', 'commentaire', 'commentaires', 'observations', 'description'] },
   { cle: 'rattachement', libelle: 'Voie portée / franchie', alias: ['voie rattachement', 'rattachement', 'position voie'] },
+  { cle: 'ouverture', libelle: 'Ouverture (m) — petits ouvrages', alias: ['ouverture', 'ouverture m'] },
 ];
+
+/** Côté maximal d'une voûte ou d'un cadre traité comme petit ouvrage sous chaussée. */
+export const OUVERTURE_PETIT_OUVRAGE_M = 5;
+
+/**
+ * Petit ouvrage sous chaussée, d'après la nature et l'ouverture : buse, dalot, ponceau, aqueduc quelle que soit la taille ;
+ * voûte, cadre (PICF…) seulement si l'ouverture est connue et ≤ 5 m. Ouverture inconnue → ouvrage ordinaire (prudent).
+ */
+export function petitOuvrageSousChaussee(nature: string | undefined, ouvertureM: number | null): boolean {
+  const t = motsCles(nature ?? '').join(' ');
+  if (/\b(buses?|dalots?|ponceaux?|ponceau|aqueducs?)\b/.test(t)) return true;
+  if (/\b(voutes?|cadres?|picf)\b/.test(t)) return ouvertureM != null && ouvertureM > 0 && ouvertureM <= OUVERTURE_PETIT_OUVRAGE_M;
+  return false;
+}
 
 /** « Voie franchie » (la route de la colonne Route passe SOUS l'ouvrage) → true ; « Voie portée » ou vide → false. */
 export function voieFranchie(txt: string | undefined): boolean {
@@ -391,6 +406,7 @@ export function convertirOuvrages(
     // Voie franchie : la route citée passe sous l'ouvrage. Elle n'est pas la route portée, et la hauteur
     // éventuelle est celle du passage dessous : ni l'une ni l'autre ne s'appliquent aux véhicules sur l'ouvrage.
     const franchie = voieFranchie(get(l, 'rattachement'));
+    const petit = !franchie && petitOuvrageSousChaussee(get(l, 'type'), nombreFR(get(l, 'ouverture')));
     const routeLue = (get(l, 'route') ?? '').trim();
     const hauteurLue = nombreFR(get(l, 'hauteurLibre'));
     const notesLues = (get(l, 'notes') ?? '').trim();
@@ -415,8 +431,12 @@ export function convertirOuvrages(
       },
       civil: { poidsMaxT: nombreFR(get(l, 'poidsMax')), hauteurMaxM: nombreFR(get(l, 'hauteurMax')), largeurMaxM: nombreFR(get(l, 'largeurMax')), essieuMaxT: nombreFR(get(l, 'essieuMax')) },
       fiabilite: fiabiliteDepuis(get(l, 'fiabilite'), fiabiliteDefaut),
-      provenance: { ...provenance, reference: (get(l, 'reference') ?? '').trim() || provenance.reference },
       notes: [notesLues, noteFranchie].filter(Boolean).join(' '),
+      // Sans colonne identifiant, chaque ligne garde une référence propre (sinon, au second import du même fichier,
+      // toutes les lignes se rapprochaient du même ouvrage par la référence commune).
+      provenance: { ...provenance, reference: (get(l, 'reference') ?? '').trim() || (provenance.reference ? `${provenance.reference}#ligne ${n}` : undefined) },
+      ...(franchie ? { voieFranchie: true } : {}),
+      ...(petit ? { petitOuvrage: true } : {}),
     });
     const u = o.classes.unique.generique, d = o.classes.double.generique;
     if (estNombre(u) && estNombre(d) && d > u) avertissements.push({ ligne: n, motif: `« ${o.nom} » : classe double voie (${d}) supérieure à la classe voie unique (${u}) — à vérifier.` });
@@ -497,6 +517,8 @@ export function planifierFusion(existants: Ouvrage[], entrants: Ouvrage[], seuil
       let best = Infinity;
       for (const x of existants) {
         if (!estNombre(x.lat) || !estNombre(x.lon)) continue;
+        // Un petit ouvrage (buse, dalot…) ne se fond jamais par proximité dans un vrai pont, ni l'inverse.
+        if (!!x.petitOuvrage !== !!e.petitOuvrage) continue;
         const d = haversine(e.lat, e.lon, x.lat, x.lon);
         // Tolérance : l'ouvrage peut être long, on compare aussi au demi-longueur.
         const tol = Math.max(seuilM, (x.longueurM ?? 0) / 2);
@@ -525,8 +547,11 @@ export function appliquerFusion(existants: Ouvrage[], plan: OperationFusion[], r
     if (op.action === 'creer' || !op.cible) {
       const o = structuredClone(op.entrant);
       if (reseau && estNombre(o.lat) && estNombre(o.lon) && !o.osmWayIds.length) {
-        const a = areteLaPlusProche(reseau, [o.lat, o.lon], { pontsSeuls: true, rayonM: 60 }) ??
-          areteLaPlusProche(reseau, [o.lat, o.lon], { rayonM: 25 });
+        // Voie franchie : seulement un pont (la route à moins de 25 m est souvent celle du dessous).
+        // Petit ouvrage : la route qui passe dessus (jamais un pont voisin).
+        const a = o.petitOuvrage ? areteLaPlusProche(reseau, [o.lat, o.lon], { rayonM: 25 })
+          : areteLaPlusProche(reseau, [o.lat, o.lon], { pontsSeuls: true, rayonM: 60 }) ??
+            (o.voieFranchie ? null : areteLaPlusProche(reseau, [o.lat, o.lon], { rayonM: 25 }));
         if (a) o.osmWayIds = [reseau.aretes[a.arete].way];
       }
       res.push(o);
@@ -552,6 +577,7 @@ export function appliquerFusion(existants: Ouvrage[], plan: OperationFusion[], r
       cible.fiabilite = op.entrant.fiabilite;
       cible.provenance = { ...op.entrant.provenance };
     }
+    if (op.entrant.voieFranchie) cible.voieFranchie = true;
     if (op.entrant.notes) cible.notes = [cible.notes, `[${libelle}] ${op.entrant.notes}`].filter(Boolean).join('\n');
   }
   return res;
@@ -604,6 +630,8 @@ export function reparerOuvrage(x: Record<string, unknown>): Ouvrage {
     desaccords: Array.isArray(x.desaccords) ? (x.desaccords as Ouvrage['desaccords']) : [],
     osmWayIds: Array.isArray(x.osmWayIds) ? (x.osmWayIds as unknown[]).map(Number).filter(Number.isFinite) : [],
     notes: str(x.notes),
+    ...(x.voieFranchie === true ? { voieFranchie: true } : {}),
+    ...(x.petitOuvrage === true ? { petitOuvrage: true } : {}),
   };
 }
 

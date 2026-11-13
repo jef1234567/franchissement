@@ -102,6 +102,11 @@ export interface Ouvrage {
   /** Identifiants des arêtes du réseau routier portées par l'ouvrage. */
   osmWayIds: number[];
   notes: string;
+  /** Inventaire importé : la route citée passe SOUS l'ouvrage (« voie franchie ») ; route portée inconnue. */
+  voieFranchie?: boolean;
+  /** Petit ouvrage sous chaussée (buse, dalot, ponceau, petite voûte ou cadre ≤ 5 m) : simple avertissement
+   *  sur l'itinéraire, sans verdict (décision du 13/11/2026 : sinon presque tout itinéraire rural devient « indéterminé »). */
+  petitOuvrage?: boolean;
 }
 
 export interface Desaccord {

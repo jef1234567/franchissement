@@ -153,6 +153,14 @@
     coucheOuvrages.clearLayers();
     for (const o of ouvrages) {
       if (o.lat == null || o.lon == null) continue;
+      if (o.petitOuvrage) {
+        // Petit ouvrage sous chaussée : simple repère, pas de verdict.
+        L.circleMarker([o.lat, o.lon], { renderer: rendu, radius: 3.5, color: '#fff', weight: 1, fillColor: '#9aa3b2', fillOpacity: 0.9 })
+          .bindTooltip(`${o.nom} — petit ouvrage sous chaussée (avertissement, sans verdict)`, { direction: 'top', offset: [0, -4] })
+          .on('click', (e) => { L.DomEvent.stopPropagation(e); etat.ouvrageSelectionne = o.id; onglet = 'ouvrage'; })
+          .addTo(coucheOuvrages);
+        continue;
+      }
       const m = modes.get(o.id) ?? 'sans';
       const couleur = m === 'classe' ? '#2f6fd1' : m === 'sans' ? '#8a93a3' : COULEURS_MODE[m];
       const selectionne = o.id === sel;
@@ -315,6 +323,7 @@
       <span><i style="background:#8a93a3"></i>Sans classe</span>
       <span class="muted">Choisissez un convoi pour voir les verdicts</span>
     {/if}
+    {#if etat.projet.ouvrages.some((o) => o.petitOuvrage)}<span><i class="petit"></i>Petit ouvrage (avertissement)</span>{/if}
     {#if afficherConvois && convoisTraces.length}
       <span class="legende-convois">{#each convoisTraces as c (c.mouvement.id)}<span><i style="background:{couleurConvoi(c.mouvement.id)}"></i>{c.mouvement.nom}</span>{/each}</span>
     {/if}
@@ -360,6 +369,7 @@
   .legende span { display: inline-flex; align-items: center; gap: 5px; }
   .legende i { width: 11px; height: 11px; border-radius: 50%; border: 1.5px solid #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25); }
   .legende .coord { color: var(--muted); }
+  .legende i.petit { width: 7px; height: 7px; background: #9aa3b2; }
   .legende-convois { display: inline-flex; gap: 10px; flex-wrap: wrap; border-left: 1px solid var(--border); padding-left: 10px; }
   .legende .legende-convois i { width: 18px; height: 4px; border-radius: 2px; border: none; box-shadow: none; }
   .consigne { position: absolute; top: 60px; left: 50%; transform: translateX(-50%); z-index: 900; background: var(--primary); color: #fff; padding: 7px 12px; border-radius: 8px; box-shadow: var(--ombre-haute); display: flex; gap: 10px; align-items: center; }

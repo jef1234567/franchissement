@@ -185,7 +185,7 @@ class Preparation {
       const { jeux } = await enCache(`dg:${depts.map((d) => d.code).join(',')}`, () => chercherDataGouv(depts, (m) => (this.progression = m), signal));
       // Seuls les jeux qui citent un département de la zone : la recherche par mots-clés ramène aussi ceux d'ailleurs.
       const candidats = jeux.filter((j) => j.mentionneDepartement);
-      let troncons = 0, nouveaux = 0, lus = 0;
+      let troncons = 0, nouveaux = 0, petits = 0, lus = 0;
       for (let k = 0; k < candidats.length; k++) {
         if (signal.aborted) throw new Error('arrêté');
         const j = candidats[k];
@@ -207,13 +207,14 @@ class Preparation {
         } else {
           const conv = convertirOuvrages(t, rec.corr, { type: 'datagouv', libelle: source, reference: r.url, date: new Date().toISOString().slice(0, 10), auteur: j.producteur }, 'reconnu');
           const plan = planifierFusion(ouvrages, conv.ouvrages, 60);
-          nouveaux += plan.filter((p) => p.action === 'creer').length;
+          nouveaux += plan.filter((p) => p.action === 'creer' && !p.entrant.petitOuvrage).length;
+          petits += plan.filter((p) => p.action === 'creer' && p.entrant.petitOuvrage).length;
           const fusion = appliquerFusion(ouvrages, plan, reseau);
           ouvrages.splice(0, ouvrages.length, ...fusion);
         }
       }
       this.nonReconnus = nonReconnus;
-      const msg = `${depts.map((d) => d.nom).join(', ')} : ${lus} jeu(x) intégré(s), ${troncons} tronçon(s) restreints, ${nouveaux} pont(s) ajoutés${nonReconnus.length ? ` ; ${nonReconnus.length} jeu(x) à voir à la main` : ''}`;
+      const msg = `${depts.map((d) => d.nom).join(', ')} : ${lus} jeu(x) intégré(s), ${troncons} tronçon(s) restreints, ${nouveaux} pont(s) ajoutés${petits ? `, ${petits} petit(s) ouvrage(s) sous chaussée (avertissement seulement)` : ''}${nonReconnus.length ? ` ; ${nonReconnus.length} jeu(x) à voir à la main` : ''}`;
       this.etape('datagouv', nonReconnus.length ? 'partiel' : 'ok', msg);
     } catch (e) {
       this.nonReconnus = nonReconnus;
