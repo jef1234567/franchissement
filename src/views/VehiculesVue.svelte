@@ -45,7 +45,7 @@
     <table class="tableau">
       <thead>
         <tr>
-          <th>Véhicule</th><th>Propulsion</th><th>MLC chargé</th><th>MLC à vide</th><th>Longueur (m)</th><th>Largeur (m)</th><th>Hauteur (m)</th><th>Masse (t)</th><th>Source</th><th></th>
+          <th>Véhicule</th><th>Propulsion</th><th>MLC chargé</th><th>MLC à vide</th><th>Longueur (m)</th><th>Largeur (m)</th><th>Hauteur (m)</th><th>Masse (t)</th><th>Essieux</th><th title="Charge sur l'essieu le plus chargé">Charge/essieu (t)</th><th>Source</th><th></th>
         </tr>
       </thead>
       <tbody>
@@ -59,6 +59,8 @@
             <td><ChampNombre bind:valeur={v.largeurM} min={0} max={10} largeur="72px" etiquette="Largeur" /></td>
             <td><ChampNombre bind:valeur={v.hauteurM} min={0} max={10} largeur="72px" etiquette="Hauteur" /></td>
             <td><ChampNombre bind:valeur={v.masseT} min={0} max={200} largeur="72px" etiquette="Masse" /></td>
+            <td><ChampNombre bind:valeur={v.essieux} min={1} max={12} largeur="56px" etiquette="Essieux" /></td>
+            <td><ChampNombre bind:valeur={v.chargeEssieuT} min={0} max={50} largeur="64px" etiquette="Charge à l'essieu" /></td>
             <td><input type="text" bind:value={v.provenance.libelle} aria-label="Source" style="min-width:150px" title={v.notes || v.provenance.libelle} /></td>
             <td><button class="btn icone fantome" title="Supprimer" aria-label="Supprimer {v.nom}" onclick={() => supprimer(v.id)}><Icone nom="corbeille" taille={16} /></button></td>
           </tr>

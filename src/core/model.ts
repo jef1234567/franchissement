@@ -2,7 +2,7 @@
    Modèle de données FRANCHIR
    ========================================================================= */
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export type Propulsion = 'roues' | 'chenilles';
 export type EtatCharge = 'charge' | 'vide';
@@ -11,7 +11,7 @@ export type ModeFranchissement = 'normal' | 'precaution' | 'risque';
 export const MODES: ModeFranchissement[] = ['normal', 'precaution', 'risque'];
 
 export interface Provenance {
-  type: 'osm' | 'geo' | 'csv' | 'reco' | 'manuel' | 'v1' | 'reference';
+  type: 'osm' | 'geo' | 'csv' | 'reco' | 'manuel' | 'v1' | 'reference' | 'ign' | 'datagouv';
   /** Libellé libre : « 28e GG », « OSM », « Reco 2e RMAT »… */
   libelle: string;
   reference?: string;
@@ -31,6 +31,10 @@ export interface Vehicule {
   largeurM: number | null;
   hauteurM: number | null;
   masseT: number | null;
+  /** Nombre d'essieux (null pour un chenillé ou si inconnu). */
+  essieux: number | null;
+  /** Charge maximale sur l'essieu le plus chargé (t). */
+  chargeEssieuT: number | null;
   provenance: Provenance;
   notes: string;
 }
@@ -88,7 +92,7 @@ export interface Ouvrage {
     risque: number | null;
   };
   /** Restrictions de circulation civiles signalées (panneaux, OSM). */
-  civil: { poidsMaxT: number | null; hauteurMaxM: number | null; largeurMaxM: number | null };
+  civil: { poidsMaxT: number | null; hauteurMaxM: number | null; largeurMaxM: number | null; essieuMaxT: number | null };
   fiabilite: Fiabilite;
   provenance: Provenance;
   /** Historique des valeurs remplacées lors de fusions / éditions. */
@@ -159,7 +163,7 @@ export function nouvelOuvrage(partiel: Partial<Ouvrage> = {}): Ouvrage {
     largeurM: null,
     hauteurLibreM: null,
     classes: { unique: classeVide(), double: classeVide(), precaution: null, risque: null },
-    civil: { poidsMaxT: null, hauteurMaxM: null, largeurMaxM: null },
+    civil: { poidsMaxT: null, hauteurMaxM: null, largeurMaxM: null, essieuMaxT: null },
     fiabilite: 'estime',
     provenance: { type: 'manuel', libelle: 'Saisie manuelle', date: new Date().toISOString() },
     historique: [],
@@ -180,6 +184,8 @@ export function nouveauVehicule(partiel: Partial<Vehicule> = {}): Vehicule {
     largeurM: null,
     hauteurM: null,
     masseT: null,
+    essieux: null,
+    chargeEssieuT: null,
     provenance: { type: 'manuel', libelle: 'Saisie manuelle', date: new Date().toISOString() },
     notes: '',
     ...partiel,

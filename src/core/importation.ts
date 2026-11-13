@@ -175,7 +175,7 @@ export type ChampCible =
   | 'classeUnique' | 'classeUniqueRoues' | 'classeUniqueChenilles'
   | 'classeDouble' | 'classeDoubleRoues' | 'classeDoubleChenilles'
   | 'classePrecaution' | 'classeRisque'
-  | 'poidsMax' | 'hauteurMax' | 'largeurMax' | 'fiabilite' | 'reference' | 'notes';
+  | 'poidsMax' | 'hauteurMax' | 'largeurMax' | 'essieuMax' | 'fiabilite' | 'reference' | 'notes';
 
 export const CHAMPS_CIBLES: { cle: ChampCible; libelle: string; alias: string[] }[] = [
   { cle: 'nom', libelle: 'Nom', alias: ['nom', 'name', 'pont', 'ouvrage', 'nom ouvrage', 'toponyme', 'libelle'] },
@@ -201,6 +201,7 @@ export const CHAMPS_CIBLES: { cle: ChampCible; libelle: string; alias: string[] 
   { cle: 'poidsMax', libelle: 'Tonnage max. civil (t)', alias: ['tonnage', 'poids max', 'maxweight', 'limitation tonnage', 'ptac max', 'restriction poids'] },
   { cle: 'hauteurMax', libelle: 'Hauteur max. civile (m)', alias: ['maxheight', 'hauteur max', 'restriction hauteur'] },
   { cle: 'largeurMax', libelle: 'Largeur max. civile (m)', alias: ['maxwidth', 'largeur max', 'restriction largeur'] },
+  { cle: 'essieuMax', libelle: "Charge max. à l'essieu (t)", alias: ['maxaxleload', 'charge essieu', 'charge a l essieu', 'poids essieu', 'restriction essieu'] },
   { cle: 'fiabilite', libelle: 'Fiabilité', alias: ['fiabilite', 'statut', 'etat validation', 'validation'] },
   { cle: 'notes', libelle: 'Notes', alias: ['notes', 'remarques', 'commentaire', 'commentaires', 'observations', 'description'] },
 ];
@@ -343,7 +344,7 @@ export function convertirOuvrages(
         precaution: classe('classePrecaution'),
         risque: classe('classeRisque'),
       },
-      civil: { poidsMaxT: nombreFR(get(l, 'poidsMax')), hauteurMaxM: nombreFR(get(l, 'hauteurMax')), largeurMaxM: nombreFR(get(l, 'largeurMax')) },
+      civil: { poidsMaxT: nombreFR(get(l, 'poidsMax')), hauteurMaxM: nombreFR(get(l, 'hauteurMax')), largeurMaxM: nombreFR(get(l, 'largeurMax')), essieuMaxT: nombreFR(get(l, 'essieuMax')) },
       fiabilite: fiabiliteDepuis(get(l, 'fiabilite'), fiabiliteDefaut),
       provenance: { ...provenance, reference: (get(l, 'reference') ?? '').trim() || provenance.reference },
       notes: (get(l, 'notes') ?? '').trim(),
@@ -507,10 +508,10 @@ export function reparerOuvrage(x: Record<string, unknown>): Ouvrage {
     largeurM: num(x.largeurM),
     hauteurLibreM: num(x.hauteurLibreM),
     classes: { unique: cv(c.unique), double: cv(c.double), precaution: num(c.precaution), risque: num(c.risque) },
-    civil: { poidsMaxT: num(civ.poidsMaxT), hauteurMaxM: num(civ.hauteurMaxM), largeurMaxM: num(civ.largeurMaxM) },
+    civil: { poidsMaxT: num(civ.poidsMaxT), hauteurMaxM: num(civ.hauteurMaxM), largeurMaxM: num(civ.largeurMaxM), essieuMaxT: num(civ.essieuMaxT) },
     fiabilite: ['estime', 'reconnu', 'valide'].includes(fiab) ? fiab : 'estime',
     provenance: {
-      type: (['osm', 'geo', 'csv', 'reco', 'manuel', 'v1', 'reference'].includes(str(prov.type)) ? str(prov.type) : 'manuel') as Provenance['type'],
+      type: (['osm', 'geo', 'csv', 'reco', 'manuel', 'v1', 'reference', 'ign', 'datagouv'].includes(str(prov.type)) ? str(prov.type) : 'manuel') as Provenance['type'],
       libelle: str(prov.libelle, 'Inconnue') || 'Inconnue',
       reference: prov.reference ? str(prov.reference) : undefined,
       date: prov.date ? str(prov.date) : undefined,
@@ -536,6 +537,8 @@ export function reparerVehicule(x: Record<string, unknown>): Vehicule {
     largeurM: num(x.largeurM),
     hauteurM: num(x.hauteurM),
     masseT: num(x.masseT),
+    essieux: num(x.essieux),
+    chargeEssieuT: num(x.chargeEssieuT),
     provenance: { type: (str(prov.type) || 'manuel') as Provenance['type'], libelle: str(prov.libelle, 'Inconnue') || 'Inconnue', date: prov.date ? str(prov.date) : undefined },
     notes: str(x.notes),
   };
@@ -704,6 +707,7 @@ export function integrerOuvragesOSM(existants: Ouvrage[], osm: Ouvrage[]): { ouv
     if (cible.civil.poidsMaxT == null) cible.civil.poidsMaxT = n.civil.poidsMaxT;
     if (cible.civil.hauteurMaxM == null) cible.civil.hauteurMaxM = n.civil.hauteurMaxM;
     if (cible.civil.largeurMaxM == null) cible.civil.largeurMaxM = n.civil.largeurMaxM;
+    if (cible.civil.essieuMaxT == null) cible.civil.essieuMaxT = n.civil.essieuMaxT;
     if (JSON.stringify(cible) !== avant) completes++;
   }
   return { ouvrages: res, ajoutes, completes };

@@ -28,6 +28,8 @@ export interface Arete {
   hmax?: number;
   pmax?: number;
   lmax?: number;
+  /** Charge maximale à l'essieu signalée (t). */
+  emax?: number;
   largeur?: number;
 }
 
@@ -149,11 +151,13 @@ export function construireReseau(json: { elements?: ElemOSM[] }, bbox: BBox, sou
     const hmax = analyserLongueurOSM(t.maxheight ?? t['maxheight:physical']);
     const lmax = analyserLongueurOSM(t.maxwidth ?? t['maxwidth:physical']);
     const pmax = analyserMasseOSM(t.maxweight ?? t['maxweight:signed']);
+    const emax = analyserMasseOSM(t.maxaxleload);
     const largeur = analyserLongueurOSM(t.width ?? t.est_width);
     const restr = {
       ...(hmax !== null ? { hmax } : {}),
       ...(lmax !== null ? { lmax } : {}),
       ...(pmax !== null ? { pmax } : {}),
+      ...(emax !== null ? { emax } : {}),
       ...(largeur !== null ? { largeur } : {}),
     };
     let debut = 0;
@@ -278,7 +282,7 @@ export function extraireOuvrages(r: Reseau): Ouvrage[] {
         geom: pts.map(([a, b]) => [a, b]),
         longueurM: Math.round(longueur * 10) / 10,
         largeurM: min(es.map((e) => e.largeur)),
-        civil: { poidsMaxT: min(es.map((e) => e.pmax)), hauteurMaxM: min(es.map((e) => e.hmax)), largeurMaxM: min(es.map((e) => e.lmax)) },
+        civil: { poidsMaxT: min(es.map((e) => e.pmax)), hauteurMaxM: min(es.map((e) => e.hmax)), largeurMaxM: min(es.map((e) => e.lmax)), essieuMaxT: min(es.map((e) => e.emax)) },
         fiabilite: 'estime',
         provenance: { type: 'osm', libelle: 'OpenStreetMap', reference: 'way ' + ways.join(', '), date: r.creeLe },
         osmWayIds: ways.sort((a, b) => a - b),

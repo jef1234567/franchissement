@@ -88,6 +88,8 @@ export interface FicheOuverte {
   largeurM: number | null;
   hauteurM: number | null;
   masseT: number | null;
+  essieux?: number | null;
+  chargeEssieuT?: number | null;
   source: string;
   notes: string;
 }
@@ -130,6 +132,8 @@ export function vehiculesParDefaut(): Vehicule[] {
       largeurM: f?.largeurM ?? null,
       hauteurM: f?.hauteurM ?? null,
       masseT: f?.masseT ?? null,
+      essieux: f?.essieux ?? null,
+      chargeEssieuT: f?.chargeEssieuT ?? null,
       provenance: { type: 'reference', libelle: f ? `Sources ouvertes : ${f.source} — MLC : outil v1` : 'Outil v1 (non sourcé)' },
       notes: f?.notes ?? '',
     };

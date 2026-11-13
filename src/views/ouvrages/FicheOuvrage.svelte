@@ -98,6 +98,7 @@
     <label class="champ">Tonnage (t)<ChampNombre bind:valeur={o.civil.poidsMaxT} min={0} max={1000} /></label>
     <label class="champ">Hauteur (m)<ChampNombre bind:valeur={o.civil.hauteurMaxM} min={0} max={100} /></label>
     <label class="champ">Largeur (m)<ChampNombre bind:valeur={o.civil.largeurMaxM} min={0} max={100} /></label>
+    <label class="champ">Charge à l'essieu (t)<ChampNombre bind:valeur={o.civil.essieuMaxT} min={0} max={100} /></label>
   </div>
 </div>
 

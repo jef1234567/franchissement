@@ -1,0 +1,102 @@
+import { describe, expect, it } from 'vitest';
+import { referentielParDefaut, vehiculesParDefaut } from './reference';
+import { construireReseau, extraireOuvrages } from './reseau';
+import { OPTIONS_ITINERAIRE_DEFAUT, calculerItineraire } from './itineraire';
+import { detecterConflits, heureEnS, planifier, sEnHeure, type MouvementConvoi, type OccupationOuvrage } from './planification';
+import { lireProjet } from './importation';
+import { evaluerVehicule } from './verification';
+import { nouvelOuvrage } from './model';
+import { overpassSynthetique } from '../test/fixtures';
+
+const ref = referentielParDefaut();
+const V = vehiculesParDefaut();
+const v = (id: string) => V.find((x) => x.id === id)!;
+const bbox = { sud: 47.2, nord: 47.3, ouest: -0.2, est: 0 };
+const reseau = construireReseau(overpassSynthetique(), bbox);
+const ouvragesBase = extraireOuvrages(reseau);
+const ouvrages = structuredClone(ouvragesBase);
+ouvrages.find((x) => x.nom === 'Pont Faible')!.classes.unique.generique = 20;
+ouvrages.find((x) => x.nom === 'Pont Fort')!.classes.unique.generique = 70;
+
+const mvt = (id: string, veh: string, n: number, h: string): MouvementConvoi => ({
+  id, nom: id, heureH: h,
+  elements: [{ vehicule: v(veh), quantite: n, etat: 'charge' }],
+  etapes: [[47.24, -0.12], [47.28, -0.12]],
+  options: { ...OPTIONS_ITINERAIRE_DEFAUT, inconnus: 'bloquer' },
+});
+
+describe('Heures', () => {
+  it('HH:MM ↔ secondes', () => {
+    expect(heureEnS('06:30')).toBe(23400);
+    expect(heureEnS('6h05')).toBe(21900);
+    expect(heureEnS('25:00')).toBeNull();
+    expect(sEnHeure(23400)).toBe('06:30');
+    expect(sEnHeure(86400 + 3600)).toBe('01:00 (J+1)');
+  });
+});
+
+describe('Planification multi-convois', () => {
+  it('chaque convoi a son itinéraire et ses fenêtres d’occupation', () => {
+    const p = planifier(reseau, ouvrages, ref, [mvt('A', 'pplog', 10, '06:00'), mvt('B', 'vbl', 4, '09:00')], 600);
+    const [a, b] = p.convois;
+    expect(a.itineraire.ok && b.itineraire.ok).toBe(true);
+    expect(a.occupations.map((o) => o.ouvrage.nom)).toEqual(['Pont Fort']);
+    expect(b.occupations.map((o) => o.ouvrage.nom)).toEqual(['Pont Faible']);
+    const o = a.occupations[0];
+    expect(o.debutS).toBeGreaterThan(6 * 3600);
+    expect(o.finS).toBeGreaterThan(o.debutS);
+    expect(p.conflits).toHaveLength(0);
+  });
+  it('deux convois sur le même ouvrage au même créneau → conflit', () => {
+    const p = planifier(reseau, ouvrages, ref, [mvt('A', 'pplog', 10, '06:00'), mvt('B', 'pplog', 10, '06:05')], 600);
+    expect(p.ouvragesPartages.map((u) => u.ouvrage.nom)).toEqual(['Pont Fort']);
+    expect(p.conflits).toHaveLength(1);
+    expect(p.conflits[0].ouvrage.nom).toBe('Pont Fort');
+  });
+  it('même ouvrage, créneaux séparés au-delà de la marge → pas de conflit', () => {
+    const p = planifier(reseau, ouvrages, ref, [mvt('A', 'pplog', 10, '06:00'), mvt('B', 'pplog', 10, '08:00')], 600);
+    expect(p.ouvragesPartages).toHaveLength(1);
+    expect(p.conflits).toHaveLength(0);
+  });
+  it('convoi sans itinéraire : signalé, sans occupation', () => {
+    const p = planifier(reseau, ouvragesBase, ref, [mvt('A', 'leclerc', 1, '06:00')]);
+    expect(p.convois[0].itineraire.ok).toBe(false);
+    expect(p.convois[0].occupations).toHaveLength(0);
+    expect(p.convois[0].arriveeS).toBeNull();
+  });
+  it('la marge élargit la détection', () => {
+    const o = ouvrages[0];
+    const occ = (id: string, d: number, f: number): OccupationOuvrage => ({ convoiId: id, convoi: id, ouvrage: o, debutS: d, finS: f, mode: 'normal', dureeIncertaine: false });
+    expect(detecterConflits([occ('A', 0, 100), occ('B', 200, 300)], 0)).toHaveLength(0);
+    expect(detecterConflits([occ('A', 0, 100), occ('B', 200, 300)], 150)).toHaveLength(1);
+    expect(detecterConflits([occ('A', 0, 100), occ('A', 50, 300)], 0)).toHaveLength(0);
+  });
+  it('le temps de route jusqu’à l’ouvrage est renseigné', () => {
+    const r = calculerItineraire(reseau, ouvrages, [{ vehicule: v('vbl'), quantite: 1, etat: 'charge' }], ref, [[47.24, -0.12], [47.28, -0.12]], OPTIONS_ITINERAIRE_DEFAUT);
+    expect(r.ouvrages[0].tS).toBeGreaterThan(0);
+    expect(r.ouvrages[0].tS).toBeLessThan(r.dureeS);
+  });
+});
+
+describe('Charge à l’essieu et migration du schéma 2', () => {
+  it('restriction civile à l’essieu signalée sur l’ouvrage', () => {
+    const o = nouvelOuvrage({ classes: { unique: { generique: 100, roues: null, chenilles: null }, double: { generique: null, roues: null, chenilles: null }, precaution: null, risque: null }, civil: { poidsMaxT: null, hauteurMaxM: null, largeurMaxM: null, essieuMaxT: 10 } });
+    const ev = evaluerVehicule(o, { vehicule: { ...v('pplog'), chargeEssieuT: 12 }, quantite: 1, etat: 'charge' }, 'unique', ref);
+    expect(ev.civilEssieu).toBe('nok');
+    const ev2 = evaluerVehicule(o, { vehicule: { ...v('pplog'), chargeEssieuT: null }, quantite: 1, etat: 'charge' }, 'unique', ref);
+    expect(ev2.civilEssieu).not.toBe('nok');
+  });
+  it('maxaxleload OSM lu sur l’arête', () => {
+    const json = overpassSynthetique();
+    const w = json.elements.find((e) => e.type === 'way' && e.tags?.bridge && e.tags?.name === 'Pont Faible')!;
+    w.tags!.maxaxleload = '8 t';
+    const o = extraireOuvrages(construireReseau(json, bbox)).find((x) => x.nom === 'Pont Faible')!;
+    expect(o.civil.essieuMaxT).toBe(8);
+  });
+  it('un projet schéma 2 se charge avec les nouveaux champs vides', () => {
+    const r = lireProjet({ schema: 2, ouvrages: [{ nom: 'X', civil: { poidsMaxT: 12 } }], vehicules: [{ nom: 'Y', masseT: 10 }] });
+    expect(r.projet.ouvrages[0].civil.essieuMaxT).toBeNull();
+    expect(r.projet.ouvrages[0].civil.poidsMaxT).toBe(12);
+    expect(r.projet.vehicules.find((x) => x.nom === 'Y')!.essieux).toBeNull();
+  });
+});

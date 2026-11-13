@@ -48,6 +48,8 @@ export interface OuvrageTraverse {
   verdict: VerdictConvoi;
   /** Distance depuis le départ (m) au début de l'ouvrage. */
   pk: number;
+  /** Temps de route depuis le départ (s) jusqu'au début de l'ouvrage, tête de convoi, hors attentes. */
+  tS: number;
 }
 
 export interface AlerteTroncon {
@@ -129,6 +131,7 @@ export function dimensionsConvoi(elements: ElementConvoi[]) {
     hauteur: max((e) => e.vehicule.hauteurM),
     largeur: max((e) => e.vehicule.largeurM),
     masse: max((e) => e.vehicule.masseT),
+    essieu: max((e) => e.vehicule.chargeEssieuT ?? null),
     classe: max((e) => classeVehicule(e.vehicule, e.etat)),
   };
 }
@@ -152,7 +155,8 @@ function preparer(r: Reseau, ouvrages: Ouvrage[], elements: ElementConvoi[], ref
     opt.restrictionsCiviles &&
     ((estNombre(e.hmax) && estNombre(dims.hauteur) && dims.hauteur > e.hmax) ||
       (estNombre(e.lmax) && estNombre(dims.largeur) && dims.largeur > e.lmax) ||
-      (estNombre(e.pmax) && estNombre(dims.masse) && dims.masse > e.pmax));
+      (estNombre(e.pmax) && estNombre(dims.masse) && dims.masse > e.pmax) ||
+      (estNombre(e.emax) && estNombre(dims.essieu) && dims.essieu > e.emax));
 
   return {
     ouvrageParWay,
@@ -314,10 +318,10 @@ export function calculerItineraire(
     const o = ctx.ouvrageParWay.get(e.way);
     if (o && !vus.has(o.id)) {
       vus.add(o.id);
-      traverses.push({ ouvrage: o, verdict: ctx.verdicts.get(o.id) ?? verifierConvoi(o, elements, opt.voies, ref), pk });
+      traverses.push({ ouvrage: o, verdict: ctx.verdicts.get(o.id) ?? verifierConvoi(o, elements, opt.voies, ref), pk, tS: duree });
     }
-    if (!opt.restrictionsCiviles && (e.hmax || e.lmax || e.pmax)) {
-      alertes.push({ pk, texte: `Restriction civile signalée (${[e.hmax && `h ${e.hmax} m`, e.lmax && `l ${e.lmax} m`, e.pmax && `${e.pmax} t`].filter(Boolean).join(', ')}) sur ${e.nom || e.ref || 'tronçon'}.` });
+    if (!opt.restrictionsCiviles && (e.hmax || e.lmax || e.pmax || e.emax)) {
+      alertes.push({ pk, texte: `Restriction civile signalée (${[e.hmax && `h ${e.hmax} m`, e.lmax && `l ${e.lmax} m`, e.pmax && `${e.pmax} t`, e.emax && `${e.emax} t/essieu`].filter(Boolean).join(', ')}) sur ${e.nom || e.ref || 'tronçon'}.` });
     }
     pk += e.long;
     duree += tempsArete(e, opt.vitesseConvoiKmh);

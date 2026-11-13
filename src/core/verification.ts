@@ -139,6 +139,7 @@ export interface EvaluationVehicule {
   civilPoids: EtatControle;
   civilHauteur: EtatControle;
   civilLargeur: EtatControle;
+  civilEssieu: EtatControle;
   motifs: string[];
 }
 
@@ -205,6 +206,8 @@ export function evaluerVehicule(
   if (civilPoids === 'nok') motifs.push(`Restriction civile : masse ${v.masseT} t > ${o.civil.poidsMaxT} t signalés.`);
   if (civilHauteur === 'nok') motifs.push(`Restriction civile : hauteur ${v.hauteurM} m > ${o.civil.hauteurMaxM} m signalés.`);
   if (civilLargeur === 'nok') motifs.push(`Restriction civile : largeur ${v.largeurM} m > ${o.civil.largeurMaxM} m signalés.`);
+  const civilEssieu = controleCivil(v.chargeEssieuT ?? null, o.civil.essieuMaxT ?? null);
+  if (civilEssieu === 'nok') motifs.push(`Restriction civile : charge à l'essieu ${v.chargeEssieuT} t > ${o.civil.essieuMaxT} t signalés.`);
 
   return {
     vehicule: v,
@@ -218,6 +221,7 @@ export function evaluerVehicule(
     civilPoids,
     civilHauteur,
     civilLargeur,
+    civilEssieu,
     motifs,
   };
 }
@@ -246,7 +250,7 @@ export function pireMode(modes: ModeRequis[]): ModeRequis {
 export function verifierConvoi(o: Ouvrage, elements: ElementConvoi[], voies: Voies, ref: Referentiel): VerdictConvoi {
   const evaluations = elements.map((e) => evaluerVehicule(o, e, voies, ref));
   const mode = evaluations.length ? pireMode(evaluations.map((e) => e.mode)) : 'inconnu';
-  const alerteCivile = evaluations.some((e) => e.civilPoids === 'nok' || e.civilHauteur === 'nok' || e.civilLargeur === 'nok');
+  const alerteCivile = evaluations.some((e) => e.civilPoids === 'nok' || e.civilHauteur === 'nok' || e.civilLargeur === 'nok' || e.civilEssieu === 'nok');
   const controlesIncomplets = evaluations.some((e) => e.largeur === 'nc' || e.hauteur === 'nc');
   const noms = (m: ModeRequis) =>
     evaluations
