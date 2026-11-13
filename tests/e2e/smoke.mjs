@@ -31,6 +31,8 @@ verifier(await page.getByText('Référentiel non validé').isVisible(), 'bandeau
 
 // 0. Réseau bloqué : diagnostic explicite puis méthode manuelle (import du JSON Overpass)
 await page.getByRole('button', { name: /Données & zone/ }).click();
+await page.locator('details.avance').first().waitFor({ state: 'attached' });
+await page.evaluate(() => document.querySelectorAll('details.avance').forEach((d) => (d.open = true))); // mode avancé
 await page.getByLabel('Lieu, MGRS ou lat, lon').fill('47.27, -0.03');
 await page.getByRole('button', { name: 'Localiser' }).click();
 await page.getByRole('button', { name: /Télécharger réseau routier/ }).click();
@@ -93,6 +95,8 @@ const csv = 'Nom;MGRS;Classe;Classe double;Largeur;Observations\n' +
 const csvPath = path.join(captures, 'injection.csv');
 writeFileSync(csvPath, csv);
 await page.getByRole('button', { name: /Données & zone/ }).click();
+await page.locator('details.avance').first().waitFor({ state: 'attached' });
+await page.evaluate(() => document.querySelectorAll('details.avance').forEach((d) => (d.open = true))); // mode avancé
 await page.locator('input[type=file][accept=".zip,.csv,.txt,.geojson,.json,.kml"]').setInputFiles(csvPath);
 await page.getByRole('button', { name: 'Analyser' }).click();
 await page.getByText('À fusionner').waitFor();
@@ -156,6 +160,8 @@ const v1 = { exporte_le: '2025-01-01', ponts: [{ id: 1, nom: 'Pont v1 A', lat: 4
 const v1Path = path.join(captures, 'base-v1.json');
 writeFileSync(v1Path, JSON.stringify(v1));
 await page.getByRole('button', { name: /Données & zone/ }).click();
+await page.locator('details.avance').first().waitFor({ state: 'attached' });
+await page.evaluate(() => document.querySelectorAll('details.avance').forEach((d) => (d.open = true))); // mode avancé
 await page.locator('input[type=file][accept=".franchir,.zip,.json"]').nth(1).setInputFiles(v1Path);
 await page.getByText(/Base v1 migrée/).waitFor();
 await page.getByRole('button', { name: /Véhicules/ }).click();

@@ -64,9 +64,12 @@ page.on('pageerror', (e) => erreurs.push(e.message));
 await page.goto('file://' + path.join(racine, 'dist/index.html'));
 await page.getByText('FRANCHIR', { exact: true }).waitFor();
 await page.getByRole('button', { name: /Données & zone/ }).click();
+await page.locator('details.avance').first().waitFor({ state: 'attached' });
+await page.evaluate(() => document.querySelectorAll('details.avance').forEach((d) => (d.open = true))); // mode avancé
 await page.locator('input[type=file][accept=".franchir,.zip,.json"]').first().setInputFiles(path.join(ici, 'demo.franchir'));
 await page.getByText(/Paquet importé/).waitFor();
 
+await page.evaluate(() => document.querySelectorAll('details.avance').forEach((d) => (d.open = true)));
 await page.getByText('Chercher sur data.gouv.fr').click();
 await page.getByRole('button', { name: 'Départements de la zone' }).click();
 await page.locator('.datagouv [role=status]').getByText(/2 département\(s\) trouvé/).waitFor();

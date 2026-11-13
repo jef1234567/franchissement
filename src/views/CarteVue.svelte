@@ -12,6 +12,9 @@
   import { versMGRS } from '../core/geo';
   import PanneauItineraire from './carte/PanneauItineraire.svelte';
   import FicheCarte from './carte/FicheCarte.svelte';
+  import PanneauZone from './carte/PanneauZone.svelte';
+  import { preparation } from '../lib/preparation.svelte';
+  import { carreAutour } from '../core/preparation';
   import Icone from '../components/Icone.svelte';
 
   let { visible }: { visible: boolean } = $props();
@@ -56,7 +59,31 @@
     }
   }
   let coordsSouris = $state('');
-  let onglet = $state<'itineraire' | 'ouvrage'>('itineraire');
+  let onglet = $state<'zone' | 'itineraire' | 'ouvrage'>(etat.reseau ? 'itineraire' : 'zone');
+
+  // Carré de préparation : toujours centré sur la carte (logique de l'outil terrain), affiché dans l'onglet Zone.
+  const coucheCarre = L.layerGroup();
+  let centreCarte = $state<[number, number] | null>(null);
+  function majCarre() {
+    coucheCarre.clearLayers();
+    if (!carte || onglet !== 'zone') return;
+    const c = carte.getCenter();
+    centreCarte = [c.lat, c.lng];
+    const b = carreAutour(centreCarte, preparation.coteKm);
+    L.rectangle([[b.sud, b.ouest], [b.nord, b.est]], { color: '#c9a227', weight: 3, fillColor: '#c9a227', fillOpacity: 0.08, interactive: false }).addTo(coucheCarre);
+  }
+  // Réseau arrivé d'ailleurs (paquet importé, écran Données) : on passe à l'itinéraire. Pendant une préparation, on reste sur Zone.
+  let avaitReseau = !!etat.reseau;
+  $effect(() => {
+    const a = !!etat.reseau;
+    untrack(() => {
+      if (a && !avaitReseau && !preparation.enCours && onglet === 'zone') onglet = 'itineraire';
+      avaitReseau = a;
+    });
+  });
+  function centrerCarre(p: [number, number]) {
+    carte?.setView(p, carte.getZoom() < 9 ? 11 : carte.getZoom());
+  }
 
   // Couleur des ouvrages : verdict pour le convoi courant, sinon disponibilité de la classe.
   const elementsConvoi = $derived(developper(etat.projet, iti.convoi).elements);
@@ -75,8 +102,9 @@
     L.control.zoom({ position: 'topleft', zoomInTitle: 'Zoom avant', zoomOutTitle: 'Zoom arrière' }).addTo(carte);
     L.control.scale({ imperial: false, position: 'bottomleft' }).addTo(carte);
     carte.attributionControl.setPrefix('Leaflet');
-    for (const c of [coucheReseau, coucheZone, coucheRestrictions, coucheConvois, coucheItineraire, coucheOuvrages, coucheEtapes]) c.addTo(carte);
+    for (const c of [coucheReseau, coucheZone, coucheCarre, coucheRestrictions, coucheConvois, coucheItineraire, coucheOuvrages, coucheEtapes]) c.addTo(carte);
     carte.on('moveend', dessinerReseau);
+    carte.on('move', majCarre);
     carte.on('mousemove', (e: L.LeafletMouseEvent) => (coordsSouris = versMGRS(e.latlng.lat, e.latlng.lng) ?? ''));
     carte.on('click', (e: L.LeafletMouseEvent) => {
       if (iti.saisieCarte !== null) iti.definirEtape(iti.saisieCarte, [e.latlng.lat, e.latlng.lng]);
@@ -100,6 +128,15 @@
     });
   });
 
+  $effect(() => {
+    void onglet;
+    void preparation.coteKm;
+    untrack(majCarre);
+  });
+  // Après une préparation : le carré cède la place à la zone préparée.
+  $effect(() => {
+    if (!preparation.enCours && preparation.etapes.length) untrack(() => carte && etat.zone && carte.fitBounds([[etat.zone.bbox.sud, etat.zone.bbox.ouest], [etat.zone.bbox.nord, etat.zone.bbox.est]]));
+  });
   // Zone de travail
   $effect(() => {
     const z = etat.zone;
@@ -292,11 +329,14 @@
 
   <aside class="panneau carte-ui">
     <div class="onglets" role="tablist">
+      <button role="tab" aria-selected={onglet === 'zone'} class:actif={onglet === 'zone'} onclick={() => (onglet = 'zone')}><Icone nom="carte" taille={16} /> Zone</button>
       <button role="tab" aria-selected={onglet === 'itineraire'} class:actif={onglet === 'itineraire'} onclick={() => (onglet = 'itineraire')}><Icone nom="route" taille={16} /> Itinéraire</button>
       <button role="tab" aria-selected={onglet === 'ouvrage'} class:actif={onglet === 'ouvrage'} onclick={() => (onglet = 'ouvrage')}><Icone nom="pont" taille={16} /> Ouvrage</button>
     </div>
     <div class="panneau-corps">
-      {#if onglet === 'itineraire'}
+      {#if onglet === 'zone'}
+        <PanneauZone centre={() => centreCarte} allerA={centrerCarre} />
+      {:else if onglet === 'itineraire'}
         <PanneauItineraire />
       {:else}
         <FicheCarte elements={elementsConvoi} />

@@ -18,6 +18,8 @@ page.on('dialog', (d) => d.accept());
 
 await page.goto(url);
 await page.getByRole('button', { name: /Données & zone/ }).click();
+await page.locator('details.avance').first().waitFor({ state: 'attached' });
+await page.evaluate(() => document.querySelectorAll('details.avance').forEach((d) => (d.open = true))); // mode avancé
 const entrees = page.locator('input[type=file][accept=".franchir,.zip,.json"]');
 await entrees.first().setInputFiles(path.join(ici, 'demo.franchir')); // remplacer
 await page.getByText(/Réseau en place/).waitFor();

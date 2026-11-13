@@ -8,10 +8,11 @@
   import { TYPES_RESTRICTION, entitesRestrictions, partLineaire, proposerColonnesRestrictions, type ParamRestrictions, type ResultatRestrictions } from '../core/restrictions-lineaires';
   import { ErreurAccesBloque, geocoder, telechargerReseauOSM, telechargerTuiles, urlOverpassManuelle, type ResultatGeocodage } from '../lib/enligne';
   import { telecharger, horodatage } from '../lib/exports';
+  import { exporterPaquet as exporterPaquetZone } from '../lib/export-paquet.svelte';
   import { analyserPosition, bboxAutour, haversine, versMGRS, type BBox } from '../core/geo';
   import { construireReseau, extraireOuvrages } from '../core/reseau';
   import { SOURCES_TUILES, nombreTuiles, TAILLE_MOYENNE } from '../core/tuiles';
-  import { assemblerZones, creerPaquet, libelleZone, lirePaquet, FORMAT_PAQUET, type Zone } from '../core/paquet';
+  import { assemblerZones, libelleZone, lirePaquet, type Zone } from '../core/paquet';
   import { assemblerReseaux } from '../core/assemblage';
   import { SCHEMA_VERSION, type Fiabilite, type Ouvrage, type Projet } from '../core/model';
   import {
@@ -227,6 +228,8 @@
 
   /* ---------------- B. Injection ---------------- */
   let table = $state.raw<TableImport | null>(null);
+  /** Section avancée « importer un fichier » ouverte (ouverte d'office quand un fichier est chargé). */
+  let avanceImport = $state(false);
   let nomFichier = $state('');
   let corr = $state<Correspondance>({});
   let provLibelle = $state('28e GG');
@@ -270,6 +273,7 @@
         else { etat.notifier('Ce fichier JSON n\'est pas du GeoJSON (projet FRANCHIR : utilisez « Importer un projet »).', 'err'); return false; }
       } else t = tableDepuisCSV(texte);
       table = t;
+      avanceImport = true;
       nomFichier = nomF;
       corr = proposerCorrespondance(t.colonnes);
       suggererSCR();
@@ -403,32 +407,7 @@
 
   async function exporterPaquet() {
     enCours = true;
-    try {
-      const tuiles: { cle: string; donnees: Uint8Array }[] = [];
-      if (avecTuiles) {
-        for (const cle of await stockage.clesTuiles()) {
-          const b = await stockage.lireTuile(cle);
-          if (b) tuiles.push({ cle, donnees: new Uint8Array(await b.arrayBuffer()) });
-        }
-      }
-      const octets = creerPaquet({
-        entete: {
-          format: FORMAT_PAQUET, version: 1, creeLe: new Date().toISOString(), application: 'FRANCHIR 2.0',
-          zone: etat.zone ? ($state.snapshot(etat.zone) as Zone) : null,
-          projet: $state.snapshot(etat.projet) as Projet,
-          tuiles: $state.snapshot(etat.tuiles),
-        },
-        reseau: etat.reseau,
-        tuiles,
-      });
-      const nom = (etat.zone?.nom ?? 'projet').replace(/[^\p{L}\p{N}-]+/gu, '_');
-      telecharger(`franchir-${nom}-${horodatage()}.franchir`, octets as BlobPart, 'application/zip');
-      etat.notifier(`Paquet exporté (${(octets.length / 1e6).toFixed(1)} Mo).`, 'ok');
-    } catch (e) {
-      etat.notifier('Export impossible : ' + (e as Error).message, 'err');
-    } finally {
-      enCours = false;
-    }
+    try { await exporterPaquetZone(avecTuiles); } finally { enCours = false; }
   }
 
   function fusionnerProjet(p: Partial<Projet>, remplacer: boolean) {
@@ -503,7 +482,7 @@
 <div class="donnees">
   <header>
     <h2>Données & zone</h2>
-    <p class="muted">Préparez une zone sur un poste connecté (réseau routier, ponts, cartographie), exportez-la en paquet, puis importez-la sur le poste isolé.</p>
+    <p class="muted">Pour préparer une zone, allez sur la <button class="lien" onclick={() => etat.allerA('carte')}>Carte, onglet Zone</button> : un carré, une taille, un bouton. Ici : paquets pour le poste isolé, et mode avancé (préparation manuelle, import de fichiers).</p>
   </header>
 
   <section class="carte-ui section horsligne" class:actif={etat.horsLigne}>
@@ -513,6 +492,8 @@
 
   <div class="colonnes">
     <section class="carte-ui">
+      <details class="avance">
+      <summary class="section"><strong>Mode avancé : préparer une zone à la main</strong> <span class="muted petit-txt">(emprise administrative, grands axes, IGN, fonds de carte)</span></summary>
       <div class="section pile">
         <div class="ligne" style="align-items:center"><span class="pas">1</span><h3>Préparer une zone <span class="muted petit-txt">(poste connecté)</span></h3></div>
         <div class="ligne" style="flex-wrap:nowrap">
@@ -616,6 +597,7 @@
         {/if}
         <p class="muted petit-txt">Fonds IGN (Géoplateforme, licence ouverte). Le fond OpenStreetMap n'est consultable qu'en ligne (pas de téléchargement en masse).</p>
       </div>
+      </details>
     </section>
 
     <section class="carte-ui">
@@ -654,6 +636,8 @@
   </div>
 
   <section class="carte-ui">
+    <details class="avance" bind:open={avanceImport}>
+    <summary class="section"><strong>Mode avancé : importer un fichier</strong> <span class="muted petit-txt">(28e GG, reconnaissances, tableurs, jeux data.gouv non reconnus automatiquement)</span></summary>
     <div class="section pile">
       <div class="ligne" style="align-items:center"><span class="pas">3</span><h3>Injecter des données d'ouvrages <span class="muted petit-txt">(28e GG, reconnaissances, tableurs)</span></h3></div>
       <p class="petit-txt">Formats : shapefile zippé (.zip avec .shp, .dbf, .prj — reprojeté automatiquement), CSV / TXT (séparateur et encodage détectés), GeoJSON, KML. Positions : géométrie, lat/lon WGS84, MGRS, ou X/Y en Lambert 93, Lambert II étendu ou UTM.</p>
@@ -830,11 +814,14 @@
         </div>
       </div>
     {/if}
+    </details>
   </section>
 </div>
 
 <style>
   .donnees { padding: 16px 18px 40px; display: flex; flex-direction: column; gap: 14px; }
+  .avance > summary { cursor: pointer; list-style-position: inside; }
+  button.lien { background: none; border: none; padding: 0; color: var(--accent, #1d4f91); text-decoration: underline; cursor: pointer; font: inherit; }
   .datagouv summary { cursor: pointer; }
   .jeux-dg { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; max-height: 420px; overflow: auto; }
   .jeux-dg li { border-left: 3px solid var(--bordure, #ccc); padding-left: 8px; }

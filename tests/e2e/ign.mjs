@@ -27,6 +27,8 @@ page.on('pageerror', (e) => erreurs.push(e.message));
 await page.goto('file://' + path.join(racine, 'dist/index.html'));
 await page.getByText('FRANCHIR', { exact: true }).waitFor();
 await page.getByRole('button', { name: /Données & zone/ }).click();
+await page.locator('details.avance').first().waitFor({ state: 'attached' });
+await page.evaluate(() => document.querySelectorAll('details.avance').forEach((d) => (d.open = true))); // mode avancé
 await page.locator('input[type=file][accept=".franchir,.zip,.json"]').first().setInputFiles(path.join(ici, 'demo.franchir'));
 await page.getByText(/Paquet importé/).waitFor();
 
