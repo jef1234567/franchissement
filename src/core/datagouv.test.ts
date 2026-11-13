@@ -28,7 +28,7 @@ describe('data.gouv : départements', () => {
   });
   it('construit des requêtes courtes par thème', () => {
     expect(requetesDepartement({ code: '49', nom: 'Maine-et-Loire' })).toEqual([
-      'transports exceptionnels Maine-et-Loire', 'ponts Maine-et-Loire', 'tonnage Maine-et-Loire', 'gabarit Maine-et-Loire',
+      'transports exceptionnels Maine-et-Loire', 'ponts Maine-et-Loire', "ouvrages d'art Maine-et-Loire", 'tonnage Maine-et-Loire', 'gabarit Maine-et-Loire',
     ]);
     expect(urlRechercheDataGouv('ponts Ain')).toBe('https://www.data.gouv.fr/api/1/datasets/?q=ponts%20Ain&page_size=20');
   });
@@ -89,6 +89,15 @@ describe('data.gouv : résultats de recherche', () => {
     const acc = new Map<string, JeuDataGouv>();
     integrerReponseRecherche(acc, reponse, { code: '92', nom: 'Hauts-de-Seine' }, 'ponts');
     expect(trierJeux([...acc.values()]).map((j) => j.id)).toEqual(['j1', 'j2']);
+  });
+  it('préfère le GeoJSON au JSON tabulaire (cas réel Maine-et-Loire, Opendatasoft)', () => {
+    const acc = new Map<string, JeuDataGouv>();
+    integrerReponseRecherche(acc, { data: [{ id: 'm', title: 'Limitation de tonnage en Maine-et-Loire', resources: [
+      { id: 'a', title: 'x.csv', format: 'csv', url: 'https://data.maine-et-loire.fr/a' },
+      { id: 'b', title: 'x.json', format: 'json', url: 'https://data.maine-et-loire.fr/b' },
+      { id: 'c', title: 'x.geojson', format: 'json', url: 'https://data.maine-et-loire.fr/c' },
+    ] }] }, { code: '49', nom: 'Maine-et-Loire' }, 'tonnage');
+    expect(acc.get('m')!.ressources.map((r) => r.format)).toEqual(['csv', null, 'geojson']);
   });
   it('tolère une réponse mal formée', () => {
     expect(integrerReponseRecherche(new Map(), null, { code: '', nom: 'Ain' }, 'ponts')).toBe(0);

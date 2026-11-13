@@ -59,7 +59,7 @@ verifier(saisie === '37 Indre-et-Loire, 49 Maine-et-Loire', 'départements dédu
 
 await page.getByRole('button', { name: 'Chercher sur data.gouv' }).click();
 await page.locator('.datagouv [role=status]').getByText(/2 jeu\(x\) trouvé\(s\) pour 2 département\(s\), dont 1 avec un fichier importable/).waitFor();
-verifier(requetes.filter((q) => q.startsWith('q:')).length === 8, '4 thèmes × 2 départements interrogés');
+verifier(requetes.filter((q) => q.startsWith('q:')).length === 10, '5 thèmes × 2 départements interrogés');
 verifier(await page.getByRole('link', { name: 'Ponts du Maine-et-Loire' }).isVisible(), 'jeu importable affiché');
 verifier(!(await page.getByRole('link', { name: 'Tonnage' }).isVisible()), 'jeu sans fichier importable masqué par défaut');
 

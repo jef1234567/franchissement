@@ -11,7 +11,7 @@ export const API_DATAGOUV = 'https://www.data.gouv.fr/api/1';
 export const API_GEO = 'https://geo.api.gouv.fr';
 
 /** Thèmes recherchés pour chaque département. La recherche data.gouv est stricte (tous les mots exigés) : requêtes courtes. */
-export const THEMES_DATAGOUV = ['transports exceptionnels', 'ponts', 'tonnage', 'gabarit'] as const;
+export const THEMES_DATAGOUV = ['transports exceptionnels', 'ponts', "ouvrages d'art", 'tonnage', 'gabarit'] as const;
 
 export interface Departement { code: string; nom: string }
 
@@ -139,9 +139,13 @@ export function integrerReponseRecherche(acc: Map<string, JeuDataGouv>, json: un
     if (!j) {
       const ressources: RessourceDataGouv[] = (x.resources ?? []).filter((r) => r?.id && r.url).map((r) => ({
         id: r.id!, titre: r.title || r.id!, formatDeclare: r.format ?? '', url: r.url!,
-        format: formatImportable(r.format ?? '', r.url!, r.mime ?? ''),
+        format: formatImportable(/\.geojson$/i.test(r.title ?? '') ? 'geojson' : r.format ?? '', r.url!, r.mime ?? ''),
         urlStable: `${API_DATAGOUV}/datasets/r/${r.id}`, taille: r.filesize ?? undefined,
       }));
+      // Un jeu qui propose un vrai GeoJSON : ses autres « json » (exports tabulaires Opendatasoft…) sont écartés.
+      if (ressources.some((r) => r.format === 'geojson' && /\.geojson$/i.test(r.titre))) {
+        for (const r of ressources) if (r.format === 'geojson' && !/\.geojson$/i.test(r.titre) && r.formatDeclare.toLowerCase() === 'json') r.format = null;
+      }
       j = {
         id: x.id, titre: x.title ?? x.id,
         producteur: x.organization?.name ?? [x.owner?.first_name, x.owner?.last_name].filter(Boolean).join(' ') ?? '',
