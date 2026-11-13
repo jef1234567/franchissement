@@ -73,6 +73,8 @@ export interface ResultatItineraire {
   classeItineraire: number | null;
   maillonFaible: Ouvrage | null;
   ouvragesInconnus: Ouvrage[];
+  /** Part du trajet sur le réseau des transports exceptionnels (IGN), si ce réseau a été chargé : information, pas une classe. */
+  reseauTE?: { surM: number; categorieMin: number | null };
 }
 
 /* ---------- Tas binaire minimal ---------- */
@@ -321,6 +323,8 @@ export function calculerItineraire(
   const alertes: AlerteTroncon[] = [];
   let pk = 0;
   let duree = 0;
+  let surTE = 0;
+  let catTE: number | null = null;
   for (const { i, depuis } of aretesChemin) {
     const e = r.aretes[i];
     let pts = coordsArete(r, e);
@@ -343,6 +347,7 @@ export function calculerItineraire(
     if (etroite && !(memeVoie && estNombre(precedente!.largeur) && dimsConvoi.largeur! > precedente!.largeur)) {
       alertes.push({ pk, texte: `Chaussée étroite sur ${e.nom || e.ref || 'tronçon'} : ${e.largeur} m (valeur indicative) pour ${dimsConvoi.largeur} m de largeur de véhicule.` });
     }
+    if (estNombre(e.te)) { surTE += e.long; catTE = catTE === null ? e.te : Math.min(catTE, e.te); }
     precedente = e;
     ouvragePrecedent = o?.id ?? null;
     pk += e.long;
@@ -361,7 +366,7 @@ export function calculerItineraire(
     }
   }
   const ouvragesInconnus = [...new Set(traverses.filter((t) => t.verdict.mode === 'inconnu').map((t) => t.ouvrage))];
-  return { ok: true, coords, distanceM: pk, dureeS: duree, ouvrages: traverses, alertes, classeItineraire, maillonFaible, ouvragesInconnus };
+  return { ok: true, coords, distanceM: pk, dureeS: duree, ouvrages: traverses, alertes, classeItineraire, maillonFaible, ouvragesInconnus, reseauTE: r.aretes.some((x) => estNombre(x.te)) ? { surM: surTE, categorieMin: catTE } : undefined };
 }
 
 export function pireModeItineraire(res: ResultatItineraire): ModeRequis {

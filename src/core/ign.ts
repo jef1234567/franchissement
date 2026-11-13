@@ -260,3 +260,56 @@ export function marquerReseauTE(r: Reseau, ouvrages: Ouvrage[], entites: EntiteG
   }
   return n;
 }
+
+/** Couches TE utiles seules : tronçons et franchissements (les tables de liens et les prescriptions n'ont pas de géométrie exploitable seule). */
+export function coucheTEUtile(nom: string): boolean {
+  return /:(troncon_te|franchissement_te)$/i.test(nom);
+}
+
+/** Catégorie TE d'un tronçon : categorie_te (« 120 ») ou reseau_te (« TE120 »). */
+export function categorieTE(p: Record<string, unknown>): number | null {
+  const c = nombreIGN(p.categorie_te);
+  if (c != null) return c;
+  const m = /(\d{2,3})/.exec(String(p.reseau_te ?? ''));
+  return m ? parseInt(m[1], 10) : null;
+}
+
+export interface BilanTE { troncons: number; aretes: number; ouvrages: number; ambigus: number }
+
+/**
+ * Tronçons TE (IGN) : catégorie portée sur les arêtes rapprochées (même numéro de route), la plus forte si plusieurs.
+ * Les ouvrages concernés reçoivent une note. Aucune classe MLC n'en est déduite.
+ */
+export function appliquerTroncsTE(r: Reseau, ouvrages: Ouvrage[], entites: EntiteGeo[], rayonM = 12): BilanTE {
+  const parWay = new Map<number, Ouvrage>();
+  for (const o of ouvrages) for (const w of o.osmWayIds) parWay.set(w, o);
+  const bilan: BilanTE = { troncons: 0, aretes: 0, ouvrages: 0, ambigus: 0 };
+  const aretes = new Set<number>(), touches = new Set<string>();
+  for (const f of entites) {
+    const props = f.properties ?? {};
+    const cat = categorieTE(props);
+    if (cat == null) continue;
+    const ref = normRef(props.cpx_numero);
+    let rapproche = false;
+    for (const l of pointsLigne(f.geometry, r.bbox)) {
+      for (const p of pointsEchantillon(l)) {
+        const c = candidats(r, p, rayonM, null, ref);
+        if (!c.length) continue;
+        if (c.some((x) => x.d - c[0].d < 3 && !!r.aretes[x.arete].pont !== !!r.aretes[c[0].arete].pont)) { bilan.ambigus++; continue; }
+        const e = r.aretes[c[0].arete];
+        rapproche = true;
+        if (!estNombre(e.te) || cat > e.te) e.te = cat;
+        aretes.add(c[0].arete);
+        const o = parWay.get(e.way);
+        if (o) {
+          const note = `[IGN TE] Réseau des transports exceptionnels, catégorie ${cat} t (information ; prescriptions locales à consulter ; pas une classe MLC).`;
+          if (!o.notes.includes(note)) { o.notes = [o.notes, note].filter(Boolean).join('\n'); touches.add(o.id); }
+        }
+      }
+    }
+    if (rapproche) bilan.troncons++;
+  }
+  bilan.aretes = aretes.size;
+  bilan.ouvrages = touches.size;
+  return bilan;
+}

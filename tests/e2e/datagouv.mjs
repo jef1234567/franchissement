@@ -33,8 +33,24 @@ await ctx.route(/^https?:/, async (r) => {
         { id: 'res1', title: 'ponts49.geojson', format: 'geojson', url: 'https://static.data.gouv.fr/ponts49.geojson' },
         { id: 'res2', title: 'Flux WMS', format: 'wms', url: 'https://ogc.example/wms' },
       ],
+    }] : q === 'gabarit Maine-et-Loire' ? [{
+      id: 'gab49', title: 'Limitation de gabarit en Maine-et-Loire', organization: { name: 'Département de Maine-et-Loire' },
+      resources: [{ id: 'res9', title: 'gabarit.geojson', format: 'json', url: 'https://data.maine-et-loire.fr/gabarit.geojson' }],
     }] : q === 'tonnage Indre-et-Loire' ? [{ id: 'jeu37', title: 'Tonnage', organization: { name: 'CD37' }, resources: [{ id: 'r3', format: 'pdf', url: 'https://x.example/a.pdf' }] }] : [];
     return r.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ data }) });
+  }
+  if (u.host === 'www.data.gouv.fr' && u.pathname === '/api/1/datasets/r/res9') {
+    // Redirection vers le portail du producteur (cas réel du Maine-et-Loire).
+    return r.fulfill({ status: 302, headers: { ...cors, Location: 'https://data.maine-et-loire.fr/gabarit.geojson' } });
+  }
+  if (u.host === 'data.maine-et-loire.fr') {
+    requetes.push('producteur');
+    const ligne = (c) => ({ type: 'LineString', coordinates: [[-0.05, 47.26], [-0.049, 47.261]] });
+    return r.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ type: 'FeatureCollection', features: [
+      { type: 'Feature', properties: { valeur_limitation: 4.2, nature_contrainte: 'Hauteur', axe: '49 D0323' }, geometry: ligne() },
+      { type: 'Feature', properties: { valeur_limitation: 2.5, nature_contrainte: 'Largeur', axe: '49 D0323' }, geometry: ligne() },
+      { type: 'Feature', properties: { valeur_limitation: 3, nature_contrainte: 'Autre', axe: '' }, geometry: ligne() },
+    ] }) });
   }
   if (u.host === 'www.data.gouv.fr' && u.pathname === '/api/1/datasets/r/res1') {
     requetes.push('fichier');
@@ -58,7 +74,7 @@ const saisie = await page.getByPlaceholder('49 Maine-et-Loire, 37 Indre-et-Loire
 verifier(saisie === '37 Indre-et-Loire, 49 Maine-et-Loire', 'départements déduits de la zone : ' + saisie);
 
 await page.getByRole('button', { name: 'Chercher sur data.gouv' }).click();
-await page.locator('.datagouv [role=status]').getByText(/2 jeu\(x\) trouvé\(s\) pour 2 département\(s\), dont 1 avec un fichier importable/).waitFor();
+await page.locator('.datagouv [role=status]').getByText(/3 jeu\(x\) trouvé\(s\) pour 2 département\(s\), dont 2 avec un fichier importable/).waitFor();
 verifier(requetes.filter((q) => q.startsWith('q:')).length === 10, '5 thèmes × 2 départements interrogés');
 verifier(await page.getByRole('link', { name: 'Ponts du Maine-et-Loire' }).isVisible(), 'jeu importable affiché');
 verifier(!(await page.getByRole('link', { name: 'Tonnage' }).isVisible()), 'jeu sans fichier importable masqué par défaut');
@@ -71,6 +87,15 @@ verifier((await page.getByLabel('Source').inputValue()).startsWith('data.gouv'),
 await page.getByRole('button', { name: 'Analyser' }).click();
 await page.getByRole('button', { name: /Intégrer 1 ouvrage/ }).click();
 await page.getByText(/1 ouvrage\(s\) intégré\(s\)/).waitFor();
+await page.getByRole('button', { name: /Importer gabarit\.geojson/ }).click();
+await page.locator('.datagouv [role=status]').getByText(/gabarit.geojson.*chargé/).waitFor();
+verifier(requetes.includes('producteur'), 'fichier téléchargé chez le producteur (redirection autorisée par la CSP)');
+verifier(await page.getByLabel('Restrictions de tronçons (appliquées au réseau routier)').isChecked(), 'lignes reconnues : mode « restrictions de tronçons » proposé');
+await page.locator('#mode-import [role=status]').getByText(/2 restriction\(s\) valide\(s\) : hauteur \(m\) 1, largeur \(m\) 1 ; 1 ligne\(s\) rejetée/).waitFor();
+verifier(true, 'nature lue ligne par ligne, nature inconnue rejetée');
+await page.getByRole('button', { name: 'Appliquer aux tronçons du réseau' }).click();
+await page.getByText(/gabarit\.geojson : 2 restriction\(s\) lue\(s\)/).waitFor();
+verifier(true, 'restrictions appliquées au réseau');
 verifier(erreurs.length === 0, 'aucune erreur JavaScript ' + erreurs.join(' | '));
 await nav.close();
 if (echecs.length) { console.error(echecs.length + ' échec(s)'); process.exit(1); }

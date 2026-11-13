@@ -17,7 +17,7 @@ await ctx.route(/^https?:/, async (r) => {
   requetes.push(u.searchParams.get('REQUEST') + ' ' + (u.searchParams.get('TYPENAMES') ?? ''));
   const cors = { 'Access-Control-Allow-Origin': '*' };
   if (u.searchParams.get('REQUEST') === 'GetCapabilities') {
-    return r.fulfill({ status: 200, headers: cors, contentType: 'text/xml', body: '<wfs:WFS_Capabilities><FeatureTypeList><FeatureType><Name>SECUROUT.TE:te_120t</Name><Title>Réseau 120 t</Title></FeatureType></FeatureTypeList></wfs:WFS_Capabilities>' });
+    return r.fulfill({ status: 200, headers: cors, contentType: 'text/xml', body: '<wfs:WFS_Capabilities><FeatureTypeList><FeatureType><Name>SECUROUT.TE:troncon_te</Name><Title>Réseau 120 t</Title></FeatureType><FeatureType><Name>SECUROUT.TE:troncon_te_lien_prescription</Name><Title>Liens</Title></FeatureType></FeatureTypeList></wfs:WFS_Capabilities>' });
   }
   return r.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify({ type: 'FeatureCollection', features: [] }) });
 });
@@ -38,8 +38,8 @@ await page.getByRole('button', { name: 'Réseau transports exceptionnels' }).cli
 await page.locator('.ign [role=status]').getByText(/1 couche\(s\) « transports exceptionnels »/).waitFor();
 verifier(await page.getByLabel(/Réseau 120 t/).isChecked(), 'couche TE découverte et cochée');
 await page.getByRole('button', { name: 'Télécharger le réseau TE' }).click();
-await page.locator('.ign [role=status]').getByText(/Réseau TE : 0 ouvrage/).waitFor();
-verifier(requetes.some((q) => q.includes('SECUROUT.TE:te_120t')), 'couche TE téléchargée');
+await page.locator('.ign [role=status]').getByText(/Réseau TE : 0 tronçon/).waitFor();
+verifier(requetes.some((q) => q.includes('SECUROUT.TE:troncon_te')), 'couche TE téléchargée');
 verifier(erreurs.length === 0, 'aucune erreur JavaScript ' + erreurs.join(' | '));
 await nav.close();
 if (echecs.length) { console.error(echecs.length + ' échec(s)'); process.exit(1); }

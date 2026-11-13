@@ -30,6 +30,7 @@
       <tr><th>Distance</th><td>{(res.distanceM / 1000).toFixed(1)} km</td></tr>
       <tr><th>Durée de marche</th><td>{formatDuree(res.dureeS)} (vitesse max. {iti.options.vitesseConvoiKmh} km/h)</td></tr>
       <tr><th>Classe d'itinéraire</th><td>{res.classeItineraire ?? '—'}{res.maillonFaible ? ` — maillon faible : ${res.maillonFaible.nom}` : ''}</td></tr>
+      {#if res.reseauTE}<tr><th>Réseau transports exceptionnels (IGN)</th><td>{(res.reseauTE.surM / 1000).toFixed(1)} km sur {(res.distanceM / 1000).toFixed(1)} km{res.reseauTE.categorieMin != null ? ` ; catégorie la plus basse traversée : ${res.reseauTE.categorieMin} t` : ''} <span class="muted">(information civile, prescriptions locales à consulter ; pas une classe MLC)</span></td></tr>{/if}
       <tr><th>Écoulement cumulé aux ouvrages</th><td>{iti.ecoulementTotalS != null ? formatDuree(iti.ecoulementTotalS) : '—'}</td></tr>
       <tr><th>Contraintes</th><td>{iti.options.voies === 'unique' ? 'Voie unique' : 'Double voie'} ; franchissement toléré : {iti.options.modeMax} ; restrictions civiles {iti.options.restrictionsCiviles ? 'respectées' : 'ignorées'} ; gués {iti.options.gues === 'autoriser' ? 'autorisés' : 'évités'}</td></tr>
     </tbody>

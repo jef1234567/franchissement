@@ -1,6 +1,6 @@
 # FRANCHIR — fichier de reprise
 
-Dernière mise à jour : 13/11/2026 (après-midi : point 3 data.gouv). Branche `evolution-nationale-convois` du dépôt `jef1234567/franchissement` (privé), partie du commit `ee29fcb` (v2.0 de septembre).
+Dernière mise à jour : 13/11/2026 (fin de matinée : data.gouv, restrictions linéaires, catégories TE, mesures réelles). Branche `evolution-nationale-convois` du dépôt `jef1234567/franchissement` (privé), partie du commit `ee29fcb` (v2.0 de septembre).
 
 ## Pour reprendre dans une nouvelle session
 
@@ -16,7 +16,7 @@ Coller ce texte :
 - Véhicules sans classe MLC : supposés compatibles avec avertissement (décision du 13/11/2026, voir point 5).
 - Tonnage civil → classe MLC : **aucune table de conversion inventée**. L'outil compare la masse réelle du véhicule au tonnage affiché (et la charge à l'essieu à la limite par essieu). Une conversion n'est pas publiée en source ouverte ; à demander au Génie si elle est souhaitée.
 
-## Fait (12 commits, tous testés)
+## Fait (15 commits, tous testés)
 
 | Chantier | Contenu | Où |
 |---|---|---|
@@ -27,9 +27,11 @@ Coller ce texte :
 | Couverture nationale | Préparation d'une zone par **emprise administrative** (rectangle englobant renvoyé par Nominatim : département, commune…) ou par cercle ; option **« Grands axes seulement »** (`motorway` → `tertiary` et bretelles ; petites départementales incluses à la demande du 13/11/2026). **Assemblage** de paquets par « Importer (fusionner) » : nœuds reconnus par leurs coordonnées, chaque voie OSM redécoupée à l'union des coupures des paquets, valeur la plus contraignante retenue ; voie de géométrie différente entre paquets → restriction la plus forte appliquée à toute la voie. Zone composite affichée avec ses composantes | `src/core/assemblage.ts`, `paquet.ts` (`assemblerZones`, `libelleZone`), `reseau.ts` (`HIGHWAYS_GRANDS_AXES`), `enligne.ts` (`bboxNominatim`), `DonneesVue.svelte` |
 | Carte des convois | Itinéraires de tous les convois calculés dans l'écran Convois tracés sur la carte avec leur couleur (départ D, arrivée A, info-bulle nom et distance), légende, case « Convois (n) » pour masquer. Sur un tronçon commun, épaisseurs décroissantes : chaque convoi reste visible en liseré | `src/views/CarteVue.svelte`, `src/lib/convois.svelte.ts` (`couleurConvoi`) |
 | Recherche data.gouv | Bloc « Chercher sur data.gouv.fr » dans Données & zone, étape 3 : départements de la zone déduits par geo.api.gouv.fr (grille de 4 × 4 points par emprise, composantes comprises) ou saisis à la main ; 4 requêtes par département (« transports exceptionnels », « ponts », « tonnage », « gabarit » + nom) ; jeux dédoublonnés et triés (département cité, fichier importable) ; badge « hors département ? » ; un clic télécharge la ressource (URL stable `/api/1/datasets/r/<id>`, repli sur l'URL directe) et l'envoie dans l'import existant (correspondance des colonnes, fusion, désaccords). Provenance `datagouv`, fiabilité par défaut ramenée de « validé » à « reconnu » (sinon la valeur importée écraserait la plus contraignante). CSP : `www.data.gouv.fr`, `static.data.gouv.fr`, `geo.api.gouv.fr` ajoutés | `src/core/datagouv.ts`, `src/lib/enligne.ts`, `DonneesVue.svelte`, `index.html` |
+| Restrictions linéaires | Un fichier dont les entités sont surtout des lignes (jeux départementaux « limitation de tonnage / gabarit ») est proposé en **restrictions de tronçons** : colonne valeur, type fixe ou lu ligne par ligne dans une colonne « nature » (Hauteur → hmax, Largeur → lmax…), numéro de route (« 49 D0323 » → D323) ; lignes densifiées à 25 m puis appliquées par `appliquerRestrictionsIGN` (plus contraignant, désaccords, filtre pont / route dessous). Nature non reconnue, valeur vide ou invraisemblable (> 50 m, > 200 t) : ligne rejetée avec motif | `src/core/restrictions-lineaires.ts`, `DonneesVue.svelte` |
+| Catégories TE | Seules `troncon_te` et `franchissement_te` sont proposées ; `troncon_te` porte sa catégorie (`categorie_te` ou `reseau_te`, en t) sur les tronçons du réseau (champ `te`, la plus forte retenue) et annote les ouvrages ; le rapport d'itinéraire affiche les km sur réseau TE et la catégorie la plus basse traversée. **Information civile, jamais convertie en classe MLC** | `ign.ts` (`appliquerTroncsTE`, `categorieTE`, `coucheTEUtile`), `reseau.ts`, `itineraire.ts`, `RapportItineraire.svelte` |
 | Sources IGN | Bloc « Compléter avec l'IGN » dans Données & zone : restrictions BD TOPO (poids total, par essieu, hauteur, largeur) rapprochées des tronçons OSM, valeur la plus contraignante retenue, écarts tracés ; découverte des couches du réseau national des transports exceptionnels dans le catalogue IGN puis annotation des ouvrages concernés (information, sans classe) | `src/core/ign.ts`, `src/lib/enligne.ts`, `DonneesVue.svelte` |
 
-Tests : 115 tests unitaires (`npm test`) ; bout en bout dans Chromium : `npm run e2e` (existant), `npm run e2e:convois`, `npm run e2e:ign` (service IGN simulé), `npm run e2e:assemblage`, `npm run e2e:datagouv` (data.gouv et geo.api simulés). `npm run e2e` exige `tests/e2e/demo-overpass.json`, non versionné : le régénérer par `npx tsx tests/e2e/paquet-demo.ts`. Les fichiers de démonstration se régénèrent par `npx tsx tests/e2e/paquet-demo.ts`. Variable `CHROMIUM` à renseigner si le chemin du navigateur diffère.
+Tests : 124 tests unitaires (`npm test`) ; bout en bout dans Chromium : `npm run e2e` (existant), `npm run e2e:convois`, `npm run e2e:ign` (service IGN simulé), `npm run e2e:assemblage`, `npm run e2e:datagouv` (data.gouv et geo.api simulés). `npm run e2e` exige `tests/e2e/demo-overpass.json`, non versionné : le régénérer par `npx tsx tests/e2e/paquet-demo.ts`. Les fichiers de démonstration se régénèrent par `npx tsx tests/e2e/paquet-demo.ts`. Variable `CHROMIUM` à renseigner si le chemin du navigateur diffère.
 
 ## Mesures réelles du 13/11/2026 (navigateur connecté, depuis une page d'origine « null » comme `file://`)
 
@@ -40,8 +42,8 @@ Tests : 115 tests unitaires (`npm test`) ; bout en bout dans Chromium : `npm run
 
 ## Suites issues des mesures
 
-- **Restrictions linéaires départementales** (tonnage, gabarit) : aujourd'hui importées comme des « ouvrages » placés au milieu du tronçon. À faire : les appliquer aux tronçons du réseau comme les restrictions IGN (réutiliser `appliquerRestrictionsIGN`), avec une colonne « nature » qui aiguille la valeur (Hauteur → hmax, Largeur → lmax). **Ne pas mapper `valeur_limitation` du jeu gabarit 49 sur une seule colonne** : il mélange hauteurs et largeurs.
-- **Réseau TE** : exploiter `categorie_te` (72/94/120 t) au lieu d'une simple note ; n'afficher que `troncon_te` et `franchissement_te` (les tables de liens et prescriptions n'ont pas de sens seules).
+- ~~Restrictions linéaires départementales~~ et ~~catégories TE~~ : faits (voir « Fait »).
+- Prescriptions TE (`prescritpion_te`, textes) : non reprises ; pourraient être jointes aux franchissements via `franchissement_te_lien_prescription`.
 - Colonne `hauteur` du jeu « Ouvrages d'art 49 » : sens non documenté (hauteur de l'ouvrage ou gabarit sous l'ouvrage ?) ; ne pas la mapper sur « hauteur libre » sans vérification.
 
 ## Non vérifié (à faire sur un poste connecté, 15 minutes)
@@ -51,6 +53,7 @@ L'environnement de développement n'avait pas accès à Internet : **aucune requ
 1. Ouvrir `dist/index.html`, préparer une zone (ex. Saumur, 25 km), puis « Restrictions BD TOPO » : vérifier qu'il n'y a pas d'erreur CORS et noter le nombre de tronçons avec restriction.
 2. « Réseau transports exceptionnels » : noter les noms exacts des couches `SECUROUT.TE:*` trouvées. Si aucune n'apparaît, le réseau TE n'est pas publié sous ce nom : voir `docs/SOURCES-NATIONALES.md`.
 3. Contrôler sur 2 ou 3 ponts connus que la restriction IGN est bien posée sur le pont et pas sur la route en dessous.
+6. Restrictions linéaires : importer le jeu « Limitation de gabarit en Maine-et-Loire » (mode tronçons, nature = `nature_contrainte`, axe = `axe`) sur la zone Saumur, puis vérifier sur la carte 2 ou 3 tronçons connus (bon tronçon, pas la route du dessous).
 5. data.gouv : dans Données & zone, étape 3, « Chercher sur data.gouv.fr » → « Départements de la zone » (Saumur 25 km : attendu au moins Maine-et-Loire) → « Chercher ». Noter les erreurs éventuelles (CORS de l'API data.gouv et de geo.api.gouv.fr **non vérifiés**), le nombre de jeux, puis importer 2 ou 3 fichiers (dont un hébergé hors data.gouv) : un fichier chez un producteur (ArcGIS Hub, geo-ide…) sera **bloqué par la CSP de l'outil** (domaines non listés) ; la parade actuelle est d'ouvrir le lien et d'utiliser « Choisir un fichier ».
 4. Couverture nationale : localiser « Maine-et-Loire », emprise « du lieu », cocher « Grands axes seulement », télécharger, exporter le paquet (sans tuiles). Noter la durée, le nombre de tronçons et le poids du paquet ; si Overpass refuse (délai ou mémoire), le signaler. Importer ensuite en fusion un paquet Saumur 25 km détaillé et calculer un itinéraire qui sort de la zone de détail.
 

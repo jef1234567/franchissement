@@ -40,6 +40,8 @@ export interface Arete {
   barre?: 1;
   /** Largeur de chaussée (m), indicative. */
   largeur?: number;
+  /** Catégorie du réseau national des transports exceptionnels (t : 72, 94, 120), couche IGN SECUROUT.TE:troncon_te. Information, pas une classe MLC. */
+  te?: number;
 }
 
 export interface Reseau {

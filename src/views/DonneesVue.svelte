@@ -4,7 +4,8 @@
   import * as stockage from '../lib/stockage';
   import { chercherDataGouv, departementsDesEmprises, listerCouchesTE, telechargerRessource, telechargerWFS } from '../lib/enligne';
   import { lireSaisieDepartements, nomFichierRessource, saisieDepartements, type JeuDataGouv, type RessourceDataGouv } from '../core/datagouv';
-  import { appliquerRestrictionsIGN, marquerReseauTE, COUCHE_BDTOPO_ROUTES } from '../core/ign';
+  import { appliquerRestrictionsIGN, appliquerTroncsTE, coucheTEUtile, marquerReseauTE, COUCHE_BDTOPO_ROUTES } from '../core/ign';
+  import { TYPES_RESTRICTION, entitesRestrictions, partLineaire, proposerColonnesRestrictions, type ParamRestrictions, type ResultatRestrictions } from '../core/restrictions-lineaires';
   import { ErreurAccesBloque, geocoder, telechargerReseauOSM, telechargerTuiles, urlOverpassManuelle, type ResultatGeocodage } from '../lib/enligne';
   import { telecharger, horodatage } from '../lib/exports';
   import { analyserPosition, bboxAutour, haversine, versMGRS, type BBox } from '../core/geo';
@@ -126,17 +127,21 @@
       } else {
         if (!couchesTEdispo) {
           etatIGN = 'Lecture du catalogue IGN…';
-          couchesTEdispo = await listerCouchesTE(ctrl.signal);
+          couchesTEdispo = (await listerCouchesTE(ctrl.signal)).filter((c) => coucheTEUtile(c.nom));
           couchesTEchoisies = couchesTEdispo.map((c) => c.nom);
           etatIGN = couchesTEdispo.length ? `${couchesTEdispo.length} couche(s) « transports exceptionnels » trouvée(s) : choisissez puis relancez.` : 'Aucune couche « transports exceptionnels » (SECUROUT.TE) dans le catalogue IGN.';
           return;
         }
         let n = 0;
+        const bil = { troncons: 0, aretes: 0, ouvrages: 0, ambigus: 0 };
         for (const c of couchesTEchoisies) {
           const ents = await telechargerWFS(c, etat.zone.bbox, (m) => (etatIGN = m), ctrl.signal);
-          n += marquerReseauTE(reseau, ouvrages, ents, c);
+          if (/troncon_te$/i.test(c)) {
+            const b = appliquerTroncsTE(reseau, ouvrages, ents);
+            bil.troncons += b.troncons; bil.aretes += b.aretes; bil.ouvrages += b.ouvrages; bil.ambigus += b.ambigus;
+          } else n += marquerReseauTE(reseau, ouvrages, ents, c);
         }
-        etatIGN = `Réseau TE : ${n} ouvrage(s) annoté(s) (information, sans valeur de classe MLC).`;
+        etatIGN = `Réseau TE : ${bil.troncons} tronçon(s) IGN rapproché(s), ${bil.aretes} tronçon(s) du réseau classés (catégorie en t), ${bil.ouvrages + n} ouvrage(s) annoté(s)${bil.ambigus ? ` ; ${bil.ambigus} point(s) ambigus non rapprochés` : ''}. Information civile, sans valeur de classe MLC.`;
       }
       await etat.definirReseau(reseau, etat.zone);
       etat.projet.ouvrages = ouvrages;
@@ -337,11 +342,35 @@
       provAuteur = j.producteur;
       if (await chargerTable(nomFichierRessource(r), buf, r.url)) {
         etatDG = `« ${r.titre} » chargé (${j.titre}) : contrôlez la correspondance des colonnes ci-dessous.`;
-        document.getElementById('correspondance')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        setTimeout(() => (document.getElementById('mode-import') ?? document.getElementById('correspondance'))?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 100);
       } else etatDG = `« ${r.titre} » téléchargé mais illisible par l'import (format inattendu).`;
     } catch (e) {
       etatDG = 'Échec : ' + (e as Error).message;
     } finally { dgEnCours = false; }
+  }
+
+  /* ---------------- Restrictions linéaires (tronçons) ---------------- */
+  let modeImport = $state<'ouvrages' | 'troncons'>('ouvrages');
+  let paramR = $state<ParamRestrictions>({ colValeur: '', type: 'nature' });
+  const lineaire = $derived(table ? partLineaire(table) : 0);
+  const apercuR = $derived.by((): ResultatRestrictions | null => (table && modeImport === 'troncons' && paramR.colValeur ? entitesRestrictions(table, $state.snapshot(paramR)) : null));
+  $effect(() => {
+    if (!table) return;
+    const p = proposerColonnesRestrictions(table.colonnes);
+    paramR = { colValeur: p.colValeur ?? '', type: p.type ?? 'pmax', colNature: p.colNature, colAxe: p.colAxe };
+    modeImport = partLineaire(table) > 0.5 ? 'troncons' : 'ouvrages';
+  });
+  async function appliquerTroncons() {
+    const r = etat.reseau;
+    if (!r || !etat.zone) { etat.notifier('Chargez d\'abord un réseau routier (zone).', 'err'); return; }
+    if (!apercuR?.entites.length) return;
+    const reseau = structuredClone($state.snapshot(r)) as typeof r;
+    const ouvrages = $state.snapshot(etat.projet.ouvrages) as Ouvrage[];
+    const b = appliquerRestrictionsIGN(reseau, ouvrages, apercuR.entites, provLibelle || nomFichier);
+    await etat.definirReseau(reseau, etat.zone);
+    etat.projet.ouvrages = ouvrages;
+    etat.notifier(`${nomFichier} : ${apercuR.entites.length} restriction(s) lue(s), ${b.rapprochees} rapprochée(s) du réseau ; ${b.aretesModifiees} tronçon(s) et ${b.ouvragesModifies} ouvrage(s) mis à jour, ${b.desaccords} désaccord(s)${b.ambigus ? `, ${b.ambigus} point(s) ambigus non rapprochés` : ''}${apercuR.rejets.length ? ` ; ${apercuR.rejets.length} ligne(s) rejetée(s)` : ''}.`, 'ok');
+    table = null;
   }
 
   function analyser() {
@@ -670,7 +699,42 @@
       </details>
     </div>
 
-    {#if table}
+    {#if table && lineaire > 0}
+      <div class="section pile" id="mode-import">
+        <h4>Nature des entités</h4>
+        <p class="petit-txt">{Math.round(lineaire * 100)} % des entités sont des <strong>lignes</strong> (tronçons de route). Une limitation portée par un tronçon s'applique aux routes du réseau, pas à un ouvrage.</p>
+        <div class="ligne">
+          <label class="case"><input type="radio" bind:group={modeImport} value="troncons" /> Restrictions de tronçons (appliquées au réseau routier)</label>
+          <label class="case"><input type="radio" bind:group={modeImport} value="ouvrages" /> Ouvrages (un point par entité)</label>
+        </div>
+        {#if modeImport === 'troncons'}
+          <div class="grille-4">
+            <label class="champ">Colonne de la valeur
+              <select bind:value={paramR.colValeur}><option value="">—</option>{#each table.colonnes as c (c)}<option value={c}>{c}</option>{/each}</select>
+            </label>
+            <label class="champ">Type de restriction
+              <select bind:value={paramR.type}><option value="nature">Selon une colonne « nature »</option>{#each TYPES_RESTRICTION as t (t.cle)}<option value={t.cle}>{t.libelle}</option>{/each}</select>
+            </label>
+            {#if paramR.type === 'nature'}
+              <label class="champ">Colonne de la nature
+                <select bind:value={paramR.colNature}><option value={undefined}>—</option>{#each table.colonnes as c (c)}<option value={c}>{c}</option>{/each}</select>
+              </label>
+            {/if}
+            <label class="champ">Colonne du numéro de route <span class="muted">(facultatif, évite la route du dessous)</span>
+              <select bind:value={paramR.colAxe}><option value={undefined}>—</option>{#each table.colonnes as c (c)}<option value={c}>{c}</option>{/each}</select>
+            </label>
+            <label class="champ">Source<input type="text" bind:value={provLibelle} /></label>
+          </div>
+          {#if apercuR}
+            <p class="petit-txt" role="status">{apercuR.entites.length} restriction(s) valide(s) : {TYPES_RESTRICTION.filter((t) => apercuR.parType[t.cle]).map((t) => `${t.libelle.toLowerCase()} ${apercuR.parType[t.cle]}`).join(', ') || 'aucune'} ; {apercuR.rejets.length} ligne(s) rejetée(s). Aucune valeur n'est devinée : nature non reconnue ou unité douteuse → ligne rejetée.</p>
+            {#if apercuR.rejets.length}<details><summary class="petit-txt">Lignes rejetées</summary><ul class="petit-txt">{#each apercuR.rejets.slice(0, 50) as r, i (i)}<li>Ligne {r.ligne} : {r.motif}</li>{/each}</ul></details>{/if}
+          {/if}
+          <p class="muted petit-txt">La valeur la plus contraignante est retenue sur chaque tronçon ; les écarts avec les autres sources sont tracés sur les fiches d'ouvrage.</p>
+          <div><button class="btn primaire" disabled={!apercuR?.entites.length || !etat.reseau} onclick={appliquerTroncons}><Icone nom="ok" taille={16} /> Appliquer aux tronçons du réseau</button>{#if !etat.reseau}<span class="petit-txt muted"> (chargez d'abord un réseau)</span>{/if}</div>
+        {/if}
+      </div>
+    {/if}
+    {#if table && modeImport === 'ouvrages'}
       <div class="section pile" id="correspondance">
         <h4>Correspondance des colonnes</h4>
         <div class="correspondance">
