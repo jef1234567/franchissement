@@ -1,6 +1,7 @@
 import { requeteOverpassReseau } from '../core/reseau';
 import type { BBox } from '../core/geo';
 import { iterTuiles, cleTuile, urlTuile, type SourceTuiles } from '../core/tuiles';
+import { PAGE_WFS, couchesTE, urlCapabilitesIGN, urlGetFeature, type EntiteGeo } from '../core/ign';
 
 /* =========================================================================
    Accès en ligne (phase de préparation sur poste connecté uniquement)
@@ -142,4 +143,46 @@ export async function telechargerTuiles(
   await vider();
   progression(fait, total, erreurs);
   return { ok, erreurs };
+}
+
+/* ---------------- IGN Géoplateforme (WFS) ---------------- */
+
+/** Télécharge toutes les entités d'une couche WFS IGN sur une emprise (pagination, plafond de sécurité). */
+export async function telechargerWFS(
+  couche: string,
+  bbox: BBox,
+  suivi: (msg: string) => void,
+  signal?: AbortSignal,
+  maxEntites = 200_000,
+): Promise<EntiteGeo[]> {
+  const toutes: EntiteGeo[] = [];
+  for (let debut = 0; debut < maxEntites; debut += PAGE_WFS) {
+    suivi(`${couche} : ${toutes.length.toLocaleString('fr-FR')} entités reçues…`);
+    let r: Response;
+    try {
+      r = await fetch(urlGetFeature(couche, bbox, debut), { signal });
+    } catch (e) {
+      if (signal?.aborted) throw new Error('Téléchargement annulé.');
+      throw new ErreurAccesBloque("Service IGN (data.geopf.fr) injoignable depuis ce navigateur : requête bloquée avant d'atteindre Internet ou refusée (CORS).");
+    }
+    if (r.status === 429) { await new Promise((res) => setTimeout(res, 5500)); debut -= PAGE_WFS; continue; }
+    if (!r.ok) throw new Error(`IGN : réponse HTTP ${r.status} pour ${couche}.`);
+    const j = (await r.json()) as { features?: EntiteGeo[] };
+    const lot = j.features ?? [];
+    toutes.push(...lot);
+    if (lot.length < PAGE_WFS) return toutes;
+  }
+  suivi(`Plafond de ${maxEntites.toLocaleString('fr-FR')} entités atteint : réduisez la zone.`);
+  return toutes;
+}
+
+export async function listerCouchesTE(signal?: AbortSignal): Promise<{ nom: string; titre: string }[]> {
+  let r: Response;
+  try {
+    r = await fetch(urlCapabilitesIGN(), { signal });
+  } catch {
+    throw new ErreurAccesBloque('Catalogue IGN injoignable depuis ce navigateur.');
+  }
+  if (!r.ok) throw new Error('Catalogue IGN : réponse HTTP ' + r.status);
+  return couchesTE(await r.text());
 }

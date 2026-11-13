@@ -2,6 +2,8 @@
   import { onMount } from 'svelte';
   import { etat, projetParDefaut } from '../lib/etat.svelte';
   import * as stockage from '../lib/stockage';
+  import { listerCouchesTE, telechargerWFS } from '../lib/enligne';
+  import { appliquerRestrictionsIGN, marquerReseauTE, COUCHE_BDTOPO_ROUTES } from '../core/ign';
   import { ErreurAccesBloque, geocoder, telechargerReseauOSM, telechargerTuiles, urlOverpassManuelle, type ResultatGeocodage } from '../lib/enligne';
   import { telecharger, horodatage } from '../lib/exports';
   import { analyserPosition, bboxAutour, versMGRS } from '../core/geo';
@@ -83,6 +85,53 @@
     etat.projet.ouvrages = ouvrages;
     etatReseau = `Réseau chargé : ${reseau.aretes.length.toLocaleString('fr-FR')} tronçons, ${osm.length} ouvrages détectés (${ajoutes} nouveaux, ${completes} complétés).`;
     etat.notifier(etatReseau, 'ok');
+  }
+
+  /* ---------------- Compléments IGN (BD TOPO, réseau TE) ---------------- */
+  let etatIGN = $state('');
+  let ignEnCours = $state(false);
+  let couchesTEdispo = $state<{ nom: string; titre: string }[] | null>(null);
+  let couchesTEchoisies = $state<string[]>([]);
+
+  async function completerIGN(quoi: 'bdtopo' | 'te') {
+    const r = etat.reseau;
+    if (!r || !etat.zone) return;
+    if (etat.horsLigne) { etat.notifier('Mode hors ligne strict activé.', 'err'); return; }
+    ignEnCours = true;
+    const ctrl = new AbortController();
+    annulation = ctrl;
+    try {
+      const reseau = structuredClone($state.snapshot(r)) as typeof r;
+      const ouvrages = $state.snapshot(etat.projet.ouvrages) as Ouvrage[];
+      if (quoi === 'bdtopo') {
+        const ents = await telechargerWFS(COUCHE_BDTOPO_ROUTES, etat.zone.bbox, (m) => (etatIGN = m), ctrl.signal);
+        const b = appliquerRestrictionsIGN(reseau, ouvrages, ents);
+        etatIGN = `BD TOPO : ${ents.length.toLocaleString('fr-FR')} tronçons lus, ${b.avecRestriction} avec restriction, ${b.rapprochees} rapprochés du réseau ; ${b.aretesModifiees} tronçons et ${b.ouvragesModifies} ouvrages mis à jour, ${b.desaccords} désaccord(s) de sources.`;
+      } else {
+        if (!couchesTEdispo) {
+          etatIGN = 'Lecture du catalogue IGN…';
+          couchesTEdispo = await listerCouchesTE(ctrl.signal);
+          couchesTEchoisies = couchesTEdispo.map((c) => c.nom);
+          etatIGN = couchesTEdispo.length ? `${couchesTEdispo.length} couche(s) « transports exceptionnels » trouvée(s) : choisissez puis relancez.` : 'Aucune couche « transports exceptionnels » (SECUROUT.TE) dans le catalogue IGN.';
+          return;
+        }
+        let n = 0;
+        for (const c of couchesTEchoisies) {
+          const ents = await telechargerWFS(c, etat.zone.bbox, (m) => (etatIGN = m), ctrl.signal);
+          n += marquerReseauTE(reseau, ouvrages, ents, c);
+        }
+        etatIGN = `Réseau TE : ${n} ouvrage(s) annoté(s) (information, sans valeur de classe MLC).`;
+      }
+      await etat.definirReseau(reseau, etat.zone);
+      etat.projet.ouvrages = ouvrages;
+      etat.notifier(etatIGN, 'ok');
+    } catch (e) {
+      etatIGN = 'Échec : ' + (e as Error).message;
+      etat.notifier(etatIGN, 'err');
+    } finally {
+      ignEnCours = false;
+      annulation = null;
+    }
   }
 
   /* ---------------- Méthode manuelle (requête ouverte dans un onglet du navigateur) ---------------- */
@@ -394,6 +443,20 @@
         {#if etat.reseau}
           <div class="encadre succes petit-txt">
             Réseau en place : {etat.zone?.nom ?? '—'} ({etat.zone?.rayonKm ?? '?'} km) — {etat.reseau.aretes.length.toLocaleString('fr-FR')} tronçons, {etat.reseau.aretes.filter((a) => a.pont).length} tronçons de pont — extrait le {new Date(etat.reseau.creeLe).toLocaleDateString('fr-FR')}.
+          </div>
+          <div class="pile ign">
+            <h4>Compléter avec l'IGN (Géoplateforme)</h4>
+            <p class="muted petit-txt">Restrictions réglementaires de la BD TOPO (poids total, poids par essieu, hauteur, largeur) rapprochées des tronçons ; la valeur la plus contraignante est retenue et les écarts entre sources sont signalés. Le réseau national des transports exceptionnels annote les ouvrages concernés.</p>
+            <div class="ligne">
+              <button class="btn" disabled={ignEnCours || etat.horsLigne} onclick={() => completerIGN('bdtopo')}>Restrictions BD TOPO</button>
+              <button class="btn" disabled={ignEnCours || etat.horsLigne || (couchesTEdispo != null && !couchesTEchoisies.length)} onclick={() => completerIGN('te')}>{couchesTEdispo ? 'Télécharger le réseau TE' : 'Réseau transports exceptionnels'}</button>
+            </div>
+            {#if couchesTEdispo?.length}
+              <div class="pile petit-txt">
+                {#each couchesTEdispo as c (c.nom)}<label class="case"><input type="checkbox" value={c.nom} bind:group={couchesTEchoisies} /> {c.titre} <span class="muted mono">{c.nom}</span></label>{/each}
+              </div>
+            {/if}
+            {#if etatIGN}<p class="petit-txt" role="status">{etatIGN}</p>{/if}
           </div>
         {/if}
       </div>
