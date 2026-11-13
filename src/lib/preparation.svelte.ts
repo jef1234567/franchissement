@@ -1,8 +1,8 @@
 import { etat } from './etat.svelte';
-import { chercherDataGouv, departementsDesEmprises, listerCouchesTE, SERVEURS_OVERPASS, telechargerReseauOSM, telechargerRessource, telechargerWFS } from './enligne';
+import { chercherDataGouv, departementsDesEmprisesDetail, listerCouchesTE, SERVEURS_OVERPASS, telechargerReseauOSM, telechargerRessource, telechargerWFS } from './enligne';
 import * as stockage from './stockage';
 import { assemblerReseaux } from '../core/assemblage';
-import { nomFichierRessource, type JeuDataGouv, type RessourceDataGouv } from '../core/datagouv';
+import { nomFichierRessource, type Departement, type JeuDataGouv, type RessourceDataGouv } from '../core/datagouv';
 import { appliquerRestrictionsIGN, appliquerTroncsTE, coucheTEUtile, marquerReseauTE, COUCHE_BDTOPO_ROUTES, type EntiteGeo } from '../core/ign';
 import { appliquerFusion, convertirOuvrages, integrerOuvragesOSM, planifierFusion, tableDepuisCSV, tableDepuisGeoJSON, tableDepuisKML, type TableImport } from '../core/importation';
 import { carreAutour, cleEmprise, decouperEnTuiles, dedoublonnerEntites, filtrerDansEmprise, reconnaitreJeu } from '../core/preparation';
@@ -259,9 +259,29 @@ class Preparation {
     this.etape('datagouv', 'encours');
     const nonReconnus: JeuNonReconnu[] = [];
     try {
-      const depts = await enCache(cleEmprise('depts', bbox), () => departementsDesEmprises([bbox], (m) => (this.progression = m), signal));
+      // Liste incomplète (points sans réponse) : utilisée, mais ni gardée en cache ni passée sous silence.
+      const cleDepts = `v${VERSION_CACHE}:${cleEmprise('depts', bbox)}`;
+      let depts = (cache.get(cleDepts) as Departement[] | undefined) ?? (await stockage.lireCache<Departement[]>(cleDepts));
+      let pointsEnEchec = 0;
+      if (depts) reutilisees++;
+      else {
+        const d = await departementsDesEmprisesDetail([bbox], (m) => (this.progression = m), signal);
+        depts = d.departements;
+        pointsEnEchec = d.pointsEnEchec;
+        if (!pointsEnEchec) { cache.set(cleDepts, depts); await stockage.ecrireCache(cleDepts, depts); }
+      }
       if (!depts.length) { this.etape('datagouv', 'partiel', 'départements de la zone non trouvés'); return; }
-      const { jeux } = await enCache(`dg:${depts.map((d) => d.code).join(',')}`, () => chercherDataGouv(depts, (m) => (this.progression = m), signal));
+      const avertDepts = pointsEnEchec ? ` ; ${pointsEnEchec} point(s) sans réponse de geo.api.gouv.fr : un département en bordure peut manquer (relancez « Préparer »)` : '';
+      // Recherche incomplète (requêtes en échec) : utilisée mais pas gardée en cache, et signalée.
+      const cleDg = `v${VERSION_CACHE}:dg:${depts.map((d) => d.code).join(',')}`;
+      let rech = (cache.get(cleDg) as { jeux: JeuDataGouv[]; echecs: string[] } | undefined) ?? (await stockage.lireCache<{ jeux: JeuDataGouv[]; echecs: string[] }>(cleDg));
+      if (rech) reutilisees++;
+      else {
+        rech = await chercherDataGouv(depts, (m) => (this.progression = m), signal);
+        if (!rech.echecs.length) { cache.set(cleDg, rech); await stockage.ecrireCache(cleDg, rech); }
+      }
+      const { jeux } = rech;
+      const avertDg = rech.echecs.length ? ` ; ${rech.echecs.length} recherche(s) data.gouv sans réponse (${rech.echecs[0]}…) : relancez « Préparer »` : '';
       // Seuls les jeux qui citent un département de la zone : la recherche par mots-clés ramène aussi ceux d'ailleurs.
       const candidats = jeux.filter((j) => j.mentionneDepartement);
       let troncons = 0, nouveaux = 0, petits = 0, lus = 0;
@@ -293,8 +313,8 @@ class Preparation {
         }
       }
       this.nonReconnus = nonReconnus;
-      const msg = `${depts.map((d) => d.nom).join(', ')} : ${lus} jeu(x) intégré(s), ${troncons} tronçon(s) restreints, ${nouveaux} pont(s) ajoutés${petits ? `, ${petits} petit(s) ouvrage(s) sous chaussée (avertissement seulement)` : ''}${nonReconnus.length ? ` ; ${nonReconnus.length} jeu(x) à voir à la main` : ''}`;
-      this.etape('datagouv', nonReconnus.length ? 'partiel' : 'ok', msg);
+      const msg = `${depts.map((d) => d.nom).join(', ')} : ${lus} jeu(x) intégré(s), ${troncons} tronçon(s) restreints, ${nouveaux} pont(s) ajoutés${petits ? `, ${petits} petit(s) ouvrage(s) sous chaussée (avertissement seulement)` : ''}${nonReconnus.length ? ` ; ${nonReconnus.length} jeu(x) à voir à la main` : ''}${avertDepts}${avertDg}`;
+      this.etape('datagouv', nonReconnus.length || pointsEnEchec || avertDg ? 'partiel' : 'ok', msg);
     } catch (e) {
       this.nonReconnus = nonReconnus;
       this.etape('datagouv', 'echec', signal.aborted ? 'arrêté' : (e as Error).message);

@@ -21,7 +21,7 @@ const COVOIT = `Geo Point;nom;identifiant
 
 const nav = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
 const ctx = await nav.newContext({ viewport: { width: 1500, height: 1000 }, locale: 'fr-FR' });
-const n = { overpass: 0, wfs: 0, dg: 0 };
+const n = { overpass: 0, wfs: 0, dg: 0, geo: 0 };
 const hotes = [];
 // Requêtes Overpass simultanées par serveur (maximum observé) ; panne simulée d'une tuile.
 const enVol = {}, maxEnVol = {};
@@ -58,6 +58,8 @@ await ctx.route(/^https?:/, async (r) => {
     if (u.searchParams.get('REQUEST') === 'GetFeature') n.wfs++;
     return json({ type: 'FeatureCollection', features: [] });
   }
+  // Essai réel du 13/11/2026 : geo.api.gouv.fr répond parfois 504 sans en-tête CORS (vu par la page comme une erreur réseau).
+  if (u.host === 'geo.api.gouv.fr' && ++n.geo === 1) return r.fulfill({ status: 504, body: '' });
   if (u.host === 'geo.api.gouv.fr') return json([{ nom: 'Saumur', code: '49328', departement: { code: '49', nom: 'Maine-et-Loire' } }]);
   if (u.host === 'www.data.gouv.fr' && u.pathname === '/api/1/datasets/') {
     const q = u.searchParams.get('q');

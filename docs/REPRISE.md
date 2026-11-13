@@ -56,6 +56,12 @@ Saumur, 20 km, une seule requête : échec sur tous les serveurs Overpass (overp
 - Colonne `Côté` du jeu « Limitation de tonnage 49 » (0 / 1 / -1) : non documentée, non utilisée (sens de circulation ?). À demander au Département si besoin.
 - Essai du 13/11/2026 fait sans réseau (Overpass et IGN inaccessibles depuis l'environnement) : la lecture des fichiers est vérifiée, mais **pas le rapprochement avec les tronçons OSM**. Ce rapprochement reste à contrôler sur poste connecté (« Non vérifié », point 6).
 
+## Essai réel du 13/11/2026 après-midi (Edge, poste de Jean-François, fichier ouvert en local)
+
+- Saumur 20 km : **OSM ✓** 6 784 tronçons, 72 ponts, 4 tuiles ; **IGN ✓** 606 tronçons IGN avec restriction, 446 tronçons et 19 ponts mis à jour (CORS de la Géoplateforme confirmé) ; **TE ✓** 392 tronçons classés, 19 ponts annotés (couche TE trouvée).
+- **data.gouv ✗** : geo.api.gouv.fr a répondu **504 Gateway Timeout** sur un des 16 points (sans en-tête CORS, donc vu par Edge comme « bloqué par CORS ») ; le code prenait cet échec isolé pour un service injoignable. Le service répond normalement ouvert directement dans Edge. **Corrigé** : chaque point et chaque recherche data.gouv sont réessayés deux fois ; un point toujours sans réponse est compté et signalé (étape en orange), la liste incomplète n'est pas gardée en cache ; « injoignable » seulement si rien n'a répondu (testé en e2e).
+- Le serveur local PowerShell (`HttpListener`) ne démarre pas sur ce poste : essais faits en ouvrant le fichier directement.
+
 ## Non vérifié (à faire sur un poste connecté, 15 minutes)
 
 L'environnement de développement n'avait pas accès à Internet : **aucune requête réelle vers l'IGN n'a été faite**.

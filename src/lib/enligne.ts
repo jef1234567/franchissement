@@ -261,24 +261,38 @@ export async function listerCouchesTE(signal?: AbortSignal): Promise<{ nom: stri
 
 /* ---------------- data.gouv.fr (jeux départementaux) ---------------- */
 
-/** Départements couverts par une ou plusieurs emprises (grille de points interrogée sur geo.api.gouv.fr). */
-export async function departementsDesEmprises(emprises: BBox[], suivi: (msg: string) => void, signal?: AbortSignal): Promise<Departement[]> {
+/** Départements couverts par une ou plusieurs emprises (grille de points interrogée sur geo.api.gouv.fr).
+ *  Un point en échec (le service répond parfois 504, que le navigateur présente comme une erreur CORS)
+ *  est réessayé deux fois ; s'il échoue encore, il est compté dans `pointsEnEchec` et la recherche continue.
+ *  Le service n'est déclaré injoignable que si aucun point n'a répondu (essai réel du 13/11/2026). */
+export async function departementsDesEmprisesDetail(emprises: BBox[], suivi: (msg: string) => void, signal?: AbortSignal): Promise<{ departements: Departement[]; pointsEnEchec: number }> {
   const trouves = new Map<string, Departement>();
   const points = emprises.flatMap((b) => pointsGrille(b, 4));
+  let echecs = 0, reponses = 0;
   for (let i = 0; i < points.length; i++) {
     suivi(`Recherche des départements de la zone : point ${i + 1} / ${points.length}…`);
-    let r: Response;
-    try {
-      r = await fetch(urlCommunePoint(points[i][0], points[i][1]), { signal });
-    } catch {
-      if (signal?.aborted) throw new Error('Recherche annulée.');
-      throw new ErreurAccesBloque('Service geo.api.gouv.fr injoignable depuis ce navigateur : saisissez les départements à la main.');
+    let r: Response | null = null;
+    for (let essai = 0; essai < 3 && !r; essai++) {
+      if (essai) { suivi(`Recherche des départements : point ${i + 1}, nouvel essai (${essai + 1} / 3)…`); await attendre(essai * 1500, signal); }
+      try {
+        const x = await fetch(urlCommunePoint(points[i][0], points[i][1]), { signal });
+        if (x.ok) r = x;
+      } catch {
+        if (signal?.aborted) throw new Error('Recherche annulée.');
+      }
     }
-    if (!r.ok) continue;
+    if (!r) { echecs++; continue; }
+    reponses++;
     const d = departementReponse(await r.json());
     if (d) trouves.set(d.code, d);
   }
-  return [...trouves.values()].sort((a, b) => a.code.localeCompare(b.code));
+  if (!reponses) throw new ErreurAccesBloque('Service geo.api.gouv.fr injoignable depuis ce navigateur : saisissez les départements à la main.');
+  return { departements: [...trouves.values()].sort((a, b) => a.code.localeCompare(b.code)), pointsEnEchec: echecs };
+}
+
+/** Comme ci-dessus, sans le décompte des points en échec. */
+export async function departementsDesEmprises(emprises: BBox[], suivi: (msg: string) => void, signal?: AbortSignal): Promise<Departement[]> {
+  return (await departementsDesEmprisesDetail(emprises, suivi, signal)).departements;
 }
 
 /** Interroge l'API de recherche data.gouv pour chaque département et chaque thème. */
@@ -286,24 +300,29 @@ export async function chercherDataGouv(depts: Departement[], suivi: (msg: string
   const acc = new Map<string, JeuDataGouv>();
   const echecs: string[] = [];
   const total = depts.length * THEMES_DATAGOUV.length;
-  let fait = 0;
+  let fait = 0, bloquees = 0;
   for (const d of depts) {
     const requetes = requetesDepartement(d);
     for (let k = 0; k < requetes.length; k++) {
       fait++;
       suivi(`data.gouv : requête ${fait} / ${total} (« ${requetes[k]} »), ${acc.size} jeu(x) trouvé(s)…`);
-      let r: Response;
-      try {
-        r = await fetch(urlRechercheDataGouv(requetes[k]), { headers: { Accept: 'application/json' }, signal });
-      } catch {
-        if (signal?.aborted) throw new Error('Recherche annulée.');
-        throw new ErreurAccesBloque("API data.gouv.fr injoignable depuis ce navigateur : requête bloquée avant d'atteindre Internet ou refusée (CORS).");
+      // Une erreur réseau peut être une surcharge passagère (504 sans en-tête CORS) : deux nouveaux essais.
+      let r: Response | null = null;
+      for (let essai = 0; essai < 3 && !r; essai++) {
+        if (essai) await attendre(essai * 1500, signal);
+        try {
+          r = await fetch(urlRechercheDataGouv(requetes[k]), { headers: { Accept: 'application/json' }, signal });
+        } catch {
+          if (signal?.aborted) throw new Error('Recherche annulée.');
+        }
       }
+      if (!r) { echecs.push(`${requetes[k]} (sans réponse)`); bloquees++; continue; }
       if (r.status === 429) { await new Promise((res) => setTimeout(res, 3000)); k--; fait--; continue; }
       if (!r.ok) { echecs.push(`${requetes[k]} (HTTP ${r.status})`); continue; }
       integrerReponseRecherche(acc, await r.json(), d, THEMES_DATAGOUV[k]);
     }
   }
+  if (bloquees && bloquees === total) throw new ErreurAccesBloque("API data.gouv.fr injoignable depuis ce navigateur : requête bloquée avant d'atteindre Internet ou refusée (CORS).");
   return { jeux: trierJeux([...acc.values()]), echecs };
 }
 
