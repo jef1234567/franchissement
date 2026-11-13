@@ -120,6 +120,19 @@
   {:else}<p class="encadre alerte petit-txt">Non rattaché au réseau routier : cet ouvrage n'est pas pris en compte dans le calcul d'itinéraire.</p>{/if}
 </div>
 
+{#if o.desaccords?.length}
+  <div class="section pile">
+    <h4 class="desaccord-titre">Sources en désaccord ({o.desaccords.length})</h4>
+    <ul class="historique">
+      {#each o.desaccords as d, i (i)}
+        <li>{d.champ} : <strong>{String(d.retenu ?? '—')}</strong> <span class="muted">retenu ({d.sourceRetenue})</span> ≠ <strong>{String(d.autre ?? '—')}</strong> <span class="muted">({d.sourceAutre})</span>
+          <button class="btn petit fantome" title="Le désaccord a été vérifié : ne plus le signaler" onclick={() => o.desaccords.splice(i, 1)}>Traité</button></li>
+      {/each}
+    </ul>
+    <p class="petit-txt muted">À lever par une reconnaissance. La valeur retenue est celle de la source la plus fiable au moment de l'import.</p>
+  </div>
+{/if}
+
 {#if o.historique.length}
   <div class="section pile">
     <h4>Historique ({o.historique.length})</h4>
@@ -139,5 +152,6 @@
   .segmente button { border: none; background: var(--surface); padding: 5px 12px; cursor: pointer; font-weight: 550; font-size: 13px; }
   .segmente button + button { border-left: 1px solid var(--border-fort); }
   .segmente button.actif { background: var(--primary); color: var(--primary-txt); }
+  .desaccord-titre { color: var(--m-precaution); }
   .historique { margin: 0; padding-left: 16px; font-size: 12.5px; display: flex; flex-direction: column; gap: 3px; }
 </style>

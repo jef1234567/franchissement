@@ -110,3 +110,23 @@ describe('Charge à l’essieu et migration du schéma 2', () => {
     expect(r.projet.vehicules!.find((x) => x.nom === 'Y')!.essieux).toBeNull();
   });
 });
+
+describe('Désaccords entre sources', () => {
+  it('fusion : la valeur écartée est conservée comme désaccord', async () => {
+    const { planifierFusion, appliquerFusion } = await import('./importation');
+    const existant = nouvelOuvrage({ nom: 'Pont X', lat: 47, lon: 0, fiabilite: 'reconnu', provenance: { type: 'reco', libelle: 'Reco 2e RMAT' }, civil: { poidsMaxT: 26, hauteurMaxM: null, largeurMaxM: null, essieuMaxT: null } });
+    const entrant = nouvelOuvrage({ nom: 'Pont X', lat: 47, lon: 0, fiabilite: 'estime', provenance: { type: 'osm', libelle: 'OSM' }, civil: { poidsMaxT: 19, hauteurMaxM: 4, largeurMaxM: null, essieuMaxT: null } });
+    const res = appliquerFusion([existant], planifierFusion([existant], [entrant]), null);
+    const o = res[0];
+    expect(o.civil.poidsMaxT).toBe(26); // la reconnaissance prime
+    expect(o.civil.hauteurMaxM).toBe(4); // champ vide complété
+    expect(o.desaccords).toHaveLength(1);
+    expect(o.desaccords[0]).toMatchObject({ champ: 'tonnage civil', retenu: 26, autre: 19, sourceAutre: 'OSM' });
+  });
+  it('écart faible ou valeur absente : pas de désaccord', async () => {
+    const { valeursEnDesaccord } = await import('./model');
+    expect(valeursEnDesaccord(40, 40.5)).toBe(false);
+    expect(valeursEnDesaccord(40, null)).toBe(false);
+    expect(valeursEnDesaccord(40, 30)).toBe(true);
+  });
+});

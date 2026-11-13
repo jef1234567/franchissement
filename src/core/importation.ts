@@ -1,5 +1,6 @@
 import { analyserPosition, haversine, longueurPolyligne, milieuPolyligne } from './geo';
 import {
+  valeursEnDesaccord,
   estNombre,
   nouvelOuvrage,
   nouveauVehicule,
@@ -396,7 +397,16 @@ const CHAMPS_FUSION: [string, (o: Ouvrage) => unknown, (o: Ouvrage, v: unknown) 
   ['tonnage civil', (o) => o.civil.poidsMaxT, (o, v) => (o.civil.poidsMaxT = v as number)],
   ['hauteur civile', (o) => o.civil.hauteurMaxM, (o, v) => (o.civil.hauteurMaxM = v as number)],
   ['largeur civile', (o) => o.civil.largeurMaxM, (o, v) => (o.civil.largeurMaxM = v as number)],
+  ["charge civile à l'essieu", (o) => o.civil.essieuMaxT, (o, v) => (o.civil.essieuMaxT = v as number)],
 ];
+
+/** Enregistre un désaccord (sans doublon) entre la valeur retenue et une autre source. */
+export function noterDesaccord(o: Ouvrage, champ: string, retenu: unknown, sourceRetenue: string, autre: unknown, sourceAutre: string, date = new Date().toISOString()) {
+  if (!valeursEnDesaccord(retenu, autre)) return;
+  o.desaccords ??= [];
+  if (o.desaccords.some((d) => d.champ === champ && d.autre === autre && d.sourceAutre === sourceAutre && d.retenu === retenu)) return;
+  o.desaccords.push({ date, champ, retenu, sourceRetenue, autre, sourceAutre });
+}
 
 function nomsCompatibles(a: string, b: string) {
   const ka = motsCles(a).filter((m) => !['pont', 'de', 'du', 'la', 'le', 'des', 'sur', 'ouvrage', 'sans', 'nom'].includes(m));
@@ -462,8 +472,9 @@ export function appliquerFusion(existants: Ouvrage[], plan: OperationFusion[], r
       const nomGenerique = champ === 'nom' && /^(Ouvrage sans nom|Ouvrage importé|Pont [A-Z]+\s?\d)/.test(String(a));
       if (a == null || a === '' || nomGenerique || (op.prioritaire && a !== b)) {
         if (a !== b) cible.historique.push({ date: maintenant, champ, ancien: a, nouveau: b, source: libelle });
+        if (champ !== 'nom') noterDesaccord(cible, champ, b, libelle, a, cible.provenance.libelle, maintenant);
         ecrire(cible, b);
-      }
+      } else if (champ !== 'nom') noterDesaccord(cible, champ, a, cible.provenance.libelle, b, libelle, maintenant);
     }
     if (op.prioritaire) {
       cible.fiabilite = op.entrant.fiabilite;
@@ -518,6 +529,7 @@ export function reparerOuvrage(x: Record<string, unknown>): Ouvrage {
       auteur: prov.auteur ? str(prov.auteur) : undefined,
     },
     historique: Array.isArray(x.historique) ? (x.historique as Ouvrage['historique']) : [],
+    desaccords: Array.isArray(x.desaccords) ? (x.desaccords as Ouvrage['desaccords']) : [],
     osmWayIds: Array.isArray(x.osmWayIds) ? (x.osmWayIds as unknown[]).map(Number).filter(Number.isFinite) : [],
     notes: str(x.notes),
   };
@@ -704,6 +716,11 @@ export function integrerOuvragesOSM(existants: Ouvrage[], osm: Ouvrage[]): { ouv
     if (cible.largeurM == null) cible.largeurM = n.largeurM;
     if (!cible.route) cible.route = n.route;
     if (/^(Ouvrage sans nom|Nouvel ouvrage)$/.test(cible.nom) && !/^Ouvrage sans nom$/.test(n.nom)) cible.nom = n.nom;
+    const src = n.provenance.libelle;
+    noterDesaccord(cible, 'tonnage civil', cible.civil.poidsMaxT, cible.provenance.libelle, n.civil.poidsMaxT, src);
+    noterDesaccord(cible, 'hauteur civile', cible.civil.hauteurMaxM, cible.provenance.libelle, n.civil.hauteurMaxM, src);
+    noterDesaccord(cible, 'largeur civile', cible.civil.largeurMaxM, cible.provenance.libelle, n.civil.largeurMaxM, src);
+    noterDesaccord(cible, "charge civile à l'essieu", cible.civil.essieuMaxT, cible.provenance.libelle, n.civil.essieuMaxT, src);
     if (cible.civil.poidsMaxT == null) cible.civil.poidsMaxT = n.civil.poidsMaxT;
     if (cible.civil.hauteurMaxM == null) cible.civil.hauteurMaxM = n.civil.hauteurMaxM;
     if (cible.civil.largeurMaxM == null) cible.civil.largeurMaxM = n.civil.largeurMaxM;

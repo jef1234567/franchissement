@@ -97,9 +97,30 @@ export interface Ouvrage {
   provenance: Provenance;
   /** Historique des valeurs remplacées lors de fusions / éditions. */
   historique: { date: string; champ: string; ancien: unknown; nouveau: unknown; source: string }[];
+  /** Désaccords entre sources : valeur retenue et valeur différente signalée par une autre source. */
+  desaccords: Desaccord[];
   /** Identifiants des arêtes du réseau routier portées par l'ouvrage. */
   osmWayIds: number[];
   notes: string;
+}
+
+export interface Desaccord {
+  date: string;
+  champ: string;
+  retenu: unknown;
+  /** Source de la valeur retenue au moment du constat. */
+  sourceRetenue: string;
+  autre: unknown;
+  sourceAutre: string;
+}
+
+/** Écart relatif au-delà duquel deux valeurs numériques sont jugées en désaccord. */
+export const SEUIL_DESACCORD = 0.05;
+
+export function valeursEnDesaccord(a: unknown, b: unknown): boolean {
+  if (a == null || b == null || a === '' || b === '') return false;
+  if (typeof a === 'number' && typeof b === 'number') return Math.abs(a - b) > SEUIL_DESACCORD * Math.max(Math.abs(a), Math.abs(b));
+  return String(a).trim().toLowerCase() !== String(b).trim().toLowerCase();
 }
 
 export interface ParametresMode {
@@ -167,6 +188,7 @@ export function nouvelOuvrage(partiel: Partial<Ouvrage> = {}): Ouvrage {
     fiabilite: 'estime',
     provenance: { type: 'manuel', libelle: 'Saisie manuelle', date: new Date().toISOString() },
     historique: [],
+    desaccords: [],
     osmWayIds: [],
     notes: '',
     ...partiel,
