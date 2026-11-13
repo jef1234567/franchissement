@@ -1,6 +1,7 @@
 import type { BBox } from './geo';
 import { estNombre, type Ouvrage } from './model';
-import { areteLaPlusProche, type Arete, type Reseau } from './reseau';
+import { areteLaPlusProche, coordsArete, type Arete, type Reseau } from './reseau';
+import { distancePointSegment } from './geo';
 import { noterDesaccord } from './importation';
 
 /* =========================================================================
@@ -85,10 +86,43 @@ export function pointsLigne(g: EntiteGeo['geometry']): [number, number][][] {
   }));
 }
 
-/** Point milieu (en nombre de sommets) — suffisant pour rapprocher un tronçon court. */
-function pointsEchantillon(l: [number, number][]): [number, number][] {
-  if (l.length <= 2) return l.length === 2 ? [[(l[0][0] + l[1][0]) / 2, (l[0][1] + l[1][1]) / 2]] : l;
-  return [l[Math.floor(l.length / 2)]];
+/** Points d'échantillonnage : milieux de segments et sommets intérieurs. Les extrémités sont exclues :
+ *  elles coïncident avec les nœuds partagés par les tronçons voisins (approches d'un pont). */
+export function pointsEchantillon(l: [number, number][]): [number, number][] {
+  const res: [number, number][] = [];
+  for (let k = 1; k < l.length; k++) {
+    res.push([(l[k - 1][0] + l[k][0]) / 2, (l[k - 1][1] + l[k][1]) / 2]);
+    if (k < l.length - 1) res.push(l[k]);
+  }
+  return res;
+}
+
+/** Niveau BD TOPO (position_par_rapport_au_sol) : > 0 sur ouvrage, 0 au sol, < 0 en souterrain ; null si inconnu. */
+export function niveauBDTOPO(p: Record<string, unknown>): number | null {
+  const v = p.position_par_rapport_au_sol;
+  if (v == null || v === '') return null;
+  const n = parseInt(String(v), 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+const normRef = (s: unknown) => String(s ?? '').toUpperCase().replace(/[\s.-]/g, '');
+
+/** Arêtes candidates triées par distance, filtrées par niveau (pont / non-pont) et par numéro de route s'ils sont connus. */
+function candidats(r: Reseau, p: [number, number], rayonM: number, niveau: number | null, ref: string): { arete: number; d: number }[] {
+  const mLat = rayonM / 110000, mLon = rayonM / (110000 * Math.cos((p[0] * Math.PI) / 180));
+  const res: { arete: number; d: number }[] = [];
+  r.aretes.forEach((e, i) => {
+    if (niveau != null && (niveau > 0) !== !!e.pont) return;
+    if (ref && e.ref && normRef(e.ref) !== ref) return;
+    const pts = coordsArete(r, e);
+    let s = Infinity, n = -Infinity, o = Infinity, es = -Infinity;
+    for (const q of pts) { s = Math.min(s, q[0]); n = Math.max(n, q[0]); o = Math.min(o, q[1]); es = Math.max(es, q[1]); }
+    if (p[0] < s - mLat || p[0] > n + mLat || p[1] < o - mLon || p[1] > es + mLon) return;
+    let d = Infinity;
+    for (let k = 1; k < pts.length; k++) d = Math.min(d, distancePointSegment(p, pts[k - 1], pts[k]));
+    if (d <= rayonM) res.push({ arete: i, d });
+  });
+  return res.sort((a, b) => a.d - b.d);
 }
 
 export interface BilanIGN {
@@ -98,6 +132,8 @@ export interface BilanIGN {
   aretesModifiees: number;
   ouvragesModifies: number;
   desaccords: number;
+  /** Points non rapprochés car deux tronçons de niveaux différents (pont / route dessous) étaient aussi proches. */
+  ambigus: number;
 }
 
 const CHAMPS: [keyof RestrictionsIGN, keyof Ouvrage['civil'], string][] = [
@@ -112,7 +148,7 @@ const CHAMPS: [keyof RestrictionsIGN, keyof Ouvrage['civil'], string][] = [
  * Règle : la valeur la plus contraignante est retenue ; une valeur différente d'une autre source est tracée en désaccord.
  */
 export function appliquerRestrictionsIGN(r: Reseau, ouvrages: Ouvrage[], entites: EntiteGeo[], source = 'IGN BD TOPO', rayonM = 12): BilanIGN {
-  const bilan: BilanIGN = { entites: entites.length, avecRestriction: 0, rapprochees: 0, aretesModifiees: 0, ouvragesModifies: 0, desaccords: 0 };
+  const bilan: BilanIGN = { entites: entites.length, avecRestriction: 0, rapprochees: 0, aretesModifiees: 0, ouvragesModifies: 0, desaccords: 0, ambigus: 0 };
   const parWay = new Map<number, Ouvrage>();
   for (const o of ouvrages) for (const w of o.osmWayIds) parWay.set(w, o);
   const modifiees = new Set<number>(), ouvragesTouches = new Set<string>();
@@ -121,13 +157,24 @@ export function appliquerRestrictionsIGN(r: Reseau, ouvrages: Ouvrage[], entites
     const res = restrictionsBDTOPO(f.properties ?? {});
     if (res.pmax == null && res.emax == null && res.hmax == null && res.lmax == null) continue;
     bilan.avecRestriction++;
-    let trouve = false;
+    const props = f.properties ?? {};
+    const niveau = niveauBDTOPO(props);
+    const ref = normRef(props.cpx_numero);
+    const touchees = new Set<number>();
     for (const l of pointsLigne(f.geometry)) {
       for (const p of pointsEchantillon(l)) {
-        const a = areteLaPlusProche(r, p, { rayonM });
-        if (!a) continue;
-        trouve = true;
-        const e: Arete = r.aretes[a.arete];
+        const c = candidats(r, p, rayonM, niveau, ref);
+        if (!c.length) continue;
+        // Niveau inconnu : un pont et une route non-pont presque à égale distance → ambigu, on ne choisit pas.
+        if (niveau == null && c.some((x) => x.d - c[0].d < 3 && !!r.aretes[x.arete].pont !== !!r.aretes[c[0].arete].pont)) { bilan.ambigus++; continue; }
+        touchees.add(c[0].arete);
+      }
+    }
+    if (touchees.size) bilan.rapprochees++;
+    for (const ia of touchees) {
+      {
+        const e: Arete = r.aretes[ia];
+        const a = { arete: ia };
         let change = false;
         for (const [k] of CHAMPS) {
           const v = res[k];
@@ -154,7 +201,6 @@ export function appliquerRestrictionsIGN(r: Reseau, ouvrages: Ouvrage[], entites
         }
       }
     }
-    if (trouve) bilan.rapprochees++;
   }
   bilan.aretesModifiees = modifiees.size;
   bilan.ouvragesModifies = ouvragesTouches.size;

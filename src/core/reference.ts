@@ -184,20 +184,28 @@ function vehiculesV1(): Vehicule[] {
 }
 
 /** Complète une base véhicules existante avec les fiches en sources ouvertes (champs vides uniquement, sauf longueur v1). */
-export function completerVehicules(vehicules: Vehicule[]): { vehicules: Vehicule[]; modifies: string[] } {
+/**
+ * @param relever  migration vers le schéma 3 : pour les véhicules de référence (provenance « reference »),
+ *                 les valeurs hautes du relevé de novembre 2026 remplacent les valeurs plus basses.
+ */
+export function completerVehicules(vehicules: Vehicule[], relever = false): { vehicules: Vehicule[]; modifies: string[] } {
   const modifies: string[] = [];
   const res = vehicules.map((v) => {
     const f = FICHES_OUVERTES[v.id];
     if (!f) return v;
     const n = { ...v, provenance: { ...v.provenance } };
     let change = false;
+    // Valeurs de référence (non saisies) : la valeur haute du relevé l'emporte ; une saisie de l'utilisateur n'est que complétée.
+    const reference = relever && v.provenance.type === 'reference';
     const remplir = (cle: 'largeurM' | 'hauteurM' | 'masseT', val: number | null) => {
-      if (n[cle] == null && val != null) { n[cle] = val; change = true; }
+      if (val == null) return;
+      if (n[cle] == null || (reference && val > (n[cle] as number))) { n[cle] = val; change = true; }
     };
     remplir('largeurM', f.largeurM);
     remplir('hauteurM', f.hauteurM);
     remplir('masseT', f.masseT);
     if (n.essieux == null && f.essieux != null) { n.essieux = f.essieux; change = true; }
+    if (n.chargeEssieuT == null && f.chargeEssieuT != null) { n.chargeEssieuT = f.chargeEssieuT; change = true; }
     // Longueur : remplacée seulement si elle venait de l'outil v1 (non sourcée).
     if ((n.longueurM == null || v.provenance.type === 'v1') && n.longueurM !== f.longueurM) { n.longueurM = f.longueurM; change = true; }
     if (change) {

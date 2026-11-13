@@ -83,6 +83,7 @@
     await etat.definirReseau(reseau, zone);
     const { ouvrages, ajoutes, completes } = integrerOuvragesOSM($state.snapshot(etat.projet.ouvrages) as Ouvrage[], osm);
     etat.projet.ouvrages = ouvrages;
+    if (etatIGN.startsWith('BD TOPO')) etatIGN = 'Nouveau réseau : relancez « Restrictions BD TOPO » pour réappliquer les restrictions IGN aux tronçons (celles reportées sur les fiches d\'ouvrage sont conservées).';
     etatReseau = `Réseau chargé : ${reseau.aretes.length.toLocaleString('fr-FR')} tronçons, ${osm.length} ouvrages détectés (${ajoutes} nouveaux, ${completes} complétés).`;
     etat.notifier(etatReseau, 'ok');
   }
@@ -106,7 +107,7 @@
       if (quoi === 'bdtopo') {
         const ents = await telechargerWFS(COUCHE_BDTOPO_ROUTES, etat.zone.bbox, (m) => (etatIGN = m), ctrl.signal);
         const b = appliquerRestrictionsIGN(reseau, ouvrages, ents);
-        etatIGN = `BD TOPO : ${ents.length.toLocaleString('fr-FR')} tronçons lus, ${b.avecRestriction} avec restriction, ${b.rapprochees} rapprochés du réseau ; ${b.aretesModifiees} tronçons et ${b.ouvragesModifies} ouvrages mis à jour, ${b.desaccords} désaccord(s) de sources.`;
+        etatIGN = `BD TOPO : ${ents.length.toLocaleString('fr-FR')} tronçons lus, ${b.avecRestriction} avec restriction, ${b.rapprochees} rapprochés du réseau ; ${b.aretesModifiees} tronçons et ${b.ouvragesModifies} ouvrages mis à jour, ${b.desaccords} désaccord(s) de sources${b.ambigus ? ` ; ${b.ambigus} point(s) ambigus (pont et route dessous à égale distance) non rapprochés` : ''}.`;
       } else {
         if (!couchesTEdispo) {
           etatIGN = 'Lecture du catalogue IGN…';

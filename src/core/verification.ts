@@ -150,6 +150,21 @@ function controleGabarit(dimVeh: number | null, dimOuvrage: number | null, marge
   return 'ok';
 }
 
+/** Charge à l'essieu connue, sinon moyenne masse / nombre d'essieux (borne basse de l'essieu le plus chargé). */
+export function chargeEssieuVehicule(v: Vehicule): number | null {
+  if (estNombre(v.chargeEssieuT)) return v.chargeEssieuT;
+  if (estNombre(v.masseT) && estNombre(v.essieux) && v.essieux > 0) return v.masseT / v.essieux;
+  return null;
+}
+
+/** Une moyenne au-dessus de la limite est un dépassement certain ; en dessous, le contrôle reste non concluant. */
+function controleEssieu(v: Vehicule, max: number | null): EtatControle {
+  if (!estNombre(max)) return 'ok';
+  if (estNombre(v.chargeEssieuT)) return v.chargeEssieuT > max ? 'nok' : 'ok';
+  const moy = chargeEssieuVehicule(v);
+  return moy != null && moy > max ? 'nok' : 'nc';
+}
+
 function controleCivil(valVeh: number | null, max: number | null): EtatControle {
   if (!estNombre(max)) return 'ok';
   if (!estNombre(valVeh)) return 'nc';
@@ -206,8 +221,9 @@ export function evaluerVehicule(
   if (civilPoids === 'nok') motifs.push(`Restriction civile : masse ${v.masseT} t > ${o.civil.poidsMaxT} t signalés.`);
   if (civilHauteur === 'nok') motifs.push(`Restriction civile : hauteur ${v.hauteurM} m > ${o.civil.hauteurMaxM} m signalés.`);
   if (civilLargeur === 'nok') motifs.push(`Restriction civile : largeur ${v.largeurM} m > ${o.civil.largeurMaxM} m signalés.`);
-  const civilEssieu = controleCivil(v.chargeEssieuT ?? null, o.civil.essieuMaxT ?? null);
-  if (civilEssieu === 'nok') motifs.push(`Restriction civile : charge à l'essieu ${v.chargeEssieuT} t > ${o.civil.essieuMaxT} t signalés.`);
+  const civilEssieu = controleEssieu(v, o.civil.essieuMaxT ?? null);
+  if (civilEssieu === 'nok') motifs.push(`Restriction civile : charge à l'essieu ${chargeEssieuVehicule(v)?.toFixed(1)} t${v.chargeEssieuT == null ? ' (moyenne masse / essieux, borne basse)' : ''} > ${o.civil.essieuMaxT} t signalés.`);
+  else if (civilEssieu === 'nc') motifs.push(`Limite de ${o.civil.essieuMaxT} t par essieu : charge à l'essieu du véhicule inconnue, à vérifier.`);
 
   return {
     vehicule: v,
@@ -251,7 +267,7 @@ export function verifierConvoi(o: Ouvrage, elements: ElementConvoi[], voies: Voi
   const evaluations = elements.map((e) => evaluerVehicule(o, e, voies, ref));
   const mode = evaluations.length ? pireMode(evaluations.map((e) => e.mode)) : 'inconnu';
   const alerteCivile = evaluations.some((e) => e.civilPoids === 'nok' || e.civilHauteur === 'nok' || e.civilLargeur === 'nok' || e.civilEssieu === 'nok');
-  const controlesIncomplets = evaluations.some((e) => e.largeur === 'nc' || e.hauteur === 'nc');
+  const controlesIncomplets = evaluations.some((e) => e.largeur === 'nc' || e.hauteur === 'nc' || e.civilEssieu === 'nc');
   const noms = (m: ModeRequis) =>
     evaluations
       .filter((e) => e.mode === m)

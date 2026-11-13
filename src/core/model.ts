@@ -114,12 +114,12 @@ export interface Desaccord {
   sourceAutre: string;
 }
 
-/** Écart relatif au-delà duquel deux valeurs numériques sont jugées en désaccord. */
-export const SEUIL_DESACCORD = 0.05;
+/** Écart absolu au-delà duquel deux valeurs numériques sont jugées en désaccord (toute différence significative). */
+export const SEUIL_DESACCORD = 0.005;
 
 export function valeursEnDesaccord(a: unknown, b: unknown): boolean {
   if (a == null || b == null || a === '' || b === '') return false;
-  if (typeof a === 'number' && typeof b === 'number') return Math.abs(a - b) > SEUIL_DESACCORD * Math.max(Math.abs(a), Math.abs(b));
+  if (typeof a === 'number' && typeof b === 'number') return Math.abs(a - b) > SEUIL_DESACCORD;
   return String(a).trim().toLowerCase() !== String(b).trim().toLowerCase();
 }
 

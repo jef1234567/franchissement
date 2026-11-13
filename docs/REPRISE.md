@@ -25,7 +25,7 @@ Coller ce texte :
 | Base véhicules | 39 véhicules dont 17 ajoutés (Serval, Griffon EPC/MEPAC, CAESAR Mk II, porte-char TRM 700-100 + SRPB à vide et avec Leclerc, SRPB, VBHP, SPRAT, EFA, PFM, TRM 10000 citerne, VLTP-NP, Boxer, Leopard 2A6, M1A2, Stryker). Corrections à la hausse (VBL, PVP, VBCI, VAB, CAESAR, PPLOG/PPLD, Griffon). Aucune MLC inventée : nouveaux véhicules sans classe (donc jamais déclarés compatibles), sauf M1A2 = 73 (US Army). Le bouton « Compléter (sources ouvertes) » ajoute les nouveaux véhicules aux projets existants | `src/core/vehicules-ouverts.ts`, `reference.ts` |
 | Sources IGN | Bloc « Compléter avec l'IGN » dans Données & zone : restrictions BD TOPO (poids total, par essieu, hauteur, largeur) rapprochées des tronçons OSM, valeur la plus contraignante retenue, écarts tracés ; découverte des couches du réseau national des transports exceptionnels dans le catalogue IGN puis annotation des ouvrages concernés (information, sans classe) | `src/core/ign.ts`, `src/lib/enligne.ts`, `DonneesVue.svelte` |
 
-Tests : 69 tests unitaires (`npm test`) ; bout en bout dans Chromium : `npm run e2e` (existant), `npm run e2e:convois`, `npm run e2e:ign` (service IGN simulé). Variable `CHROMIUM` à renseigner si le chemin du navigateur diffère.
+Tests : 78 tests unitaires (`npm test`) ; bout en bout dans Chromium : `npm run e2e` (existant), `npm run e2e:convois`, `npm run e2e:ign` (service IGN simulé). Variable `CHROMIUM` à renseigner si le chemin du navigateur diffère.
 
 ## Non vérifié (à faire sur un poste connecté, 15 minutes)
 
@@ -37,13 +37,13 @@ L'environnement de développement n'avait pas accès à Internet : **aucune requ
 
 ## Reste à faire (ordre proposé)
 
-1. **Résultats de l'audit indépendant** : voir la section « Audit » ci-dessous, corriger les points bloquants et importants.
-2. **Couverture nationale** : l'outil fonctionne toujours par zone (rayon de 10 à 100 km). Proposition : préparer un paquet par département (emprise issue du géocodage, grands axes seulement via l'option « secondaires » décochée), puis permettre de charger plusieurs paquets et de les assembler. À valider : poids d'un paquet départemental et temps de calcul d'itinéraire dans le navigateur.
-3. **Carte** : afficher les itinéraires de tous les convois sur la carte, avec leurs couleurs.
-4. **Jeux data.gouv départementaux** (ponts, tonnage, réseaux TE locaux) : passer par l'import manuel existant ; liste des jeux repérés dans `docs/SOURCES-NATIONALES.md`.
-5. **Contraintes hors ponts** : tunnels et passages inférieurs (déjà via `maxheight`), gués, giratoires, rétrécissements, selon ce que la BD TOPO fournit vraiment.
-6. **Classes MLC des véhicules** : à faire confirmer par la STAT / SIMMT (aucune n'est publiée en source ouverte). Charge à l'essieu : publiée pour aucun véhicule.
-7. Ouvrir la pull request vers `main` une fois les points 1 et « Non vérifié » traités.
+1. **Couverture nationale** : l'outil fonctionne toujours par zone (rayon de 10 à 100 km). Proposition : préparer un paquet par département (emprise issue du géocodage, grands axes seulement via l'option « secondaires » décochée), puis permettre de charger plusieurs paquets et de les assembler. À valider : poids d'un paquet départemental et temps de calcul d'itinéraire dans le navigateur.
+2. **Carte** : afficher les itinéraires de tous les convois sur la carte, avec leurs couleurs.
+3. **Jeux data.gouv départementaux** (ponts, tonnage, réseaux TE locaux) : passer par l'import manuel existant ; liste des jeux repérés dans `docs/SOURCES-NATIONALES.md`.
+4. **Contraintes hors ponts** : tunnels et passages inférieurs (déjà via `maxheight`), gués, giratoires, rétrécissements, selon ce que la BD TOPO fournit vraiment.
+5. **Classes MLC des véhicules** : à faire confirmer par la STAT / SIMMT (aucune n'est publiée en source ouverte). Charge à l'essieu : publiée pour aucun véhicule.
+6. Passer la pull request (brouillon) en prête et la fusionner dans `main` une fois la section « Non vérifié » traitée.
+7. Points d'audit restants (mineurs) : aller-retour sur un même pont compté une seule fois dans les fenêtres d'occupation (`itineraire.ts`, dédoublonnage) ; détection de l'ordre des axes IGN valable pour la métropole seulement ; hauteur du porte-char avec Leclerc inconnue (contrôle signalé incomplet).
 
 ## Points de vigilance
 
@@ -52,6 +52,21 @@ L'environnement de développement n'avait pas accès à Internet : **aucune requ
 - VAB : 15 t retenues (masse à vide publiée par le ministère pour le VAB T3), borne basse.
 - Le chronogramme des convois suppose une vitesse constante et ne cumule pas les attentes aux ouvrages précédents.
 
-## Audit
+## Audit indépendant (13/11/2026) et suites données
 
-_(à compléter)_
+Un auditeur distinct a relu la branche. Corrigé et testé :
+
+| Gravité | Constat | Correctif |
+|---|---|---|
+| Bloquant | La charge à l'essieu n'était publiée pour aucun véhicule : le contrôle ne bloquait jamais | Moyenne masse / essieux utilisée comme borne basse : au-dessus de la limite, interdiction certaine ; en dessous, contrôle signalé incomplet |
+| Bloquant | Restriction IGN rapprochée en 2D : risque de poser la hauteur de la route du dessous sur le pont (ou l'inverse) | Niveau BD TOPO (`position_par_rapport_au_sol`) respecté, numéro de route comparé, plusieurs points échantillonnés sans les extrémités, cas ambigus non rapprochés et comptés |
+| Bloquant | Les corrections à la hausse du relevé n'atteignaient pas les projets existants | Appliquées à la migration v2 → v3 pour les véhicules de référence (jamais aux saisies) |
+| Important | Valeur civile la moins contraignante parfois conservée (import OSM, fusion) | Toujours la plus contraignante, sauf donnée validée par le Génie |
+| Important | Seuil de désaccord relatif (5 %) trop large | Toute différence (> 0,005) |
+| Important | Conflit manqué au passage de minuit ; heure vide prise pour 00:00 | Champ Jour (J à J+3) ; heure illisible refusée |
+| Important | Durée estimée en mode normal sur un ouvrage sans classe | Mode exigé par l'ouvrage, précaution par défaut (plus long, donc plus prudent) |
+| Important | Valeurs véhicules contraires à la règle « valeur haute » | Boxer 41 t (hauteur tourelle inconnue), Leclerc 3,71 m ; Jaguar et VAB annotés |
+| Important | Restrictions IGN des tronçons perdues après un nouveau téléchargement du réseau | Avertissement explicite (les fiches d'ouvrage les conservent) |
+| Mineur | Convois de même nom confondus | Regroupement par identifiant |
+
+Limite connue : si la BD TOPO ne renseigne pas le niveau et qu'OSM ne contient pas la route du dessous, une restriction de passage inférieur peut encore être posée sur le pont. C'est le sens prudent pour le pont, mais la route du dessous reste alors sans restriction : à vérifier lors du contrôle sur poste connecté.

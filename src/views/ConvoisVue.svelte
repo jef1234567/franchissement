@@ -58,6 +58,9 @@
           </div>
           <div class="grille-3">
             <label class="champ">Heure H<input type="time" bind:value={s.heureH} /></label>
+            <label class="champ">Jour
+              <select bind:value={s.jour}><option value={0}>J</option><option value={1}>J+1</option><option value={2}>J+2</option><option value={3}>J+3</option></select>
+            </label>
             <label class="champ">Voies
               <select bind:value={s.options.voies}><option value="unique">Voie unique</option><option value="double">Double voie</option></select>
             </label>
@@ -160,7 +163,7 @@
                 {/each}
               </svg>
             </div>
-            <p class="petit-txt muted">Hypothèses : vitesse constante, fenêtre = arrivée de la tête + durée d'écoulement du convoi sur l'ouvrage ; attentes en amont non cumulées. Contour rouge = conflit ; barre pâle = durée estimée (ouvrage sans classe).</p>
+            <p class="petit-txt muted">Hypothèses : vitesse constante ; ouvrage sans classe : durée estimée en franchissement avec précaution (prudent) ; fenêtre = arrivée de la tête + durée d'écoulement du convoi sur l'ouvrage ; attentes en amont non cumulées. Contour rouge = conflit ; barre pâle = durée estimée (ouvrage sans classe).</p>
           </section>
         {/if}
       {/if}

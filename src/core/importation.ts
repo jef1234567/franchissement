@@ -13,7 +13,7 @@ import {
   type Unite,
   type Vehicule,
 } from './model';
-import { referentielParDefaut } from './reference';
+import { completerVehicules, referentielParDefaut } from './reference';
 import { areteLaPlusProche, type Reseau } from './reseau';
 import { versWGS84, type CodeSCR } from './projections';
 
@@ -400,6 +400,8 @@ const CHAMPS_FUSION: [string, (o: Ouvrage) => unknown, (o: Ouvrage, v: unknown) 
   ["charge civile à l'essieu", (o) => o.civil.essieuMaxT, (o, v) => (o.civil.essieuMaxT = v as number)],
 ];
 
+const CHAMPS_CIVILS = new Set(['tonnage civil', 'hauteur civile', 'largeur civile', "charge civile à l'essieu"]);
+
 /** Enregistre un désaccord (sans doublon) entre la valeur retenue et une autre source. */
 export function noterDesaccord(o: Ouvrage, champ: string, retenu: unknown, sourceRetenue: string, autre: unknown, sourceAutre: string, date = new Date().toISOString()) {
   if (!valeursEnDesaccord(retenu, autre)) return;
@@ -470,7 +472,9 @@ export function appliquerFusion(existants: Ouvrage[], plan: OperationFusion[], r
       const a = lire(cible), b = lire(op.entrant);
       if (b == null || b === '') continue;
       const nomGenerique = champ === 'nom' && /^(Ouvrage sans nom|Ouvrage importé|Pont [A-Z]+\s?\d)/.test(String(a));
-      if (a == null || a === '' || nomGenerique || (op.prioritaire && a !== b)) {
+      // Restrictions civiles : jamais relevées par une fusion, sauf donnée validée par le Génie.
+      const civilPlusLaxiste = CHAMPS_CIVILS.has(champ) && typeof a === 'number' && typeof b === 'number' && b > a && op.entrant.fiabilite !== 'valide';
+      if (a == null || a === '' || nomGenerique || (op.prioritaire && a !== b && !civilPlusLaxiste)) {
         if (a !== b) cible.historique.push({ date: maintenant, champ, ancien: a, nouveau: b, source: libelle });
         if (champ !== 'nom') noterDesaccord(cible, champ, b, libelle, a, cible.provenance.libelle, maintenant);
         ecrire(cible, b);
@@ -614,6 +618,11 @@ export function lireProjet(json: unknown): ResultatLectureProjet {
     if (Array.isArray(j.unites)) projet.unites = (j.unites as Record<string, unknown>[]).map(reparerUnite);
     if (Array.isArray(j.ouvrages)) projet.ouvrages = (j.ouvrages as Record<string, unknown>[]).map(reparerOuvrage);
     if (j.referentiel) projet.referentiel = reparerReferentiel(j.referentiel);
+    if (j.schema < 3 && projet.vehicules) {
+      const { vehicules, modifies } = completerVehicules(projet.vehicules, true);
+      projet.vehicules = vehicules;
+      if (modifies.length) avertissements.push(`Véhicules mis à jour par le relevé en sources ouvertes (valeurs hautes) : ${modifies.join(', ')}.`);
+    }
     return { projet, origine: 'v2', avertissements };
   }
   if (Array.isArray(j.ponts) || Array.isArray(j.vehicules)) return { ...migrerV1(j), origine: 'v1' };
@@ -721,10 +730,11 @@ export function integrerOuvragesOSM(existants: Ouvrage[], osm: Ouvrage[]): { ouv
     noterDesaccord(cible, 'hauteur civile', cible.civil.hauteurMaxM, cible.provenance.libelle, n.civil.hauteurMaxM, src);
     noterDesaccord(cible, 'largeur civile', cible.civil.largeurMaxM, cible.provenance.libelle, n.civil.largeurMaxM, src);
     noterDesaccord(cible, "charge civile à l'essieu", cible.civil.essieuMaxT, cible.provenance.libelle, n.civil.essieuMaxT, src);
-    if (cible.civil.poidsMaxT == null) cible.civil.poidsMaxT = n.civil.poidsMaxT;
-    if (cible.civil.hauteurMaxM == null) cible.civil.hauteurMaxM = n.civil.hauteurMaxM;
-    if (cible.civil.largeurMaxM == null) cible.civil.largeurMaxM = n.civil.largeurMaxM;
-    if (cible.civil.essieuMaxT == null) cible.civil.essieuMaxT = n.civil.essieuMaxT;
+    // Restrictions civiles : la valeur la plus contraignante est retenue.
+    for (const k of ['poidsMaxT', 'hauteurMaxM', 'largeurMaxM', 'essieuMaxT'] as const) {
+      const b = n.civil[k];
+      if (b != null && (cible.civil[k] == null || b < (cible.civil[k] as number))) cible.civil[k] = b;
+    }
     if (JSON.stringify(cible) !== avant) completes++;
   }
   return { ouvrages: res, ajoutes, completes };

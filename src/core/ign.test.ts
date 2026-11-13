@@ -51,6 +51,26 @@ describe('IGN', () => {
     const b = appliquerRestrictionsIGN(r, o, [{ properties: { restriction_de_hauteur: 3 }, geometry: { type: 'LineString', coordinates: [[-0.19, 47.21], [-0.19, 47.211]] } }]);
     expect(b.rapprochees).toBe(0);
   });
+  it('route sous un pont (niveau 0) : la restriction de hauteur ne va pas sur le pont', () => {
+    const { r, o } = preparer();
+    const dessous = { properties: { restriction_de_hauteur: 3.5, position_par_rapport_au_sol: '0' }, geometry: { type: 'LineString', coordinates: [[-0.0806, 47.26], [-0.0794, 47.26]] } };
+    const b = appliquerRestrictionsIGN(r, o, [dessous]);
+    expect(b.rapprochees).toBe(0);
+    expect(o.find((x) => x.nom === 'Pont Fort')!.civil.hauteurMaxM).toBeNull();
+    expect(r.aretes.filter((e) => e.pont).every((e) => e.hmax == null)).toBe(true);
+  });
+  it('numéro de route différent : pas de rapprochement', () => {
+    const { r, o } = preparer();
+    const b = appliquerRestrictionsIGN(r, o, [surPontFort({ restriction_de_poids_total: 12, cpx_numero: 'D 999', position_par_rapport_au_sol: 1 })]);
+    expect(b.rapprochees).toBe(0);
+    const b2 = appliquerRestrictionsIGN(r, o, [surPontFort({ restriction_de_poids_total: 12, cpx_numero: 'D 11', position_par_rapport_au_sol: 1 })]);
+    expect(b2.rapprochees).toBe(1);
+  });
+  it('les extrémités du tronçon ne s’accrochent pas aux approches', () => {
+    const { r, o } = preparer();
+    appliquerRestrictionsIGN(r, o, [surPontFort({ restriction_de_poids_total: 12, position_par_rapport_au_sol: 1 })]);
+    expect(r.aretes.filter((e) => !e.pont && e.pmax === 12)).toHaveLength(0);
+  });
   it('réseau TE : note sur l’ouvrage traversé', () => {
     const { r, o } = preparer();
     expect(marquerReseauTE(r, o, [surPontFort({})], 'SECUROUT.TE:te_120t')).toBeGreaterThan(0);

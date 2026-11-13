@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { referentielParDefaut, vehiculesParDefaut } from './reference';
 import { construireReseau, extraireOuvrages } from './reseau';
 import { OPTIONS_ITINERAIRE_DEFAUT, calculerItineraire } from './itineraire';
-import { detecterConflits, heureEnS, planifier, sEnHeure, type MouvementConvoi, type OccupationOuvrage } from './planification';
+import { detecterConflits, dureeEstimee, heureEnS, planifier, sEnHeure, type MouvementConvoi, type OccupationOuvrage } from './planification';
 import { lireProjet } from './importation';
 import { evaluerVehicule } from './verification';
 import { nouvelOuvrage } from './model';
@@ -125,7 +125,8 @@ describe('Désaccords entre sources', () => {
   });
   it('écart faible ou valeur absente : pas de désaccord', async () => {
     const { valeursEnDesaccord } = await import('./model');
-    expect(valeursEnDesaccord(40, 40.5)).toBe(false);
+    expect(valeursEnDesaccord(40, 40.001)).toBe(false);
+    expect(valeursEnDesaccord(4.1, 3.95)).toBe(true);
     expect(valeursEnDesaccord(40, null)).toBe(false);
     expect(valeursEnDesaccord(40, 30)).toBe(true);
   });
@@ -141,5 +142,43 @@ describe('Relevé véhicules en sources ouvertes', () => {
     const base = vehiculesParDefaut().filter((x) => !nv.some((n) => n.id === x.id));
     const { vehicules } = completerVehicules(base);
     expect(vehicules.length).toBe(base.length + nv.length);
+  });
+});
+
+describe('Corrections de l’audit', () => {
+  it('migration 2→3 : valeurs hautes du relevé appliquées aux véhicules de référence', () => {
+    const vbl = { ...v('vbl'), hauteurM: 1.7, provenance: { type: 'reference', libelle: 'ancien' } };
+    const saisi = { ...v('pvp'), hauteurM: 2.0, provenance: { type: 'manuel', libelle: 'Saisie' } };
+    const r = lireProjet({ schema: 2, vehicules: [vbl, saisi] });
+    expect(r.projet.vehicules!.find((x) => x.id === 'vbl')!.hauteurM).toBeGreaterThan(2.1);
+    expect(r.projet.vehicules!.find((x) => x.id === 'pvp')!.hauteurM).toBe(2.0);
+  });
+  it('charge à l’essieu inconnue : moyenne masse/essieux au-dessus de la limite → interdit ; sinon contrôle incomplet', () => {
+    const o = nouvelOuvrage({ classes: { unique: { generique: 100, roues: null, chenilles: null }, double: { generique: null, roues: null, chenilles: null }, precaution: null, risque: null }, civil: { poidsMaxT: null, hauteurMaxM: null, largeurMaxM: null, essieuMaxT: 9 } });
+    const lourd = { ...v('ppld'), chargeEssieuT: null, masseT: 40, essieux: 4 }; // 10 t/essieu en moyenne
+    expect(evaluerVehicule(o, { vehicule: lourd, quantite: 1, etat: 'charge' }, 'unique', ref).civilEssieu).toBe('nok');
+    const leger = { ...lourd, masseT: 30 }; // 7,5 t en moyenne : non concluant
+    expect(evaluerVehicule(o, { vehicule: leger, quantite: 1, etat: 'charge' }, 'unique', ref).civilEssieu).toBe('nc');
+  });
+});
+
+describe('Planification — correctifs de l’audit', () => {
+  it('passage de minuit : J+1 pris en compte', () => {
+    const a = { ...mvt('A', 'pplog', 10, '23:55') };
+    const b = { ...mvt('B', 'pplog', 10, '00:00'), jour: 1 };
+    expect(planifier(reseau, ouvrages, ref, [a, b], 600).conflits).toHaveLength(1);
+    expect(planifier(reseau, ouvrages, ref, [a, { ...b, jour: 0 }], 600).conflits).toHaveLength(0);
+  });
+  it('heure illisible : erreur explicite', () => {
+    expect(() => planifier(reseau, ouvrages, ref, [mvt('A', 'vbl', 1, '')])).toThrow(/heure H/);
+  });
+  it('durée estimée plus longue en précaution qu’en normal', () => {
+    const els = [{ vehicule: v('pplog'), quantite: 10, etat: 'charge' as const }];
+    const o = ouvrages[0];
+    expect(dureeEstimee(o, els, ref, 'inconnu')).toBeGreaterThan(dureeEstimee(o, els, ref, 'normal'));
+  });
+  it('convois homonymes comptés séparément', () => {
+    const p = planifier(reseau, ouvrages, ref, [{ ...mvt('A', 'pplog', 2, '06:00'), nom: 'X' }, { ...mvt('B', 'pplog', 2, '09:00'), nom: 'X' }]);
+    expect(p.ouvragesPartages[0].convois).toHaveLength(2);
   });
 });

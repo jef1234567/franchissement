@@ -1,3 +1,4 @@
+import { chargeEssieuVehicule } from './verification';
 import { estNombre, type Ouvrage, type Referentiel, type Voies } from './model';
 import { coordsArete, type Arete, type Reseau } from './reseau';
 import { distancePointSegment, haversine } from './geo';
@@ -131,7 +132,7 @@ export function dimensionsConvoi(elements: ElementConvoi[]) {
     hauteur: max((e) => e.vehicule.hauteurM),
     largeur: max((e) => e.vehicule.largeurM),
     masse: max((e) => e.vehicule.masseT),
-    essieu: max((e) => e.vehicule.chargeEssieuT ?? null),
+    essieu: max((e) => chargeEssieuVehicule(e.vehicule)),
     classe: max((e) => classeVehicule(e.vehicule, e.etat)),
   };
 }

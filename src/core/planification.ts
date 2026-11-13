@@ -25,6 +25,8 @@ export interface MouvementConvoi {
   etapes: [number, number][];
   /** Heure de départ « HH:MM » (heure H du convoi). */
   heureH: string;
+  /** Jour de départ relatif (0 = J, 1 = J+1…). */
+  jour?: number;
   options: OptionsItineraire;
 }
 
@@ -80,18 +82,24 @@ export function sEnHeure(s: number): string {
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}${j > 0 ? ` (J+${j})` : ''}`;
 }
 
-/** Durée de repli quand l'écoulement n'est pas calculable (ouvrage sans classe…) :
- *  passage de toute la colonne en franchissement normal, longueurs inconnues comptées 10 m. */
-export function dureeEstimee(o: Ouvrage, elements: ElementConvoi[], ref: Referentiel): number {
-  const p = ref.modes.normal;
+/** Durée de repli quand l'écoulement n'est pas calculable (ouvrage sans classe…), volontairement longue :
+ *  mode exigé par l'ouvrage, ou « précaution » s'il est inconnu (un véhicule à la fois, vitesse réduite) ;
+ *  longueurs inconnues comptées 10 m, longueur d'ouvrage inconnue comptée 50 m. */
+export function dureeEstimee(o: Ouvrage, elements: ElementConvoi[], ref: Referentiel, mode: ModeRequis = 'inconnu'): number {
+  const m = mode === 'normal' || mode === 'precaution' || mode === 'risque' ? mode : 'precaution';
+  const p = ref.modes[m];
+  const v = p.vitesseKmh / 3.6;
+  const lo = o.longueurM ?? 50;
   let n = 0, longueur = 0;
   for (const e of elements) { n += e.quantite; longueur += e.quantite * (e.vehicule.longueurM ?? 10); }
-  const colonne = longueur + Math.max(0, n - 1) * p.espacementM;
-  return (colonne + (o.longueurM ?? 0)) / (p.vitesseKmh / 3.6);
+  if (p.unSeulVehicule) return (n * lo + longueur) / v;
+  return (longueur + Math.max(0, n - 1) * p.espacementM + lo) / v;
 }
 
 export function planifierConvoi(r: Reseau, ouvrages: Ouvrage[], ref: Referentiel, m: MouvementConvoi): ResultatConvoi {
-  const departS = heureEnS(m.heureH) ?? 0;
+  const h = heureEnS(m.heureH);
+  if (h == null) throw new Error(`${m.nom} : heure H « ${m.heureH} » illisible.`);
+  const departS = (m.jour ?? 0) * 86400 + h;
   const itineraire = calculerItineraire(r, ouvrages, m.elements, ref, m.etapes, m.options);
   const occupations: OccupationOuvrage[] = [];
   if (itineraire.ok) {
@@ -101,7 +109,7 @@ export function planifierConvoi(r: Reseau, ouvrages: Ouvrage[], ref: Referentiel
       const ok = e.ok && e.dureeTotaleS > 0;
       occupations.push({
         convoiId: m.id, convoi: m.nom, ouvrage: t.ouvrage, debutS,
-        finS: debutS + (ok ? e.dureeTotaleS : dureeEstimee(t.ouvrage, m.elements, ref)), mode: t.verdict.mode, dureeIncertaine: !ok,
+        finS: debutS + (ok ? e.dureeTotaleS : dureeEstimee(t.ouvrage, m.elements, ref, t.verdict.mode)), mode: t.verdict.mode, dureeIncertaine: !ok,
       });
     }
   }
@@ -139,12 +147,12 @@ export function planifier(r: Reseau, ouvrages: Ouvrage[], ref: Referentiel, mouv
   const convois = mouvements.map((m) => planifierConvoi(r, ouvrages, ref, m));
   const occ = convois.flatMap((c) => c.occupations);
   const conflits = detecterConflits(occ, margeS);
-  const usage = new Map<string, { ouvrage: Ouvrage; convois: Set<string> }>();
+  const usage = new Map<string, { ouvrage: Ouvrage; convois: Map<string, string> }>();
   for (const o of occ) {
-    const u = usage.get(o.ouvrage.id) ?? { ouvrage: o.ouvrage, convois: new Set<string>() };
-    u.convois.add(o.convoi);
+    const u = usage.get(o.ouvrage.id) ?? { ouvrage: o.ouvrage, convois: new Map<string, string>() };
+    u.convois.set(o.convoiId, o.convoi);
     usage.set(o.ouvrage.id, u);
   }
-  const ouvragesPartages = [...usage.values()].filter((u) => u.convois.size > 1).map((u) => ({ ouvrage: u.ouvrage, convois: [...u.convois] }));
+  const ouvragesPartages = [...usage.values()].filter((u) => u.convois.size > 1).map((u) => ({ ouvrage: u.ouvrage, convois: [...u.convois.values()] }));
   return { convois, conflits, ouvragesPartages };
 }

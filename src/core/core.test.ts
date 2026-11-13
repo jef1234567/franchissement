@@ -103,7 +103,7 @@ describe('Fiches véhicules en sources ouvertes', () => {
     base[0].masseT = 57; // saisie utilisateur conservée
     const { vehicules, modifies } = completerVehicules(base);
     expect(vehicules[0].masseT).toBe(57);
-    expect(vehicules[0].largeurM).toBe(3.6);
+    expect(vehicules[0].largeurM).toBe(3.71);
     expect(vehicules.find((x) => x.id === 'erc90')!.longueurM).toBe(7.78);
     expect(modifies.length).toBe(22);
     expect(completerVehicules(vehicules).modifies).toEqual([]); // idempotent

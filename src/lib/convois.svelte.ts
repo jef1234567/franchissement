@@ -1,6 +1,6 @@
 import { OPTIONS_ITINERAIRE_DEFAUT, type OptionsItineraire } from '../core/itineraire';
 import { analyserPosition } from '../core/geo';
-import { planifier, type MouvementConvoi, type ResultatPlan } from '../core/planification';
+import { heureEnS, planifier, type MouvementConvoi, type ResultatPlan } from '../core/planification';
 import { convoiVide, developper, type Convoi } from './convoi';
 import { etat } from './etat.svelte';
 
@@ -13,13 +13,14 @@ export interface SaisieConvoi {
   depart: string;
   arrivee: string;
   heureH: string;
+  jour: number;
   options: OptionsItineraire;
 }
 
 let n = 1;
 export function nouvelleSaisie(): SaisieConvoi {
   const k = n++;
-  return { id: 'c' + k, nom: `Convoi ${k}`, convoi: convoiVide(), depart: '', arrivee: '', heureH: '06:00', options: { ...OPTIONS_ITINERAIRE_DEFAUT } };
+  return { id: 'c' + k, nom: `Convoi ${k}`, convoi: convoiVide(), depart: '', arrivee: '', heureH: '06:00', jour: 0, options: { ...OPTIONS_ITINERAIRE_DEFAUT } };
 }
 
 class EtatConvois {
@@ -39,7 +40,8 @@ class EtatConvois {
       const dev = developper(etat.projet, s.convoi);
       if (!a || !b) { erreurs.push(`${s.nom} : départ ou arrivée illisible (MGRS ou « lat, lon »).`); continue; }
       if (!dev.elements.length) { erreurs.push(`${s.nom} : choisissez une unité ou des véhicules.`); continue; }
-      mouvements.push({ id: s.id, nom: s.nom, elements: dev.elements, etapes: [a, b], heureH: s.heureH, options: $state.snapshot(s.options) as OptionsItineraire });
+      if (heureEnS(s.heureH) == null) { erreurs.push(`${s.nom} : heure H manquante ou illisible.`); continue; }
+      mouvements.push({ id: s.id, nom: s.nom, elements: dev.elements, etapes: [a, b], heureH: s.heureH, jour: s.jour ?? 0, options: $state.snapshot(s.options) as OptionsItineraire });
     }
     this.erreurs = erreurs;
     if (!mouvements.length) { this.resultat = null; return; }
