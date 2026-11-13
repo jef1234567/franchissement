@@ -40,6 +40,7 @@ export function referentielParDefaut(): Referentiel {
     risqueSurPermanent: false,
     margeLargeurM: 0.3,
     margeHauteurM: 0.1,
+    mlcInconnue: 'compatible',
     notes: '',
   };
 }

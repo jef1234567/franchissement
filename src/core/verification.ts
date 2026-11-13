@@ -140,6 +140,8 @@ export interface EvaluationVehicule {
   civilHauteur: EtatControle;
   civilLargeur: EtatControle;
   civilEssieu: EtatControle;
+  /** Classe MLC du véhicule inconnue : compatibilité supposée (référentiel « compatible »), à vérifier. */
+  mlcSupposee: boolean;
   motifs: string[];
 }
 
@@ -182,8 +184,13 @@ export function evaluerVehicule(
   const classes = classesApplicables(o, voies, v.propulsion, ref);
   const motifs: string[] = [];
   let mode: ModeRequis;
+  const supposer = cv === null && (ref.mlcInconnue ?? 'compatible') === 'compatible';
+  const classeOuvrageConnue = classes.normal !== null || classes.precaution !== null || classes.risque !== null;
 
-  if (cv === null) {
+  if (supposer && classeOuvrageConnue) {
+    mode = 'normal';
+    motifs.push(`Classe MLC ${el.etat === 'vide' ? 'à vide' : 'en charge'} du véhicule non renseignée : compatibilité SUPPOSÉE, à vérifier.`);
+  } else if (cv === null) {
     mode = 'inconnu';
     motifs.push(`Classe MLC ${el.etat === 'vide' ? 'à vide' : 'en charge'} du véhicule non renseignée.`);
   } else if (classes.normal !== null && cv <= classes.normal) {
@@ -238,6 +245,7 @@ export function evaluerVehicule(
     civilHauteur,
     civilLargeur,
     civilEssieu,
+    mlcSupposee: supposer && classeOuvrageConnue,
     motifs,
   };
 }
@@ -256,6 +264,8 @@ export interface VerdictConvoi {
   alerteCivile: boolean;
   /** Au moins un contrôle non vérifiable faute de donnée. */
   controlesIncomplets: boolean;
+  /** Véhicules déclarés compatibles sans classe MLC connue (à vérifier). */
+  mlcSupposees: string[];
   synthese: string;
 }
 
@@ -268,6 +278,7 @@ export function verifierConvoi(o: Ouvrage, elements: ElementConvoi[], voies: Voi
   const mode = evaluations.length ? pireMode(evaluations.map((e) => e.mode)) : 'inconnu';
   const alerteCivile = evaluations.some((e) => e.civilPoids === 'nok' || e.civilHauteur === 'nok' || e.civilLargeur === 'nok' || e.civilEssieu === 'nok');
   const controlesIncomplets = evaluations.some((e) => e.largeur === 'nc' || e.hauteur === 'nc' || e.civilEssieu === 'nc');
+  const mlcSupposees = [...new Set(evaluations.filter((e) => e.mlcSupposee).map((e) => e.vehicule.nom))];
   const noms = (m: ModeRequis) =>
     evaluations
       .filter((e) => e.mode === m)
@@ -291,5 +302,6 @@ export function verifierConvoi(o: Ouvrage, elements: ElementConvoi[], voies: Voi
     default:
       synthese = `Franchissement interdit pour : ${noms('interdit')}.`;
   }
-  return { ouvrage: o, voies, evaluations, mode, alerteCivile, controlesIncomplets, synthese };
+  if (mlcSupposees.length && mode !== 'interdit') synthese += ` ⚠ Compatibilité supposée (classe MLC non renseignée) : ${mlcSupposees.join(', ')} — à vérifier.`;
+  return { ouvrage: o, voies, evaluations, mode, alerteCivile, controlesIncomplets, mlcSupposees, synthese };
 }

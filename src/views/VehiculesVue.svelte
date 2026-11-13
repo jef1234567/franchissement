@@ -33,7 +33,7 @@
   <header class="ligne" style="align-items:flex-end">
     <div style="flex:1">
       <h2>Véhicules</h2>
-      <p class="muted">Caractéristiques de référence. Une classe MLC vide rend le véhicule <strong>non franchissant</strong> (jamais déclaré compatible). Hauteur, largeur et masse permettent les contrôles de gabarit et de restrictions civiles.</p>
+      <p class="muted">Caractéristiques de référence. Un véhicule sans classe MLC est <strong>supposé compatible</strong> sur les ouvrages classés, avec un avertissement « à vérifier » (réglable dans le Référentiel : il peut au contraire être bloqué). Hauteur, largeur et masse permettent les contrôles de gabarit et de restrictions civiles.</p>
     </div>
     <input type="search" placeholder="Rechercher…" bind:value={recherche} style="width:220px" aria-label="Rechercher un véhicule" />
     <button class="btn" onclick={completer} title="Remplit les dimensions et masses vides à partir des fiches en sources ouvertes, sans écraser vos saisies"><Icone nom="telecharger" taille={16} /> Compléter (sources ouvertes)</button>

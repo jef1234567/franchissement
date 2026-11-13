@@ -19,6 +19,7 @@
     e.pos = analyserPosition(texte);
   }
   const res = $derived(iti.resultat);
+  const mlcSupposees = $derived(res?.ok ? [...new Set(res.ouvrages.flatMap((t) => t.verdict.mlcSupposees ?? []))] : []);
   const pire = $derived(res?.ok ? pireModeItineraire(res) : null);
   const detour = $derived(res?.ok && iti.reference?.ok ? res.distanceM - iti.reference.distanceM : 0);
   const titre = $derived(() => {
@@ -127,6 +128,9 @@
         <div><span>Franchissements</span><strong>{iti.ecoulementTotalS != null ? formatDuree(iti.ecoulementTotalS) : '—'}</strong><em>écoulement cumulé</em></div>
       </div>
       {#if pire}<p>Mode le plus contraignant : <Pastille mode={pire} /></p>{/if}
+      {#if mlcSupposees.length}
+        <p class="encadre alerte petit-txt" role="alert"><strong>Compatibilité supposée, à vérifier :</strong> {mlcSupposees.join(', ')} — classe MLC non renseignée, déclarée compatible sur les ouvrages classés. Faire confirmer chaque franchissement par le Génie.</p>
+      {/if}
       {#if res.ouvragesInconnus.length}
         <p class="encadre alerte petit-txt"><strong>{res.ouvragesInconnus.length} ouvrage(s) sans classe à reconnaître</strong> sur l'itinéraire.</p>
       {/if}
@@ -135,7 +139,7 @@
       <h4>Ouvrages traversés ({res.ouvrages.length})</h4>
       {#if res.ouvrages.length}
         <ol class="liste-ouvrages">
-          {#each res.ouvrages as t (t.ouvrage.id)}
+          {#each res.ouvrages as t, i (t.ouvrage.id + "@" + i)}
             {@const c = t.verdict.evaluations.map((e) => e.classes.normal).filter((x) => x != null)}
             <li>
               <button class="lien-ouvrage" onclick={() => etat.voirSurCarte(t.ouvrage)}>

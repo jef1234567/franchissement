@@ -73,6 +73,11 @@
       {:else}
         <button class="etiquette lien-zone" onclick={() => etat.allerA('donnees')}>Aucune zone chargée</button>
       {/if}
+      {#if (etat.projet.referentiel.mlcInconnue ?? 'compatible') === 'compatible' && etat.projet.vehicules.some((v) => v.mlcCharge == null)}
+        <button class="etiquette alerte-mlc" onclick={() => etat.allerA('vehicules')} title="Ces véhicules sont déclarés compatibles sans classe MLC connue : chaque franchissement doit être vérifié (Génie). Réglable dans le Référentiel.">
+          <Icone nom="alerte" taille={13} /> {etat.projet.vehicules.filter((v) => v.mlcCharge == null).length} véhicule(s) sans classe MLC supposés compatibles — à vérifier
+        </button>
+      {/if}
       {#if !etat.projet.referentiel.valide}
         <button class="etiquette avert" onclick={() => etat.allerA('referentiel')} title="Les valeurs STANAG doivent être validées">
           <Icone nom="alerte" taille={13} /> Référentiel non validé
@@ -169,6 +174,7 @@
   .zone-info .etiquette { background: rgba(255, 255, 255, 0.12); color: #e7eef8; padding: 3px 9px; font-size: 12px; display: inline-flex; gap: 5px; align-items: center; border: none; }
   .zone-info .lien-zone { cursor: pointer; }
   .zone-info .avert { background: #fbe3b0; color: #5d3b00; cursor: pointer; }
+  .zone-info .alerte-mlc { background: #f6c9c4; color: #6b130b; cursor: pointer; font-weight: 600; }
   .zone-info .valide { background: #cfeedd; color: #0d5132; }
   .actions { display: flex; align-items: center; gap: 2px; }
   .actions .btn { color: #fff; }

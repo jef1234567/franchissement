@@ -13,9 +13,10 @@ Coller ce texte :
 - Réseau national : grands axes sur la France entière, détail fin par zone (**confirmé le 13/11/2026**).
 - Conflits entre convois : simple alerte, sans proposition automatique de décalage.
 - Import militaire : l'import générique existant (CSV, shapefile, GeoJSON, KML avec correspondance des colonnes) couvre les données du 28e GG ; format réel inconnu (13/11/2026) : à demander au 28e GG.
+- Véhicules sans classe MLC : supposés compatibles avec avertissement (décision du 13/11/2026, voir point 5).
 - Tonnage civil → classe MLC : **aucune table de conversion inventée**. L'outil compare la masse réelle du véhicule au tonnage affiché (et la charge à l'essieu à la limite par essieu). Une conversion n'est pas publiée en source ouverte ; à demander au Génie si elle est souhaitée.
 
-## Fait (9 commits, tous testés)
+## Fait (10 commits, tous testés)
 
 | Chantier | Contenu | Où |
 |---|---|---|
@@ -27,7 +28,7 @@ Coller ce texte :
 | Carte des convois | Itinéraires de tous les convois calculés dans l'écran Convois tracés sur la carte avec leur couleur (départ D, arrivée A, info-bulle nom et distance), légende, case « Convois (n) » pour masquer. Sur un tronçon commun, épaisseurs décroissantes : chaque convoi reste visible en liseré | `src/views/CarteVue.svelte`, `src/lib/convois.svelte.ts` (`couleurConvoi`) |
 | Sources IGN | Bloc « Compléter avec l'IGN » dans Données & zone : restrictions BD TOPO (poids total, par essieu, hauteur, largeur) rapprochées des tronçons OSM, valeur la plus contraignante retenue, écarts tracés ; découverte des couches du réseau national des transports exceptionnels dans le catalogue IGN puis annotation des ouvrages concernés (information, sans classe) | `src/core/ign.ts`, `src/lib/enligne.ts`, `DonneesVue.svelte` |
 
-Tests : 95 tests unitaires (`npm test`) ; bout en bout dans Chromium : `npm run e2e` (existant), `npm run e2e:convois`, `npm run e2e:ign` (service IGN simulé), `npm run e2e:assemblage`. Les fichiers de démonstration se régénèrent par `npx tsx tests/e2e/paquet-demo.ts`. Variable `CHROMIUM` à renseigner si le chemin du navigateur diffère.
+Tests : 97 tests unitaires (`npm test`) ; bout en bout dans Chromium : `npm run e2e` (existant), `npm run e2e:convois`, `npm run e2e:ign` (service IGN simulé), `npm run e2e:assemblage`. Les fichiers de démonstration se régénèrent par `npx tsx tests/e2e/paquet-demo.ts`. Variable `CHROMIUM` à renseigner si le chemin du navigateur diffère.
 
 ## Non vérifié (à faire sur un poste connecté, 15 minutes)
 
@@ -46,7 +47,7 @@ Ordre de grandeur mesuré hors navigateur (Node, réseau synthétique en grille,
 2. ~~Carte~~ : fait (voir ci-dessus).
 3. **Jeux data.gouv départementaux** (ponts, tonnage, réseaux TE locaux) : passer par l'import manuel existant ; liste des jeux repérés dans `docs/SOURCES-NATIONALES.md`.
 4. **Contraintes hors ponts** : tunnels et passages inférieurs (déjà via `maxheight`), gués, giratoires, rétrécissements, selon ce que la BD TOPO fournit vraiment.
-5. **Classes MLC des véhicules** : à faire confirmer par la STAT / SIMMT (aucune n'est publiée en source ouverte). Charge à l'essieu : publiée pour aucun véhicule.
+5. **Classes MLC des véhicules** : à faire confirmer par la STAT / SIMMT (aucune n'est publiée en source ouverte). Charge à l'essieu : publiée pour aucun véhicule. **Décision du 13/11/2026** : en attendant, un véhicule sans classe est déclaré compatible sur les ouvrages classés (mode normal), avec un bandeau rouge « à vérifier » dans l'en-tête, dans le panneau et le rapport d'itinéraire, et dans la synthèse de chaque verdict. Gabarit et restrictions civiles restent contrôlés ; un ouvrage sans classe reste indéterminé. Réglable dans le Référentiel (case « Déclarer compatibles… » ; décochée = ancien comportement bloquant).
 6. Passer la pull request (brouillon) en prête et la fusionner dans `main` une fois la section « Non vérifié » traitée.
 7. ~~Points d'audit restants~~ : aller-retour sur un même ouvrage compté à chaque passage (deux fenêtres d'occupation ; tronçons consécutifs d'un même pont = un passage) ; ordre des axes IGN déterminé par l'emprise du réseau (valable outre-mer). Reste : hauteur du porte-char avec Leclerc **non publiée** (recherche du 13/11/2026 sans résultat : plateau SRPB sans hauteur publiée) ; contrôle de gabarit signalé incomplet, à demander à la SIMMT avec les classes MLC (point 5).
 

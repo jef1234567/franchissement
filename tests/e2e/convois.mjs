@@ -47,6 +47,10 @@ await page.getByRole('button', { name: 'Calculer le plan' }).click();
 await page.getByText(/Aucun conflit/).waitFor();
 verifier(true, 'plus de conflit après décalage de l\'heure H');
 
+// Véhicules sans classe MLC : supposés compatibles, bandeau « à vérifier » dans l'en-tête.
+const bandeau = page.locator('.alerte-mlc');
+verifier(await bandeau.isVisible() && /sans classe MLC supposés compatibles — à vérifier/.test(await bandeau.innerText()), 'bandeau « véhicules sans classe MLC — à vérifier » affiché');
+
 // Carte : itinéraires de tous les convois, avec leurs couleurs.
 await page.getByRole('button', { name: /Carte & itinéraire/ }).click();
 await page.getByLabel(/Convois \(2\)/).waitFor();

@@ -81,6 +81,7 @@
         <ChampNombre valeur={r.vitesseNormalFlottantKmh} onchange={(v) => { if (v != null) { r.vitesseNormalFlottantKmh = v; r.valide = false; } }} min={1} max={60} />
       </label>
     </div>
+    <label class="case"><input type="checkbox" checked={(r.mlcInconnue ?? 'compatible') === 'compatible'} onchange={(e) => { r.mlcInconnue = (e.target as HTMLInputElement).checked ? 'compatible' : 'bloquer'; r.valide = false; }} /> Déclarer compatibles les véhicules sans classe MLC <span class="muted">(un bandeau rappelle qu'il faut vérifier ; décoché : verdict « indéterminé », itinéraire bloqué)</span></label>
     <label class="case"><input type="checkbox" checked={r.risqueSurPermanent} onchange={(e) => { r.risqueSurPermanent = (e.target as HTMLInputElement).checked; r.valide = false; }} /> Autoriser le franchissement à risque sur un pont permanent dont la classe risque est renseignée <span class="muted">(hors doctrine)</span></label>
     <p class="muted petit-txt">La classe « risque » n'est jamais dérivée : elle est établie par le Génie. Selon la doctrine, le franchissement à risque ne concerne que les ponts militaires préfabriqués (fixes ou flottants) et impose une inspection après chaque passage.</p>
     <label class="champ">Notes et références (édition du STANAG, directives…)

@@ -69,9 +69,26 @@ describe('Vérification STANAG', () => {
     expect(evaluerVehicule(o, el('leclerc'), 'unique', ref).mode).toBe('normal');
     expect(evaluerVehicule(pont(50), el('leclerc'), 'unique', ref).mode).toBe('precaution');
   });
-  it('véhicule sans classe : jamais compatible (correctif v1)', () => {
+  it('véhicule sans classe, référentiel « bloquer » : jamais compatible (correctif v1)', () => {
     const nv = nouveauVehicule();
-    expect(evaluerVehicule(pont(100), { vehicule: nv, quantite: 1, etat: 'charge' }, 'unique', ref).mode).toBe('inconnu');
+    expect(evaluerVehicule(pont(100), { vehicule: nv, quantite: 1, etat: 'charge' }, 'unique', { ...ref, mlcInconnue: 'bloquer' }).mode).toBe('inconnu');
+  });
+  it('véhicule sans classe, par défaut : compatibilité supposée et signalée', () => {
+    const nv = nouveauVehicule({ nom: 'Serval' });
+    const ev = evaluerVehicule(pont(100), { vehicule: nv, quantite: 1, etat: 'charge' }, 'unique', ref);
+    expect(ev.mode).toBe('normal');
+    expect(ev.mlcSupposee).toBe(true);
+    const verdict = verifierConvoi(pont(100), [{ vehicule: nv, quantite: 1, etat: 'charge' }], 'unique', ref);
+    expect(verdict.mlcSupposees).toEqual(['Serval']);
+    expect(verdict.synthese).toMatch(/supposée.*Serval.*vérifier/);
+  });
+  it('compatibilité supposée : ouvrage sans classe reste indéterminé, gabarit et tonnage civil restent bloquants', () => {
+    const nv = nouveauVehicule({ largeurM: 3, masseT: 30 });
+    const e = { vehicule: nv, quantite: 1, etat: 'charge' as const };
+    expect(evaluerVehicule(pont(null), e, 'unique', ref).mode).toBe('inconnu');
+    expect(evaluerVehicule(pont(100, null, { largeurM: 2.5 }), e, 'unique', ref).mode).toBe('interdit');
+    const civ = evaluerVehicule(pont(100, null, { civil: { ...pont(100).civil, poidsMaxT: 19 } }), e, 'unique', ref);
+    expect(civ.civilPoids).toBe('nok');
   });
   it('classe à vide utilisée si état vide', () => {
     const p = { ...v('pplog'), mlcVide: 18 };

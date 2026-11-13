@@ -149,6 +149,8 @@ export interface Referentiel {
   /** Marges de sécurité gabarit. */
   margeLargeurM: number;
   margeHauteurM: number;
+  /** Véhicule sans classe MLC : « compatible » (supposé franchir, signalé à vérifier) ou « bloquer » (verdict indéterminé). Absent = compatible. */
+  mlcInconnue?: 'compatible' | 'bloquer';
   notes: string;
 }
 

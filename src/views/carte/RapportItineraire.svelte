@@ -11,6 +11,7 @@
   const dev = $derived(developper(etat.projet, iti.convoi));
   const syn = $derived(synthese(dev.elements, etat.projet.referentiel.modes.normal.espacementM));
   const ref = $derived(etat.projet.referentiel);
+  const mlcSupposees = $derived([...new Set(res.ouvrages.flatMap((t) => t.verdict.mlcSupposees ?? []))]);
 </script>
 
 <!-- Compte rendu imprimable (visible uniquement à l'impression). -->
@@ -33,11 +34,14 @@
       <tr><th>Contraintes</th><td>{iti.options.voies === 'unique' ? 'Voie unique' : 'Double voie'} ; franchissement toléré : {iti.options.modeMax} ; restrictions civiles {iti.options.restrictionsCiviles ? 'respectées' : 'ignorées'}</td></tr>
     </tbody>
   </table>
+  {#if mlcSupposees.length}
+    <p class="alerte-mlc"><strong>⚠ Compatibilité supposée, à vérifier :</strong> {mlcSupposees.join(', ')} — classe MLC non renseignée, déclarée compatible sur les ouvrages classés. Chaque franchissement doit être confirmé par le Génie.</p>
+  {/if}
   <h2>Ouvrages traversés</h2>
   <table>
     <thead><tr><th>PK (km)</th><th>Ouvrage</th><th>MGRS</th><th>Classe</th><th>Fiabilité</th><th>Mode</th><th>Observations</th></tr></thead>
     <tbody>
-      {#each res.ouvrages as t (t.ouvrage.id)}
+      {#each res.ouvrages as t, i (t.ouvrage.id + "@" + i)}
         <tr>
           <td>{(t.pk / 1000).toFixed(1)}</td>
           <td>{t.ouvrage.nom}</td>
@@ -55,6 +59,7 @@
 
 <style>
   .rapport { display: none; }
+  .alerte-mlc { border: 2px solid #000; padding: 2mm 3mm; margin: 2mm 0; }
   @media print {
     .rapport { display: block; position: fixed; inset: 0; background: #fff; color: #000; padding: 12mm; font-size: 10.5pt; z-index: 99999; overflow: visible; }
     .rapport h1 { font-size: 16pt; margin-bottom: 2mm; }

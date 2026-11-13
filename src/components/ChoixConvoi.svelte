@@ -82,7 +82,11 @@
     </div>
   {/if}
   {#if syn.sansClasse.length}
-    <p class="encadre erreur petit-txt">Classe MLC manquante : {syn.sansClasse.join(', ')} — ces véhicules ne seront jamais déclarés compatibles.</p>
+    {#if (etat.projet.referentiel.mlcInconnue ?? 'compatible') === 'compatible'}
+      <p class="encadre alerte petit-txt">Classe MLC manquante : {syn.sansClasse.join(', ')} — <strong>supposés compatibles, à vérifier</strong> sur chaque ouvrage.</p>
+    {:else}
+      <p class="encadre erreur petit-txt">Classe MLC manquante : {syn.sansClasse.join(', ')} — ces véhicules ne seront jamais déclarés compatibles.</p>
+    {/if}
   {/if}
   {#if dev.orphelins.length}
     <p class="encadre alerte petit-txt">Références introuvables ignorées : {dev.orphelins.join(', ')}.</p>

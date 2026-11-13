@@ -596,6 +596,7 @@ export function reparerReferentiel(x: unknown): Referentiel {
     deriverPrecaution: typeof r.deriverPrecaution === 'boolean' ? r.deriverPrecaution : d.deriverPrecaution,
     margeLargeurM: num(r.margeLargeurM) ?? d.margeLargeurM,
     margeHauteurM: num(r.margeHauteurM) ?? d.margeHauteurM,
+    mlcInconnue: r.mlcInconnue === 'bloquer' ? 'bloquer' : 'compatible',
     notes: str(r.notes, d.notes),
   };
 }
