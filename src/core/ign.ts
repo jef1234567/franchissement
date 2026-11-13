@@ -1,6 +1,6 @@
 import type { BBox } from './geo';
 import { estNombre, type Ouvrage } from './model';
-import { areteLaPlusProche, coordsArete, type Arete, type Reseau } from './reseau';
+import { areteLaPlusProche, coordsArete, ouvragesParArete, type Arete, type Reseau } from './reseau';
 import { distancePointSegment } from './geo';
 import { noterDesaccord } from './importation';
 
@@ -179,8 +179,7 @@ const CHAMPS: ['pmax' | 'emax' | 'hmax' | 'lmax', keyof Ouvrage['civil'], string
  */
 export function appliquerRestrictionsIGN(r: Reseau, ouvrages: Ouvrage[], entites: EntiteGeo[], source = 'IGN BD TOPO', rayonM = 12): BilanIGN {
   const bilan: BilanIGN = { entites: entites.length, avecRestriction: 0, rapprochees: 0, aretesModifiees: 0, ouvragesModifies: 0, desaccords: 0, ambigus: 0 };
-  const parWay = new Map<number, Ouvrage>();
-  for (const o of ouvrages) for (const w of o.osmWayIds) parWay.set(w, o);
+  const parArete = ouvragesParArete(r, ouvrages);
   const modifiees = new Set<number>(), ouvragesTouches = new Set<string>();
   const date = new Date().toISOString();
   for (const f of entites) {
@@ -218,7 +217,7 @@ export function appliquerRestrictionsIGN(r: Reseau, ouvrages: Ouvrage[], entites
         if (res.gue && !e.gue) { e.gue = 1; change = true; }
         if (res.barre && !e.barre) { e.barre = 1; change = true; }
         if (change) modifiees.add(a.arete);
-        const o = parWay.get(e.way);
+        const o = parArete.get(ia)?.at(-1);
         if (o) {
           const nAvant = o.desaccords?.length ?? 0;
           for (const [k, champ, libelle] of CHAMPS) {
@@ -244,8 +243,7 @@ export function appliquerRestrictionsIGN(r: Reseau, ouvrages: Ouvrage[], entites
 
 /** Rattache les tronçons du réseau TE (couche IGN) aux ouvrages traversés : note informative, sans valeur de classe. */
 export function marquerReseauTE(r: Reseau, ouvrages: Ouvrage[], entites: EntiteGeo[], couche: string, rayonM = 12): number {
-  const parWay = new Map<number, Ouvrage>();
-  for (const o of ouvrages) for (const w of o.osmWayIds) parWay.set(w, o);
+  const parArete = ouvragesParArete(r, ouvrages);
   const marque = `[IGN TE] Sur le réseau « ${couche} ».`;
   let n = 0;
   for (const f of entites) {
@@ -253,7 +251,7 @@ export function marquerReseauTE(r: Reseau, ouvrages: Ouvrage[], entites: EntiteG
       for (const p of l) {
         const a = areteLaPlusProche(r, p, { pontsSeuls: true, rayonM });
         if (!a) continue;
-        const o = parWay.get(r.aretes[a.arete].way);
+        const o = parArete.get(a.arete)?.at(-1);
         if (o && !o.notes.includes(marque)) { o.notes = [o.notes, marque].filter(Boolean).join('\n'); n++; }
       }
     }
@@ -281,8 +279,7 @@ export interface BilanTE { troncons: number; aretes: number; ouvrages: number; a
  * Les ouvrages concernés reçoivent une note. Aucune classe MLC n'en est déduite.
  */
 export function appliquerTroncsTE(r: Reseau, ouvrages: Ouvrage[], entites: EntiteGeo[], rayonM = 12): BilanTE {
-  const parWay = new Map<number, Ouvrage>();
-  for (const o of ouvrages) for (const w of o.osmWayIds) parWay.set(w, o);
+  const parArete = ouvragesParArete(r, ouvrages);
   const bilan: BilanTE = { troncons: 0, aretes: 0, ouvrages: 0, ambigus: 0 };
   const aretes = new Set<number>(), touches = new Set<string>();
   for (const f of entites) {
@@ -300,7 +297,7 @@ export function appliquerTroncsTE(r: Reseau, ouvrages: Ouvrage[], entites: Entit
         rapproche = true;
         if (!estNombre(e.te) || cat > e.te) e.te = cat;
         aretes.add(c[0].arete);
-        const o = parWay.get(e.way);
+        const o = parArete.get(c[0].arete)?.at(-1);
         if (o) {
           const note = `[IGN TE] Réseau des transports exceptionnels, catégorie ${cat} t (information ; prescriptions locales à consulter ; pas une classe MLC).`;
           if (!o.notes.includes(note)) { o.notes = [o.notes, note].filter(Boolean).join('\n'); touches.add(o.id); }

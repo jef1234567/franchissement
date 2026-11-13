@@ -1,6 +1,6 @@
 import { chargeEssieuVehicule } from './verification';
 import { estNombre, type Ouvrage, type Referentiel, type Voies } from './model';
-import { coordsArete, type Arete, type Reseau } from './reseau';
+import { coordsArete, ouvragesParArete, type Arete, type Reseau } from './reseau';
 import { distancePointSegment, haversine } from './geo';
 import { classeVehicule, RANG_MODE, verifierConvoi, type ElementConvoi, type ModeRequis, type VerdictConvoi } from './verification';
 
@@ -121,10 +121,10 @@ class Tas {
 /* ---------- Pré-calcul des contraintes ---------- */
 
 interface ContexteContraintes {
-  /** way OSM → ouvrage */
-  ouvrageParWay: Map<number, Ouvrage>;
-  /** way OSM → petits ouvrages sous chaussée (avertissement seulement, jamais de verdict ni de blocage). */
-  petitsParWay: Map<number, Ouvrage[]>;
+  /** tronçon → ouvrage (un ouvrage rattaché à une voie ordinaire ne porte que les tronçons proches de sa position) */
+  ouvrageParArete: Map<Arete, Ouvrage>;
+  /** tronçon → petits ouvrages sous chaussée (avertissement seulement, jamais de verdict ni de blocage). */
+  petitsParArete: Map<Arete, Ouvrage[]>;
   verdicts: Map<string, VerdictConvoi>;
   bloque: (e: Arete) => boolean;
   surcout: (e: Arete) => number;
@@ -146,14 +146,11 @@ export function dimensionsConvoi(elements: ElementConvoi[]) {
 }
 
 function preparer(r: Reseau, ouvrages: Ouvrage[], elements: ElementConvoi[], ref: Referentiel, opt: OptionsItineraire): ContexteContraintes {
-  const ouvrageParWay = new Map<number, Ouvrage>();
-  const petitsParWay = new Map<number, Ouvrage[]>();
-  for (const o of ouvrages) {
-    for (const w of o.osmWayIds) {
-      if (o.petitOuvrage) (petitsParWay.get(w) ?? petitsParWay.set(w, []).get(w)!).push(o);
-      else ouvrageParWay.set(w, o);
-    }
-  }
+  const ouvrageParArete = new Map<Arete, Ouvrage>();
+  // Deux ouvrages sur un même tronçon : le dernier l'emporte (comme avant, par voie).
+  for (const [i, l] of ouvragesParArete(r, ouvrages)) ouvrageParArete.set(r.aretes[i], l[l.length - 1]);
+  const petitsParArete = new Map<Arete, Ouvrage[]>();
+  for (const [i, l] of ouvragesParArete(r, ouvrages, { petits: true })) petitsParArete.set(r.aretes[i], l);
   const verdicts = new Map<string, VerdictConvoi>();
   const exclus = new Set(opt.ouvragesExclus);
   const dims = dimensionsConvoi(elements);
@@ -176,14 +173,14 @@ function preparer(r: Reseau, ouvrages: Ouvrage[], elements: ElementConvoi[], ref
       !!e.barre);
 
   return {
-    ouvrageParWay,
-    petitsParWay,
+    ouvrageParArete,
+    petitsParArete,
     verdicts,
     bloque: (e) => {
       if (!opt.autoroutes && (e.hw === 'motorway' || e.hw === 'motorway_link')) return true;
       if (civilBloque(e)) return true;
       if (e.gue && (opt.gues ?? 'eviter') === 'eviter') return true;
-      const o = ouvrageParWay.get(e.way);
+      const o = ouvrageParArete.get(e);
       if (!o) return false;
       if (exclus.has(o.id)) return true;
       const m = verdict(o).mode;
@@ -192,7 +189,7 @@ function preparer(r: Reseau, ouvrages: Ouvrage[], elements: ElementConvoi[], ref
       return RANG_MODE[m] > rangMax;
     },
     surcout: (e) => {
-      const o = ouvrageParWay.get(e.way);
+      const o = ouvrageParArete.get(e);
       if (!o) return 0;
       const m = verdict(o).mode;
       if (m === 'inconnu' && opt.inconnus === 'penaliser') return opt.penaliteInconnuMin * 60;
@@ -341,12 +338,12 @@ export function calculerItineraire(
     if (depuis !== e.a) pts = pts.reverse();
     if (coords.length) pts = pts.slice(1);
     coords.push(...pts);
-    const o = ctx.ouvrageParWay.get(e.way);
+    const o = ctx.ouvrageParArete.get(e);
     if (o && o.id !== ouvragePrecedent) {
       traverses.push({ ouvrage: o, verdict: ctx.verdicts.get(o.id) ?? verifierConvoi(o, elements, opt.voies, ref), pk, tS: duree });
     }
     // Petits ouvrages sous chaussée : avertissement quand l'ouvrage est sur ce tronçon (à 25 m près), une fois par ouvrage.
-    for (const p of ctx.petitsParWay.get(e.way) ?? []) {
+    for (const p of ctx.petitsParArete.get(e) ?? []) {
       if (petitsSignales.has(p.id) || !estNombre(p.lat) || !estNombre(p.lon)) continue;
       const q: [number, number] = [p.lat, p.lon];
       const geomE = coordsArete(r, e);

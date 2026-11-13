@@ -342,3 +342,50 @@ export function areteLaPlusProche(r: Reseau, p: [number, number], opts: { pontsS
   });
   return best;
 }
+
+/* =========================================================================
+   Tronçons portés par chaque ouvrage
+   -------------------------------------------------------------------------
+   Un ouvrage rattaché à une voie OSM « pont » porte toute cette voie (la voie
+   est le pont). Un ouvrage importé loin de tout pont OSM est rattaché par
+   proximité à une voie ordinaire, qui peut faire plusieurs kilomètres : il ne
+   porte alors que les tronçons de cette voie proches de sa position (audit
+   du 13/11/2026, lot 2). Sans position connue, toute la voie (sens prudent).
+   ========================================================================= */
+
+/** Rayon autour de la position d'un ouvrage pour retenir les tronçons d'une voie non-pont (m). */
+export const RAYON_OUVRAGE_SUR_VOIE_M = 30;
+
+/** Indice d'arête → ouvrage. Les petits ouvrages sous chaussée sont exclus sauf `petits: true` (ils sont alors seuls indexés). */
+export function ouvragesParArete(r: Reseau, ouvrages: Ouvrage[], opts: { petits?: boolean } = {}): Map<number, Ouvrage[]> {
+  const parWay = new Map<number, number[]>();
+  r.aretes.forEach((e, i) => (parWay.get(e.way) ?? parWay.set(e.way, []).get(e.way)!).push(i));
+  const res = new Map<number, Ouvrage[]>();
+  const ajouter = (i: number, o: Ouvrage) => { const l = res.get(i) ?? res.set(i, []).get(i)!; if (!l.includes(o)) l.push(o); };
+  for (const o of ouvrages) {
+    if (!!o.petitOuvrage !== !!opts.petits) continue;
+    for (const w of o.osmWayIds) {
+      for (const i of aretesOuvrageSurVoie(r, o, parWay.get(w) ?? [])) ajouter(i, o);
+    }
+  }
+  return res;
+}
+
+/** Tronçons d'une voie portés par un ouvrage (voir ci-dessus). */
+export function aretesOuvrageSurVoie(r: Reseau, o: Ouvrage, aretes: number[]): number[] {
+  if (!aretes.length) return [];
+  const pont = aretes.filter((i) => r.aretes[i].pont);
+  if (pont.length === aretes.length) return aretes;
+  // Voie ordinaire : seuls les tronçons proches de la position de l'ouvrage (au moins le plus proche).
+  if (o.lat == null || o.lon == null || !Number.isFinite(o.lat) || !Number.isFinite(o.lon)) return aretes;
+  const p: [number, number] = [o.lat, o.lon];
+  const dist = aretes.map((i) => {
+    const pts = coordsArete(r, r.aretes[i]);
+    let d = Infinity;
+    for (let k = 1; k < pts.length; k++) d = Math.min(d, distancePointSegment(p, pts[k - 1], pts[k]));
+    return d;
+  });
+  const dMin = Math.min(...dist);
+  const rayon = Math.max(RAYON_OUVRAGE_SUR_VOIE_M, (o.longueurM ?? 0) / 2, dMin + 5);
+  return aretes.filter((_, k) => dist[k] <= rayon);
+}
