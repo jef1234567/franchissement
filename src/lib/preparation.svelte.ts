@@ -7,7 +7,7 @@ import { appliquerRestrictionsIGN, appliquerTroncsTE, coucheTEUtile, marquerRese
 import { appliquerFusion, convertirOuvrages, integrerOuvragesOSM, planifierFusion, tableDepuisCSV, tableDepuisGeoJSON, tableDepuisKML, type TableImport } from '../core/importation';
 import { carreAutour, cleEmprise, decouperEnTuiles, dedoublonnerEntites, filtrerDansEmprise, reconnaitreJeu } from '../core/preparation';
 import { entitesRestrictions } from '../core/restrictions-lineaires';
-import { construireReseau, extraireOuvrages, requeteOverpassReseau, type Reseau } from '../core/reseau';
+import { construireReseau, extraireOuvrages, requeteOverpassReseau, type Lacune, type Reseau } from '../core/reseau';
 import { tableDepuisShapefile } from '../core/shapefile';
 import { haversine, type BBox } from '../core/geo';
 import { assemblerZones, type Zone } from '../core/paquet';
@@ -45,7 +45,7 @@ export const TUILES_SIMULTANEES_EUROPE = 2;
 const cache = new Map<string, unknown>();
 let reutilisees = 0;
 /** À augmenter dès que les requêtes ou leur lecture changent : les réponses gardées sous l'ancienne version sont ignorées. */
-const VERSION_CACHE = 1;
+const VERSION_CACHE = 2; // 2 : pagination WFS fiabilisée, balises OSM de nœuds et d'accès lues (16/11/2026)
 /** Empreinte courte d'un texte (requête Overpass) : une requête modifiée ne réutilise pas une réponse gardée. */
 function empreinte(t: string): string {
   let h = 2166136261;
@@ -54,13 +54,13 @@ function empreinte(t: string): string {
 }
 /** Réponse Overpass vide du seul serveur Europe, non confirmée par un autre serveur : ni gardée, ni prise pour une zone sans route. */
 const nonConfirmee = (v: unknown) => !!v && typeof v === 'object' && Array.isArray((v as { elements?: unknown[] }).elements) && !(v as { elements: unknown[] }).elements.length && !!(v as { nonConfirme?: boolean }).nonConfirme;
-async function enCache<T>(cleBrute: string, f: () => Promise<T>): Promise<T> {
+async function enCache<T>(cleBrute: string, f: () => Promise<T>, garder: (v: T) => boolean = () => true): Promise<T> {
   const cle = `v${VERSION_CACHE}:${cleBrute}`;
   if (cache.has(cle)) { reutilisees++; return cache.get(cle) as T; }
   const garde = await stockage.lireCache<T>(cle);
   if (garde !== undefined) { cache.set(cle, garde); reutilisees++; return garde; }
   const v = await f();
-  if (nonConfirmee(v)) return v;
+  if (nonConfirmee(v) || !garder(v)) return v;
   cache.set(cle, v);
   await stockage.ecrireCache(cle, v);
   return v;
@@ -132,8 +132,8 @@ class Preparation {
         return;
       }
       const ouvrages = $state.snapshot(etat.projet.ouvrages) as Ouvrage[];
-      await this.etapeBDTOPO(reseau, ouvrages, tuiles, signal);
-      await this.etapeTE(reseau, ouvrages, tuiles, signal);
+      await this.etapeBDTOPO(reseau, ouvrages, tuiles, bbox, signal);
+      await this.etapeTE(reseau, ouvrages, tuiles, bbox, signal);
       await this.etapeDataGouv(reseau, ouvrages, bbox, signal);
       await etat.definirReseau(reseau, etat.zone);
       etat.projet.ouvrages = ouvrages;
@@ -204,42 +204,74 @@ class Preparation {
     }
   }
 
-  private async wfsParTuiles(couche: string, tuiles: BBox[], signal: AbortSignal): Promise<EntiteGeo[]> {
+  /** Couche WFS tuile par tuile : une tuile en échec n'arrête pas les autres ; elle devient une lacune (source, emprise, motif). */
+  private async wfsParTuiles(couche: string, tuiles: BBox[], signal: AbortSignal): Promise<{ entites: EntiteGeo[]; lacunes: { emprise: BBox; motif: string }[] }> {
     const toutes: EntiteGeo[] = [];
+    const lacunes: { emprise: BBox; motif: string }[] = [];
     for (let i = 0; i < tuiles.length; i++) {
-      const ents = await enCache(cleEmprise(couche, tuiles[i]), () =>
-        telechargerWFS(couche, tuiles[i], (m) => (this.progression = `${tuiles.length > 1 ? `Tuile ${i + 1} / ${tuiles.length} — ` : ''}${m}`), signal));
-      toutes.push(...ents);
+      try {
+        const ents = await enCache(cleEmprise(couche, tuiles[i]), () =>
+          telechargerWFS(couche, tuiles[i], (m) => (this.progression = `${tuiles.length > 1 ? `Tuile ${i + 1} / ${tuiles.length} — ` : ''}${m}`), signal));
+        toutes.push(...ents);
+      } catch (e) {
+        if (signal.aborted) throw e;
+        lacunes.push({ emprise: tuiles[i], motif: (e as Error).message });
+      }
     }
-    return dedoublonnerEntites(toutes);
+    return { entites: dedoublonnerEntites(toutes), lacunes };
   }
 
-  private async etapeBDTOPO(reseau: Reseau, ouvrages: Ouvrage[], tuiles: BBox[], signal: AbortSignal) {
+  /** Remplace les lacunes d'une source sur le carré préparé (relance) par celles de ce passage. */
+  private noterLacunes(reseau: Reseau, source: string, carre: BBox, nouvelles: { emprise: BBox; motif: string }[]) {
+    const dans = (e: BBox) => e.sud >= carre.sud - 1e-9 && e.nord <= carre.nord + 1e-9 && e.ouest >= carre.ouest - 1e-9 && e.est <= carre.est + 1e-9;
+    const gardees = (reseau.lacunes ?? []).filter((l) => !(l.source === source && dans(l.emprise)));
+    const toutes: Lacune[] = [...gardees, ...nouvelles.map((n) => ({ source, ...n }))];
+    if (toutes.length) reseau.lacunes = toutes; else delete reseau.lacunes;
+  }
+
+  private async etapeBDTOPO(reseau: Reseau, ouvrages: Ouvrage[], tuiles: BBox[], carre: BBox, signal: AbortSignal) {
     if (signal.aborted) { this.etape('bdtopo', 'saute', 'arrêté'); return; }
     this.etape('bdtopo', 'encours');
     try {
-      const ents = await this.wfsParTuiles(COUCHE_BDTOPO_ROUTES, tuiles, signal);
-      const b = appliquerRestrictionsIGN(reseau, ouvrages, ents);
-      this.etape('bdtopo', 'ok', `${b.avecRestriction} tronçon(s) IGN avec restriction, ${b.aretesModifiees} tronçon(s) et ${b.ouvragesModifies} pont(s) mis à jour${b.ambigus ? `, ${b.ambigus} point(s) ambigus écartés` : ''}`);
+      const { entites, lacunes } = await this.wfsParTuiles(COUCHE_BDTOPO_ROUTES, tuiles, signal);
+      this.noterLacunes(reseau, 'IGN BD TOPO', carre, lacunes);
+      if (lacunes.length === tuiles.length) throw new Error(lacunes[0].motif);
+      // Tuiles reçues appliquées même si d'autres ont échoué.
+      const b = appliquerRestrictionsIGN(reseau, ouvrages, entites);
+      const pertes = [
+        b.ambigus && `${b.ambigus} point(s) ambigus (pont ou route dessous) écartés`,
+        b.avecRestriction - b.rapprochees > 0 && `${b.avecRestriction - b.rapprochees} restriction(s) sans tronçon OSM correspondant`,
+      ].filter(Boolean);
+      const base = `${b.avecRestriction} tronçon(s) IGN avec restriction, ${b.aretesModifiees} tronçon(s) et ${b.ouvragesModifies} pont(s) mis à jour${pertes.length ? ` ; ${pertes.join(', ')}` : ''}`;
+      if (lacunes.length) this.etape('bdtopo', 'partiel', `${base} ; ${lacunes.length} tuile(s) sur ${tuiles.length} non obtenue(s), signalées sur les itinéraires qui les traversent (relancez « Préparer la zone »). Motif : ${lacunes[0].motif}`);
+      else this.etape('bdtopo', 'ok', base);
     } catch (e) {
-      this.etape('bdtopo', 'echec', signal.aborted ? 'arrêté' : (e as Error).message);
+      if (!signal.aborted && !(reseau.lacunes ?? []).some((l) => l.source === 'IGN BD TOPO')) this.noterLacunes(reseau, 'IGN BD TOPO', carre, [{ emprise: carre, motif: (e as Error).message }]);
+      this.etape('bdtopo', 'echec', signal.aborted ? 'arrêté' : `${(e as Error).message} ; restrictions IGN absentes de la zone, signalées sur les itinéraires`);
     }
   }
 
-  private async etapeTE(reseau: Reseau, ouvrages: Ouvrage[], tuiles: BBox[], signal: AbortSignal) {
+  private async etapeTE(reseau: Reseau, ouvrages: Ouvrage[], tuiles: BBox[], carre: BBox, signal: AbortSignal) {
     if (signal.aborted) { this.etape('te', 'saute', 'arrêté'); return; }
     this.etape('te', 'encours');
     try {
-      const couches = (await enCache('te:catalogue', () => listerCouchesTE(signal))).filter((c) => coucheTEUtile(c.nom));
+      const catalogue = await enCache('te:catalogue', () => listerCouchesTE(signal), (c) => c.length > 0); // catalogue vide : jamais gardé
+      const couches = catalogue.filter((c) => coucheTEUtile(c.nom));
       if (!couches.length) { this.etape('te', 'partiel', 'aucune couche « transports exceptionnels » dans le catalogue IGN'); return; }
-      let aretes = 0, annotes = 0;
+      let aretes = 0, annotes = 0, ambigus = 0;
+      const lacunes: { emprise: BBox; motif: string }[] = [];
       for (const c of couches) {
-        const ents = await this.wfsParTuiles(c.nom, tuiles, signal);
-        if (/troncon_te$/i.test(c.nom)) { const b = appliquerTroncsTE(reseau, ouvrages, ents); aretes += b.aretes; annotes += b.ouvrages; }
-        else annotes += marquerReseauTE(reseau, ouvrages, ents, c.nom);
+        const { entites, lacunes: l } = await this.wfsParTuiles(c.nom, tuiles, signal);
+        for (const x of l) if (!lacunes.some((y) => JSON.stringify(y.emprise) === JSON.stringify(x.emprise))) lacunes.push({ emprise: x.emprise, motif: `${c.nom} : ${x.motif}` });
+        if (/troncon_te$/i.test(c.nom)) { const b = appliquerTroncsTE(reseau, ouvrages, entites); aretes += b.aretes; annotes += b.ouvrages; ambigus += b.ambigus; }
+        else annotes += marquerReseauTE(reseau, ouvrages, entites, c.nom);
       }
-      this.etape('te', 'ok', `${aretes} tronçon(s) classés (catégorie en t), ${annotes} pont(s) annotés ; information civile, sans classe MLC`);
+      this.noterLacunes(reseau, 'IGN transports exceptionnels', carre, lacunes);
+      const base = `${aretes} tronçon(s) classés (catégorie en t), ${annotes} pont(s) annotés${ambigus ? `, ${ambigus} point(s) ambigus écartés` : ''} ; information civile, sans classe MLC`;
+      if (lacunes.length) this.etape('te', lacunes.length >= tuiles.length ? 'echec' : 'partiel', `${base} ; ${lacunes.length} tuile(s) non obtenue(s), signalées sur les itinéraires. Motif : ${lacunes[0].motif}`);
+      else this.etape('te', 'ok', base);
     } catch (e) {
+      if (!signal.aborted) this.noterLacunes(reseau, 'IGN transports exceptionnels', carre, [{ emprise: carre, motif: (e as Error).message }]);
       this.etape('te', 'echec', signal.aborted ? 'arrêté' : (e as Error).message);
     }
   }

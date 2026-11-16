@@ -2,7 +2,7 @@ import { chargeEssieuVehicule } from './verification';
 import { estNombre, type Ouvrage, type Referentiel, type Voies } from './model';
 import { coordsArete, ouvragesParArete, type Arete, type Reseau } from './reseau';
 import { couperPolyligne, distancePointSegment, longueurPolyligne, projeterPolyligne } from './geo';
-import { segmentDansRectangle, trouTraverse } from './trous';
+import { lacunesTraversees, segmentDansRectangle, trouTraverse } from './trous';
 import { zonesDemiTour, type BilanDemiTour } from './demi-tour';
 import { classeVehicule, RANG_MODE, verifierConvoi, type ElementConvoi, type ModeRequis, type VerdictConvoi } from './verification';
 
@@ -584,14 +584,17 @@ export function calculerItineraire(
       maillonFaible = t.ouvrage;
     }
   }
+  for (const l of lacunesTraversees(coords, r.lacunes, (a, b) => longueurPolyligne([a, b])))
+    alertes.push({ pk: l.pkM, texte: `Données ${l.source} non obtenues sur une partie du trajet (à partir de ce PK ; ${l.motif}) : restrictions de hauteur, largeur ou tonnage peut-être manquantes. Relancez « Préparer la zone » ou reconnaissez la portion.` });
+  const lacunesTriees = r.lacunes?.length;
   const pasDT = opt.zonesDemiTourKm ?? 0;
   const demiTour = pasDT > 0 ? zonesDemiTour(r, arcsChemin, pasDT * 1000, (e) => ctx.bloque(P(e))) : undefined;
   if (demiTour) {
     const km = (m: number) => (m / 1000).toFixed(1).replace('.', ',');
     for (const l of demiTour.lacunes) alertes.push({ pk: l.deM, texte: `Aucune zone de demi-tour repérée entre le PK ${km(l.deM)} et le PK ${km(l.aM)} (pas de giratoire praticable à moins de 500 m du trajet) : en reconnaître une.` });
     if (demiTour.sansBalise && pk > pasDT * 1000) alertes.push({ pk: 0, texte: 'Réseau sans balise de giratoire (paquet antérieur au 16/11/2026) : zones de demi-tour reconnues par la seule forme des anneaux. Relancer « Préparer la zone » pour une recherche complète.' });
-    alertes.sort((a, b) => a.pk - b.pk);
   }
+  if (demiTour || lacunesTriees) alertes.sort((a, b) => a.pk - b.pk);
   const ouvragesInconnus = [...new Set(traverses.filter((t) => t.verdict.mode === 'inconnu').map((t) => t.ouvrage))];
   return { ok: true, coords, distanceM: pk, dureeS: duree, ouvrages: traverses, alertes, classeItineraire, maillonFaible, ouvragesInconnus, reseauTE: r.aretes.some((x) => estNombre(x.te)) ? { surM: surTE, categorieMin: catTE } : undefined, coutS: duree + penalites, penalitesS: penalites, demiTour };
 }

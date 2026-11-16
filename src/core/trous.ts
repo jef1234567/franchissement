@@ -54,3 +54,25 @@ export function trouTraverse(coords: [number, number][], trous: BBox[] | undefin
   }
   return null;
 }
+
+/** Indice du premier segment de la polyligne qui entre dans le rectangle (0 pour un point isolé), ou -1. */
+export function premierSegmentDans(coords: [number, number][], b: BBox): number {
+  if (coords.length === 1) return segmentDansRectangle(coords[0], coords[0], b) ? 0 : -1;
+  for (let k = 1; k < coords.length; k++) if (segmentDansRectangle(coords[k - 1], coords[k], b)) return k - 1;
+  return -1;
+}
+
+/** Lacunes (compléments IGN / TE non obtenus) traversées par la polyligne : source, motif et PK d'entrée (m), dans l'ordre du trajet. */
+export function lacunesTraversees(coords: [number, number][], lacunes: { source: string; emprise: BBox; motif: string }[] | undefined, distance: (a: [number, number], b: [number, number]) => number): { source: string; motif: string; pkM: number }[] {
+  if (!lacunes?.length) return [];
+  const cumul = [0];
+  for (let k = 1; k < coords.length; k++) cumul.push(cumul[k - 1] + distance(coords[k - 1], coords[k]));
+  const res = new Map<string, { source: string; motif: string; pkM: number }>();
+  for (const l of lacunes) {
+    const k = premierSegmentDans(coords, l.emprise);
+    if (k < 0) continue;
+    const prec = res.get(l.source);
+    if (!prec || cumul[k] < prec.pkM) res.set(l.source, { source: l.source, motif: l.motif, pkM: cumul[k] });
+  }
+  return [...res.values()].sort((a, b) => a.pkM - b.pkM);
+}

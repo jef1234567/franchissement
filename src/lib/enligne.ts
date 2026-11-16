@@ -1,7 +1,7 @@
 import { requeteOverpassReseau } from '../core/reseau';
 import type { BBox } from '../core/geo';
 import { iterTuiles, cleTuile, urlTuile, type SourceTuiles } from '../core/tuiles';
-import { PAGE_WFS, couchesTE, urlCapabilitesIGN, urlGetFeature, type EntiteGeo } from '../core/ign';
+import { PAGE_WFS, couchesTE, lirePageWFS, triCouche, urlCapabilitesIGN, urlGetFeature, type EntiteGeo } from '../core/ign';
 import {
   departementReponse, integrerReponseRecherche, pointsGrille, requetesDepartement, THEMES_DATAGOUV, trierJeux, urlCommunePoint, urlRechercheDataGouv,
   type Departement, type JeuDataGouv, type RessourceDataGouv,
@@ -219,7 +219,18 @@ export async function telechargerTuiles(
 
 /* ---------------- IGN Géoplateforme (WFS) ---------------- */
 
-/** Télécharge toutes les entités d'une couche WFS IGN sur une emprise (pagination, plafond de sécurité). */
+/** Réponse incomplète (pages manquantes, plafond atteint) : jamais gardée ni présentée comme complète. */
+export class ErreurTronquee extends Error {}
+
+/** Essais au plus après un refus « trop de demandes » (HTTP 429). */
+const ESSAIS_429 = 3;
+
+/**
+ * Télécharge toutes les entités d'une couche WFS IGN sur une emprise.
+ * Pagination par le nombre d'entités réellement reçues (le serveur peut servir moins que COUNT), jusqu'à une page vide
+ * ou au nombre annoncé (numberMatched) ; tri stable sur l'identifiant BD TOPO. Moins d'entités que le nombre annoncé,
+ * ou plafond atteint : ErreurTronquee (la préparation en fait une lacune signalée, rien n'est gardé en cache).
+ */
 export async function telechargerWFS(
   couche: string,
   bbox: BBox,
@@ -228,23 +239,41 @@ export async function telechargerWFS(
   maxEntites = 200_000,
 ): Promise<EntiteGeo[]> {
   const toutes: EntiteGeo[] = [];
-  for (let debut = 0; debut < maxEntites; debut += PAGE_WFS) {
-    suivi(`${couche} : ${toutes.length.toLocaleString('fr-FR')} entités reçues…`);
+  let debut = 0, annonce: number | null = null, refus = 0;
+  let tri = triCouche(couche);
+  for (;;) {
+    if (toutes.length >= maxEntites) throw new ErreurTronquee(`IGN : plus de ${maxEntites.toLocaleString('fr-FR')} entités pour ${couche}, plafond atteint : réduisez la zone.`);
+    suivi(`${couche} : ${toutes.length.toLocaleString('fr-FR')} entités reçues${annonce != null ? ` sur ${annonce.toLocaleString('fr-FR')}` : ''}…`);
     let r: Response;
     try {
-      r = await fetch(urlGetFeature(couche, bbox, debut), { signal });
-    } catch (e) {
+      r = await fetch(urlGetFeature(couche, bbox, debut, PAGE_WFS, tri), { signal });
+    } catch {
       if (signal?.aborted) throw new Error('Téléchargement annulé.');
       throw new ErreurAccesBloque("Service IGN (data.geopf.fr) injoignable depuis ce navigateur : requête bloquée avant d'atteindre Internet ou refusée (CORS).");
     }
-    if (r.status === 429) { await new Promise((res) => setTimeout(res, 5500)); debut -= PAGE_WFS; continue; }
-    if (!r.ok) throw new Error(`IGN : réponse HTTP ${r.status} pour ${couche}.`);
-    const j = (await r.json()) as { features?: EntiteGeo[] };
-    const lot = j.features ?? [];
-    toutes.push(...lot);
-    if (lot.length < PAGE_WFS) return toutes;
+    if (r.status === 429) {
+      if (++refus >= ESSAIS_429) throw new Error(`IGN : trop de demandes (HTTP 429) pour ${couche}, ${ESSAIS_429} essais.`);
+      await attendre(5500 * refus, signal);
+      continue;
+    }
+    if (!r.ok) {
+      if (r.status === 400 && tri && debut === 0) { tri = undefined; continue; } // tri refusé : sans tri
+      throw new Error(`IGN : réponse HTTP ${r.status} pour ${couche}.`);
+    }
+    let page: { features: EntiteGeo[]; annonce: number | null };
+    try {
+      page = lirePageWFS(await r.text());
+    } catch (e) {
+      // Tri refusé par le service (attribut inconnu) : nouvel essai sans tri, une seule fois, dès la première page.
+      if (tri && debut === 0) { tri = undefined; continue; }
+      throw new Error(`IGN : ${(e as Error).message} (${couche}).`);
+    }
+    if (page.annonce != null) annonce = Math.max(annonce ?? 0, page.annonce);
+    toutes.push(...page.features);
+    debut += page.features.length;
+    if (!page.features.length || (annonce != null && toutes.length >= annonce)) break;
   }
-  suivi(`Plafond de ${maxEntites.toLocaleString('fr-FR')} entités atteint : réduisez la zone.`);
+  if (annonce != null && toutes.length < annonce) throw new ErreurTronquee(`IGN : ${toutes.length.toLocaleString('fr-FR')} entités reçues sur ${annonce.toLocaleString('fr-FR')} annoncées pour ${couche} (réponse tronquée).`);
   return toutes;
 }
 

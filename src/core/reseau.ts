@@ -60,7 +60,14 @@ export interface Reseau {
   trous?: BBox[];
   /** Emprises réellement téléchargées (un assemblage de carrés n'est pas son rectangle englobant). Absent : `bbox`. */
   emprises?: BBox[];
+  /** Compléments (IGN BD TOPO, réseau TE) non obtenus sur une emprise : le réseau y est connu, mais ses restrictions
+   *  peut-être pas. Signalés au rapport d'itinéraire, exportés avec le paquet. */
+  lacunes?: Lacune[];
+  /** Valeurs de restriction OSM illisibles lors de la construction (non persistant, pour le bilan). */
+  illisibles?: number;
 }
+
+export interface Lacune { source: string; emprise: BBox; motif: string }
 
 /** Requête Overpass du réseau. `modeste` (tuiles de la préparation en un bouton) : 90 s et 512 Mo déclarés,
  *  mieux acceptés par un serveur chargé (il refuse d'emblée les requêtes qui annoncent de gros besoins). */

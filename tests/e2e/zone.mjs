@@ -25,7 +25,7 @@ const n = { overpass: 0, wfs: 0, dg: 0, geo: 0 };
 const hotes = [];
 // Requêtes Overpass simultanées par serveur (maximum observé) ; panne simulée d'une tuile.
 const enVol = {}, maxEnVol = {};
-let panne = false, bboxEnPanne = null;
+let panne = false, bboxEnPanne = null, ignEnPanne = false;
 const bboxRequete = (r) => /\[bbox:([^\]]+)\]/.exec(decodeURIComponent((r.request().postData() || '').replace(/^data=/, '').replace(/\+/g, ' ')))?.[1];
 await ctx.route(/^https?:/, async (r) => {
   const u = new URL(r.request().url());
@@ -56,6 +56,8 @@ await ctx.route(/^https?:/, async (r) => {
       return r.fulfill({ status: 200, headers: cors, contentType: 'text/xml', body: '<wfs:WFS_Capabilities><FeatureTypeList><FeatureType><Name>SECUROUT.TE:troncon_te</Name><Title>Réseau</Title></FeatureType></FeatureTypeList></wfs:WFS_Capabilities>' });
     }
     if (u.searchParams.get('REQUEST') === 'GetFeature') n.wfs++;
+    // Défaut B2 : une tuile BD TOPO en panne pendant l'ajout ; les autres tuiles doivent être appliquées, la lacune signalée.
+    if (panne && !ignEnPanne && /BDTOPO/.test(u.searchParams.get('TYPENAMES') ?? '')) { ignEnPanne = true; return r.fulfill({ status: 502, headers: cors, body: '' }); }
     return json({ type: 'FeatureCollection', features: [] });
   }
   // Essai réel du 13/11/2026 : geo.api.gouv.fr répond parfois 504 sans en-tête CORS (vu par la page comme une erreur réseau).
@@ -143,6 +145,12 @@ const trous = await page.evaluate(() => new Promise((res) => {
   req.onsuccess = () => { const g = req.result.transaction('kv').objectStore('kv').get('reseau'); g.onsuccess = () => res(g.result?.trous?.length ?? 0); };
 }));
 verifier(trous === 1, `un trou enregistré dans le réseau (${trous})`);
+const lacunes = await page.evaluate(() => new Promise((res) => {
+  const req = indexedDB.open('franchir');
+  req.onsuccess = () => { const g = req.result.transaction('kv').objectStore('kv').get('reseau'); g.onsuccess = () => res((g.result?.lacunes ?? []).map((l) => l.source)); };
+}));
+verifier(lacunes.length === 1 && lacunes[0] === 'IGN BD TOPO', `tuile BD TOPO en panne : lacune enregistrée (${JSON.stringify(lacunes)})`);
+verifier(await page.getByText(/1 tuile\(s\) sur 9 non obtenue\(s\)/).isVisible(), 'étape BD TOPO partielle, les autres tuiles appliquées');
 // Panne levée, même carré : seule la tuile manquante est téléchargée, le trou disparaît.
 panne = false;
 const avantReprise = n.overpass;
@@ -154,6 +162,11 @@ const trous2 = await page.evaluate(() => new Promise((res) => {
   req.onsuccess = () => { const g = req.result.transaction('kv').objectStore('kv').get('reseau'); g.onsuccess = () => res(g.result?.trous?.length ?? 0); };
 }));
 verifier(trous2 === 0, `trou comblé après la reprise (${trous2})`);
+const lacunes2 = await page.evaluate(() => new Promise((res) => {
+  const req = indexedDB.open('franchir');
+  req.onsuccess = () => { const g = req.result.transaction('kv').objectStore('kv').get('reseau'); g.onsuccess = () => res(g.result?.lacunes?.length ?? 0); };
+}));
+verifier(lacunes2 === 0, `lacune BD TOPO levée après la reprise (${lacunes2})`);
 
 // Restrictions visibles sur la carte.
 await page.getByLabel('Restrictions et gués').check();

@@ -37,14 +37,36 @@ export function couchesTE(capabilities: string): { nom: string; titre: string }[
 }
 
 /** Requête GetFeature paginée, emprise en WGS84 (ordre officiel EPSG:4326 : lat, lon). */
-export function urlGetFeature(couche: string, b: BBox, debut: number, nombre = PAGE_WFS): string {
+export function urlGetFeature(couche: string, b: BBox, debut: number, nombre = PAGE_WFS, tri?: string): string {
   const p = new URLSearchParams({
     SERVICE: 'WFS', VERSION: '2.0.0', REQUEST: 'GetFeature', TYPENAMES: couche,
     OUTPUTFORMAT: 'application/json', SRSNAME: 'EPSG:4326',
     BBOX: `${b.sud},${b.ouest},${b.nord},${b.est},urn:ogc:def:crs:EPSG::4326`,
     COUNT: String(nombre), STARTINDEX: String(debut),
+    // Ordre stable entre les pages (sinon une entité peut sauter d'une page à l'autre et manquer).
+    ...(tri ? { SORTBY: `${tri} ASC` } : {}),
   });
   return `${WFS_IGN}?${p}`;
+}
+
+/** Attribut de tri stable d'une couche (identifiant BD TOPO) ; inconnu pour les autres couches. */
+export function triCouche(couche: string): string | undefined {
+  return /^BDTOPO_V3:/i.test(couche) ? 'cleabs' : undefined;
+}
+
+/** Page WFS lue : entités, nombre annoncé (null si « unknown » ou absent), message d'exception du service. */
+export function lirePageWFS(texte: string): { features: EntiteGeo[]; annonce: number | null } {
+  const t = texte.trim();
+  if (t.startsWith('<')) {
+    // Exception OGC renvoyée avec un statut 200 (XML) : jamais prise pour une page vide.
+    const m = /<(?:ows:)?ExceptionText>([\s\S]*?)<\/(?:ows:)?ExceptionText>/.exec(t);
+    throw new Error(`erreur du service : ${(m?.[1] ?? t.slice(0, 160)).trim()}`);
+  }
+  let j: { features?: EntiteGeo[]; numberMatched?: unknown };
+  try { j = JSON.parse(t); } catch { throw new Error('réponse illisible (ni JSON ni exception OGC)'); }
+  if (!j || !Array.isArray(j.features)) throw new Error('réponse sans liste d\'entités');
+  const nm = typeof j.numberMatched === 'number' ? j.numberMatched : /^\d+$/.test(String(j.numberMatched ?? '')) ? parseInt(String(j.numberMatched), 10) : null;
+  return { features: j.features, annonce: nm };
 }
 
 export interface EntiteGeo {
