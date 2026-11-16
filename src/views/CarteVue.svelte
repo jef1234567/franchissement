@@ -256,6 +256,12 @@
       L.polyline(res.coords, { renderer: rt, color: '#ffffff', weight: 10, opacity: 1, interactive: false, lineCap: 'round', lineJoin: 'round' }).addTo(coucheItineraire);
       L.polyline(res.coords, { renderer: rt, color: '#0b63e5', weight: 6.5, opacity: 1, interactive: false, lineCap: 'round', lineJoin: 'round' }).addTo(coucheItineraire);
       L.polyline(res.coords, { renderer: rt, color: '#ffffff', weight: 2.5, opacity: 0.95, interactive: false, className: 'trace-flux', dashArray: '2 16', lineCap: 'round' }).addTo(coucheItineraire);
+      // Zones de demi-tour (giratoires) : losange vert, à reconnaître.
+      for (const z of res.demiTour?.zones ?? []) {
+        L.marker([z.lat, z.lon], { icon: L.divIcon({ className: 'zone-dt', html: '<span>↻</span>', iconSize: [20, 20] }) })
+          .bindTooltip(`Zone de demi-tour, PK ${(z.pk / 1000).toFixed(1)} : ${z.nom}, ≈ ${z.diametreM} m${z.ecartM ? `, à ${z.ecartM} m du trajet` : ''} — à reconnaître`)
+          .addTo(coucheItineraire);
+      }
       untrack(() => carte?.fitBounds(L.latLngBounds(res.coords), { paddingTopLeft: [40, 40], paddingBottomRight: [replie ? 60 : 440, 40] }));
     }
     const pr = carte?.getPane('reseau');
@@ -433,6 +439,7 @@
   .panneau.replie { display: none; }
   .deplier { position: absolute; top: 12px; right: 12px; z-index: 800; display: inline-flex; align-items: center; gap: 6px; padding: 9px 12px; border: 1px solid var(--border); cursor: pointer; font-weight: 600; color: var(--text); }
   :global(.trace-flux) { animation: flux-trace 1.1s linear infinite; }
+  :global(.zone-dt span) { display: flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; background: #1f8a4c; color: #fff; font-weight: 700; font-size: 14px; border: 2px solid #fff; box-shadow: 0 0 0 1px #06172e; }
   @keyframes flux-trace { to { stroke-dashoffset: -18; } }
   @media (prefers-reduced-motion: reduce) { :global(.trace-flux) { animation: none; } }
   .onglets button.actif { color: var(--text); border-bottom-color: var(--accent); background: var(--surface); }

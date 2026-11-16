@@ -97,6 +97,9 @@
       <label class="champ">Pénalité par ouvrage sans classe (min)
         <ChampNombre valeur={iti.options.penaliteInconnuMin} onchange={(v) => (iti.options.penaliteInconnuMin = v ?? 0)} min={0} max={600} />
       </label>
+      <label class="champ">Zone de demi-tour cherchée tous les (km, 0 = non)
+        <ChampNombre valeur={iti.options.zonesDemiTourKm ?? 15} onchange={(v) => (iti.options.zonesDemiTourKm = v ?? 0)} min={0} max={100} />
+      </label>
       <label class="champ">Vitesse de marche du convoi (km/h)
         <ChampNombre valeur={iti.options.vitesseConvoiKmh} onchange={(v) => (iti.options.vitesseConvoiKmh = v ?? 50)} min={5} max={110} />
       </label>
@@ -195,6 +198,14 @@
         <p class="encadre alerte petit-txt"><strong>{res.ouvragesInconnus.length} ouvrage(s) sans classe à reconnaître</strong> sur l'itinéraire.</p>
       {/if}
       {#each res.alertes as a, i (i)}<p class="encadre alerte petit-txt">PK {(a.pk / 1000).toFixed(1)} — {a.texte}</p>{/each}
+
+      {#if res.demiTour}
+        <h4>Zones de demi-tour ({res.demiTour.zones.length})</h4>
+        <p class="petit-txt">Giratoires repérés environ tous les {Math.round(res.demiTour.pasM / 1000)} km. Diamètre mesuré à l'axe sur la géométrie OSM, indicatif : praticabilité à reconnaître. Demi-tour interdit en pleine voie.</p>
+        {#each res.demiTour.zones as z, i (i)}
+          <p class="petit-txt">PK {(z.pk / 1000).toFixed(1)} — {z.nom}, ≈ {z.diametreM} m{z.ecartM ? `, à ${z.ecartM} m du trajet` : ', sur le trajet'}{z.source === 'geometrie' ? ' (reconnu par sa forme)' : ''}</p>
+        {/each}
+      {/if}
 
       <h4>Ouvrages traversés ({res.ouvrages.length})</h4>
       {#if res.ouvrages.length}

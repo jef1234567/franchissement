@@ -3,6 +3,7 @@ import { estNombre, type Ouvrage, type Referentiel, type Voies } from './model';
 import { coordsArete, ouvragesParArete, type Arete, type Reseau } from './reseau';
 import { couperPolyligne, distancePointSegment, longueurPolyligne, projeterPolyligne } from './geo';
 import { trouTraverse } from './trous';
+import { zonesDemiTour, type BilanDemiTour } from './demi-tour';
 import { classeVehicule, RANG_MODE, verifierConvoi, type ElementConvoi, type ModeRequis, type VerdictConvoi } from './verification';
 
 /* =========================================================================
@@ -34,6 +35,8 @@ export interface OptionsItineraire {
   autoroutes: boolean;
   /** Gués et radiers : « eviter » (défaut, praticabilité inconnue) ou « autoriser » (signalés en alerte). */
   gues?: 'eviter' | 'autoriser';
+  /** Intervalle (km) entre deux zones de demi-tour cherchées le long du trajet (giratoires OSM) ; 0 : pas de recherche. */
+  zonesDemiTourKm?: number;
 }
 
 export const OPTIONS_ITINERAIRE_DEFAUT: OptionsItineraire = {
@@ -48,6 +51,8 @@ export const OPTIONS_ITINERAIRE_DEFAUT: OptionsItineraire = {
   ouvragesExclus: [],
   autoroutes: true,
   gues: 'eviter',
+  // Une zone de demi-tour tous les 15 km (choix de Jean-François, 16/11/2026).
+  zonesDemiTourKm: 15,
 };
 
 export interface OuvrageTraverse {
@@ -82,6 +87,8 @@ export interface ResultatItineraire {
   coutS?: number;
   /** Part des pénalités dans ce coût (s). */
   penalitesS?: number;
+  /** Zones de demi-tour repérées le long du trajet (giratoires), à reconnaître. */
+  demiTour?: BilanDemiTour;
 }
 
 /** Ce qui écarte un tronçon : bloquants (le rendent impraticable) et pénalités (le rendent plus « cher »). */
@@ -548,8 +555,16 @@ export function calculerItineraire(
       maillonFaible = t.ouvrage;
     }
   }
+  const pasDT = opt.zonesDemiTourKm ?? 0;
+  const demiTour = pasDT > 0 ? zonesDemiTour(r, arcsChemin, pasDT * 1000, (e) => ctx.bloque(P(e))) : undefined;
+  if (demiTour) {
+    const km = (m: number) => (m / 1000).toFixed(1).replace('.', ',');
+    for (const l of demiTour.lacunes) alertes.push({ pk: l.deM, texte: `Aucune zone de demi-tour repérée entre le PK ${km(l.deM)} et le PK ${km(l.aM)} (pas de giratoire praticable à moins de 500 m du trajet) : en reconnaître une.` });
+    if (demiTour.sansBalise && pk > pasDT * 1000) alertes.push({ pk: 0, texte: 'Réseau sans balise de giratoire (paquet antérieur au 16/11/2026) : zones de demi-tour reconnues par la seule forme des anneaux. Relancer « Préparer la zone » pour une recherche complète.' });
+    alertes.sort((a, b) => a.pk - b.pk);
+  }
   const ouvragesInconnus = [...new Set(traverses.filter((t) => t.verdict.mode === 'inconnu').map((t) => t.ouvrage))];
-  return { ok: true, coords, distanceM: pk, dureeS: duree, ouvrages: traverses, alertes, classeItineraire, maillonFaible, ouvragesInconnus, reseauTE: r.aretes.some((x) => estNombre(x.te)) ? { surM: surTE, categorieMin: catTE } : undefined, coutS: duree + penalites, penalitesS: penalites };
+  return { ok: true, coords, distanceM: pk, dureeS: duree, ouvrages: traverses, alertes, classeItineraire, maillonFaible, ouvragesInconnus, reseauTE: r.aretes.some((x) => estNombre(x.te)) ? { surM: surTE, categorieMin: catTE } : undefined, coutS: duree + penalites, penalitesS: penalites, demiTour };
 }
 
 export function pireModeItineraire(res: ResultatItineraire): ModeRequis {
