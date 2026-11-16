@@ -165,7 +165,8 @@ function candidats(r: Reseau, p: [number, number], rayonM: number, niveau: numbe
   const res: { arete: number; d: number }[] = [];
   r.aretes.forEach((e, i) => {
     if (niveau != null && (niveau > 0) !== !!e.pont) return;
-    if (ref && e.ref && normRef(e.ref) !== ref) return;
+    // Route à plusieurs numéros (OSM « D 347;D 938 », tronc commun) : l'un d'eux suffit (audit B-I3).
+    if (ref && e.ref && !e.ref.split(';').some((x) => normRef(x) === ref)) return;
     const pts = coordsArete(r, e);
     let s = Infinity, n = -Infinity, o = Infinity, es = -Infinity;
     for (const q of pts) { s = Math.min(s, q[0]); n = Math.max(n, q[0]); o = Math.min(o, q[1]); es = Math.max(es, q[1]); }

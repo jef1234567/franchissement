@@ -66,6 +66,9 @@ function combiner(sources: Arete[]): Omit<Arete, 'a' | 'b' | 'long' | 'geom'> {
     if (s.tunnel) r.tunnel = 1;
     if (s.gue) r.gue = 1;
     if (s.barre) r.barre = 1;
+    if (s.interdit === 'tous' || (s.interdit && !r.interdit)) r.interdit = s.interdit;
+    if (s.cond && !(r.cond ?? '').includes(s.cond)) r.cond = [r.cond, s.cond].filter(Boolean).join(' ; ');
+    if (s.sansValeur) r.sansValeur = [...new Set([...(r.sansValeur ?? []), ...s.sansValeur])];
     if (r.nom == null && s.nom != null) r.nom = s.nom;
     if (r.ref == null && s.ref != null) r.ref = s.ref;
     if (r.sens === 0 && s.sens !== 0) r.sens = s.sens; // sens unique : plus restrictif

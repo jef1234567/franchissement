@@ -208,7 +208,9 @@ function preparer(r: Reseau, ouvrages: Ouvrage[], elements: ElementConvoi[], ref
       (estNombre(e.pmax) && estNombre(dims.masse) && dims.masse > e.pmax) ||
       (estNombre(e.emax) && estNombre(dims.essieu) && dims.essieu > e.emax) ||
       (estNombre(e.lgmax) && estNombre(dims.longueur) && dims.longueur > e.lgmax) ||
-      !!e.barre);
+      !!e.barre || interditConvoi(e));
+  /** Accès OSM interdit : à tous les véhicules à moteur, ou aux poids lourds (> 3,5 t ; masse inconnue = prudent). */
+  const interditConvoi = (e: Arete) => e.interdit === 'tous' || (e.interdit === 'pl' && (!estNombre(dims.masse) || dims.masse > 3.5 || dims.manque.masse));
 
   // Tronçons qui entrent dans une partie non téléchargée : évités dès le calcul (audit A1-6 : avant, l'itinéraire était
   // refusé après coup alors qu'un détour existait). Le contrôle final sur le tracé reste en place.
@@ -258,6 +260,7 @@ function preparer(r: Reseau, ouvrages: Ouvrage[], elements: ElementConvoi[], ref
         if (estNombre(e.emax) && estNombre(dims.essieu) && dims.essieu > e.emax) bloquants.push(`charge à l'essieu limitée à ${f(e.emax)} t (convoi : ${f(dims.essieu)} t)`);
         if (estNombre(e.lgmax) && estNombre(dims.longueur) && dims.longueur > e.lgmax) bloquants.push(`longueur limitée à ${f(e.lgmax)} m (convoi : ${f(dims.longueur)} m)`);
         if (e.barre) bloquants.push('passage barré (BD TOPO)');
+        if (interditConvoi(e)) bloquants.push(e.interdit === 'tous' ? 'interdit aux véhicules à moteur (OSM)' : 'interdit aux poids lourds de plus de 3,5 t (OSM hgv=no)');
       }
       if (e.gue && (opt.gues ?? 'eviter') === 'eviter') bloquants.push('gué ou radier (évités par les options)');
       for (const o of ouvrageParArete.get(e) ?? []) {
@@ -545,8 +548,8 @@ export function calculerItineraire(
       petitsSignales.add(p.id);
       alertes.push({ pk, texte: `Petit ouvrage sous chaussée « ${p.nom} »${p.route ? ` (${p.route})` : ''} : buse, dalot ou petite voûte, portance inconnue. À reconnaître pour les véhicules lourds.` });
     }
-    if (!opt.restrictionsCiviles && (e.hmax || e.lmax || e.pmax || e.emax || e.lgmax || e.barre)) {
-      alertes.push({ pk, texte: `Restriction civile signalée (${[e.hmax && `h ${e.hmax} m`, e.lmax && `l ${e.lmax} m`, e.pmax && `${e.pmax} t`, e.emax && `${e.emax} t/essieu`, e.lgmax && `longueur ${e.lgmax} m`, e.barre && 'passage barré'].filter(Boolean).join(', ')}) sur ${e.nom || e.ref || 'tronçon'}.` });
+    if (!opt.restrictionsCiviles && (e.hmax || e.lmax || e.pmax || e.emax || e.lgmax || e.barre || e.interdit)) {
+      alertes.push({ pk, texte: `Restriction civile signalée (${[e.hmax && `h ${e.hmax} m`, e.lmax && `l ${e.lmax} m`, e.pmax && `${e.pmax} t`, e.emax && `${e.emax} t/essieu`, e.lgmax && `longueur ${e.lgmax} m`, e.barre && 'passage barré', e.interdit && (e.interdit === 'tous' ? 'interdit aux véhicules à moteur' : 'interdit aux poids lourds')].filter(Boolean).join(', ')}) sur ${e.nom || e.ref || 'tronçon'}.` });
     }
     // Alertes de tronçon, une seule fois par voie OSM traversée d'un seul tenant.
     const memeVoie = precedente !== null && precedente.way === e.way;
@@ -557,6 +560,12 @@ export function calculerItineraire(
       const m = dimsConvoi.manque;
       const nc = [estNombre(e.hmax) && m.hauteur && `hauteur ${e.hmax} m`, estNombre(e.lmax) && m.largeur && `largeur ${e.lmax} m`, estNombre(e.pmax) && m.masse && `${e.pmax} t`, estNombre(e.emax) && m.essieu && `${e.emax} t/essieu`, estNombre(e.lgmax) && m.longueur && `longueur ${e.lgmax} m`].filter(Boolean);
       if (nc.length) alertes.push({ pk, texte: `Restriction ${nc.join(', ')} sur ${e.nom || e.ref || 'tronçon'} : donnée manquante pour au moins un véhicule du convoi, contrôle incomplet, à vérifier.` });
+    }
+    if (e.cond && !(memeVoie && precedente!.cond === e.cond)) {
+      alertes.push({ pk, texte: `Restriction conditionnelle sur ${e.nom || e.ref || 'tronçon'} (${e.cond}) : appliquée en permanence par prudence ; vérifier si la condition (horaire, saison…) s'applique au passage.` });
+    }
+    if (e.sansValeur?.length && !(memeVoie && precedente!.sansValeur?.join() === e.sansValeur.join())) {
+      alertes.push({ pk, texte: `Restriction de ${e.sansValeur.join(', ')} signalée sans valeur sur ${e.nom || e.ref || 'tronçon'} (OSM : limiteur ou « below_default ») : à reconnaître.` });
     }
     const etroite = estNombre(e.largeur) && estNombre(dimsConvoi.largeur) && dimsConvoi.largeur > e.largeur;
     if (etroite && !(memeVoie && estNombre(precedente!.largeur) && dimsConvoi.largeur! > precedente!.largeur)) {

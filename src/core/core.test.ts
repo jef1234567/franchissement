@@ -178,7 +178,7 @@ describe('OSM → réseau → ouvrages → itinéraire', () => {
   const ouvrages = extraireOuvrages(reseau);
   it('valeurs OSM', () => {
     expect(analyserLongueurOSM('4,2 m')).toBe(4.2);
-    expect(analyserLongueurOSM("14'6\"")).toBeCloseTo(4.42, 2);
+    expect(analyserLongueurOSM("14'6\"")).toBe(4.41); // 4,4196 m arrondi au cm inférieur (A1-9, sens prudent)
     expect(analyserLongueurOSM('default')).toBeNull();
     expect(analyserMasseOSM('3500 kg')).toBe(3.5);
     expect(analyserMasseOSM('19 t')).toBe(19);
