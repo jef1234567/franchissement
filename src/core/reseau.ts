@@ -40,6 +40,10 @@ export interface Arete {
   barre?: 1;
   /** Largeur de chaussée (m), indicative. */
   largeur?: number;
+  /** Anneau de giratoire (OSM junction=roundabout / circular) : zone de demi-tour possible pour un convoi, dimensions à reconnaître. */
+  giratoire?: 1;
+  /** Niveau OSM (`layer`) quand il est renseigné et non nul : départage un pont et la route du dessous à l'accrochage d'une étape. */
+  niveau?: number;
   /** Catégorie du réseau national des transports exceptionnels (t : 72, 94, 120), couche IGN SECUROUT.TE:troncon_te. Information, pas une classe MLC. */
   te?: number;
 }
@@ -166,6 +170,8 @@ export function construireReseau(json: { elements?: ElemOSM[] }, bbox: BBox, sou
       ...(EST_GUE(t) ? { gue: 1 as const } : {}),
       ...(t['bridge:name'] || t.name ? { nom: t['bridge:name'] || t.name } : {}),
       ...(t.ref ? { ref: t.ref } : {}),
+      ...(t.junction === 'roundabout' || t.junction === 'circular' ? { giratoire: 1 as const } : {}),
+      ...(/^-?\d+$/.test(t.layer ?? '') && parseInt(t.layer!, 10) !== 0 ? { niveau: parseInt(t.layer!, 10) } : {}),
     };
     const hmax = analyserLongueurOSM(t.maxheight ?? t['maxheight:physical']);
     const lmax = analyserLongueurOSM(t.maxwidth ?? t['maxwidth:physical']);

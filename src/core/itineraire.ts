@@ -1,7 +1,7 @@
 import { chargeEssieuVehicule } from './verification';
 import { estNombre, type Ouvrage, type Referentiel, type Voies } from './model';
 import { coordsArete, ouvragesParArete, type Arete, type Reseau } from './reseau';
-import { distancePointSegment, haversine } from './geo';
+import { couperPolyligne, distancePointSegment, longueurPolyligne, projeterPolyligne } from './geo';
 import { trouTraverse } from './trous';
 import { classeVehicule, RANG_MODE, verifierConvoi, type ElementConvoi, type ModeRequis, type VerdictConvoi } from './verification';
 
@@ -250,88 +250,185 @@ function tempsArete(e: Arete, vConvoi: number) {
   return e.long / ((v * 1000) / 3600);
 }
 
-/* ---------- Accrochage : nœud du graphe le plus proche d'un point ---------- */
-export function noeudLePlusProche(r: Reseau, p: [number, number], ctx?: ContexteContraintes): { noeud: number; distance: number } | null {
-  let best: { noeud: number; distance: number; arete: number } | null = null;
+/* ---------- Accrochage : projection sur le tronçon le plus proche ---------- */
+
+export interface Accroche {
+  /** Indice du tronçon dans le réseau. */
+  arete: number;
+  /** Abscisse du point projeté depuis l'extrémité `a` du tronçon (m). */
+  s: number;
+  /** Distance du point saisi au tronçon (m). */
+  distance: number;
+}
+
+/** Écart (m) en deçà duquel un tronçon ordinaire est préféré à un pont (étape posée sur la route du dessous). */
+const ECART_PONT_M = 20;
+
+/** Tronçon praticable le plus proche (projection, pas nœud le plus proche). Entre un pont et une route ordinaire
+ *  presque aussi proche, la route ordinaire est retenue : une étape se pose rarement sur un pont, et l'accrocher au pont
+ *  quand le point est sur la route du dessous ferait franchir un ouvrage qui n'est pas sur le trajet. */
+export function accrocher(r: Reseau, p: [number, number], estBloque?: (e: Arete) => boolean): Accroche | null {
+  let best: Accroche | null = null;
+  let bestSol: Accroche | null = null;
   r.aretes.forEach((e, i) => {
-    if (ctx?.bloque(e)) return;
+    if (estBloque?.(e)) return;
     const pts = coordsArete(r, e);
-    for (let k = 1; k < pts.length; k++) {
-      const d = distancePointSegment(p, pts[k - 1], pts[k]);
-      if (!best || d < best.distance) best = { noeud: -1, distance: d, arete: i };
-    }
+    // Préfiltre grossier : distance au segment le plus proche (évite la projection complète sur tout le réseau).
+    let dmin = Infinity;
+    for (let k = 1; k < pts.length; k++) dmin = Math.min(dmin, distancePointSegment(p, pts[k - 1], pts[k]));
+    if (best && dmin > best.distance + ECART_PONT_M && (!bestSol || dmin > bestSol.distance)) return;
+    const pr = projeterPolyligne(p, pts);
+    const c: Accroche = { arete: i, s: Math.min(pr.s, e.long), distance: pr.d };
+    if (!best || c.distance < best.distance) best = c;
+    const surSol = !e.pont && !(e.niveau && e.niveau > 0);
+    if (surSol && (!bestSol || c.distance < bestSol.distance)) bestSol = c;
   });
-  if (!best) return null;
-  const b = best as { noeud: number; distance: number; arete: number };
-  const e = r.aretes[b.arete];
-  const da = haversine(p[0], p[1], r.noeuds[2 * e.a], r.noeuds[2 * e.a + 1]);
-  const db = haversine(p[0], p[1], r.noeuds[2 * e.b], r.noeuds[2 * e.b + 1]);
-  return { noeud: da <= db ? e.a : e.b, distance: b.distance };
+  const b = best as Accroche | null, bs = bestSol as Accroche | null;
+  if (b && bs && b !== bs && bs.distance <= b.distance + ECART_PONT_M) return bs;
+  return b;
 }
 
-/* ---------- Dijkstra ---------- */
-function plusCourtChemin(r: Reseau, depart: number, arrivee: number, ctx: ContexteContraintes, vConvoi: number, areteArrivee: number = -1): number[] | null {
+/** Réseau dans lequel chaque tronçon portant une étape est coupé au point projeté (nœud ajouté). Les morceaux gardent
+ *  les attributs du tronçon d'origine ; `parent` les y ramène (contraintes, ouvrages rattachés). */
+function decouperAuxEtapes(r: Reseau, accroches: Accroche[]): { reseau: Reseau; noeuds: number[]; parent: Map<Arete, Arete> } {
+  const parent = new Map<Arete, Arete>();
+  const noeudsEtapes: number[] = new Array(accroches.length);
+  const parArete = new Map<number, number[]>(); // arête → indices d'étapes
+  accroches.forEach((a, k) => {
+    const e = r.aretes[a.arete];
+    // À moins d'un mètre d'une extrémité : le nœud existant suffit.
+    if (a.s <= 1) noeudsEtapes[k] = e.a;
+    else if (a.s >= e.long - 1) noeudsEtapes[k] = e.b;
+    else (parArete.get(a.arete) ?? parArete.set(a.arete, []).get(a.arete)!).push(k);
+  });
+  if (!parArete.size) return { reseau: r, noeuds: noeudsEtapes, parent };
+  const noeuds = r.noeuds.slice();
+  const aretes = r.aretes.slice();
+  for (const [i, ks] of parArete) {
+    const e = r.aretes[i];
+    const coupes = [...new Set(ks.map((k) => Math.round(accroches[k].s * 10) / 10))].sort((x, y) => x - y);
+    let reste = coordsArete(r, e);
+    let a = e.a;
+    let dejaCoupe = 0;
+    const morceaux: Arete[] = [];
+    const nouveauNoeud = new Map<number, number>();
+    for (const s of coupes) {
+      const [avant, apres] = couperPolyligne(reste, s - dejaCoupe);
+      const n = noeuds.length / 2;
+      const c = avant[avant.length - 1];
+      noeuds.push(c[0], c[1]);
+      nouveauNoeud.set(s, n);
+      morceaux.push(morceau(e, a, n, avant));
+      reste = apres;
+      a = n;
+      dejaCoupe = s;
+    }
+    morceaux.push(morceau(e, a, e.b, reste));
+    aretes[i] = morceaux[0];
+    for (const m of morceaux.slice(1)) aretes.push(m);
+    for (const m of morceaux) parent.set(m, e);
+    for (const k of ks) noeudsEtapes[k] = nouveauNoeud.get(Math.round(accroches[k].s * 10) / 10)!;
+  }
+  return { reseau: { ...r, noeuds, aretes }, noeuds: noeudsEtapes, parent };
+}
+
+function morceau(e: Arete, a: number, b: number, pts: [number, number][]): Arete {
+  const geom: number[] = [];
+  for (let j = 1; j < pts.length - 1; j++) geom.push(pts[j][0], pts[j][1]);
+  return { ...e, a, b, geom, long: Math.round(longueurPolyligne(pts) * 10) / 10 };
+}
+
+/* ---------- Graphe orienté des tronçons ----------
+   Arc 2i : tronçon i parcouru de a vers b ; arc 2i+1 : de b vers a. États du plus court chemin = arcs, ce qui rend exacts
+   la pénalité « une fois par ouvrage, à son entrée » (elle dépend du tronçon précédent) et l'interdiction du demi-tour
+   (repartir sur le tronçon par lequel on vient d'arriver). */
+
+interface Graphe {
+  /** Arcs sortant du nœud n : arcs[debut[n] … debut[n+1]-1]. */
+  debut: Int32Array;
+  arcs: Int32Array;
+}
+
+const cacheGraphe = new WeakMap<Reseau, Graphe>();
+function graphe(r: Reseau): Graphe {
+  let g = cacheGraphe.get(r);
+  if (g) return g;
   const n = r.noeuds.length / 2;
-  // Liste d'adjacence (construite à la demande, mise en cache par réseau).
-  const adj = adjacence(r);
-  const dist = new Float64Array(n).fill(Infinity);
-  const prec = new Int32Array(n).fill(-1); // indice d'arête
-  dist[depart] = 0;
+  const compte = new Int32Array(n + 1);
+  for (const e of r.aretes) {
+    if (e.sens !== -1) compte[e.a + 1]++;
+    if (e.sens !== 1) compte[e.b + 1]++;
+  }
+  for (let i = 0; i < n; i++) compte[i + 1] += compte[i];
+  const debut = compte.slice();
+  const arcs = new Int32Array(compte[n]);
+  const pos = compte.slice(0, n);
+  r.aretes.forEach((e, i) => {
+    if (e.sens !== -1) arcs[pos[e.a]++] = 2 * i;
+    if (e.sens !== 1) arcs[pos[e.b]++] = 2 * i + 1;
+  });
+  g = { debut, arcs };
+  cacheGraphe.set(r, g);
+  return g;
+}
+
+const teteArc = (r: Reseau, x: number) => { const e = r.aretes[x >> 1]; return x & 1 ? e.a : e.b; };
+const queueArc = (r: Reseau, x: number) => { const e = r.aretes[x >> 1]; return x & 1 ? e.b : e.a; };
+
+/* ---------- Dijkstra par arc ----------
+   `arcPrec` : arc par lequel le convoi arrive au départ de l'étape (−1 au départ de l'itinéraire). Sans `demiTourDepart`,
+   il ne peut pas repartir sur le même tronçon en sens inverse. */
+function plusCourtChemin(
+  r: Reseau, depart: number, arrivee: number, ctx: ContexteContraintes, P: (e: Arete) => Arete,
+  vConvoi: number, arcPrec: number, demiTourDepart: boolean,
+): number[] | null {
+  const g = graphe(r);
+  const m = r.aretes.length;
+  const dist = new Float64Array(2 * m).fill(Infinity);
+  const prec = new Int32Array(2 * m).fill(-1);
+  const etat = new Uint8Array(m); // 0 inconnu, 1 praticable, 2 bloqué
+  const bloque = (i: number) => {
+    if (!etat[i]) etat[i] = ctx.bloque(P(r.aretes[i])) ? 2 : 1;
+    return etat[i] === 2;
+  };
   const tas = new Tas();
-  tas.push(0, depart);
-  const bloque = new Map<number, boolean>();
+  const iPrec = arcPrec >= 0 ? arcPrec >> 1 : -1;
+  for (let k = g.debut[depart]; k < g.debut[depart + 1]; k++) {
+    const y = g.arcs[k], i = y >> 1;
+    if (bloque(i)) continue;
+    const demiTour = i === iPrec;
+    if (demiTour && !demiTourDepart) continue;
+    // Après un demi-tour, un ouvrage du tronçon est franchi à nouveau : nouveau passage, nouvelle pénalité.
+    const c = tempsArete(r.aretes[i], vConvoi) + ctx.surcout(P(r.aretes[i]), iPrec >= 0 && !demiTour ? P(r.aretes[iPrec]) : null);
+    if (c < dist[y]) { dist[y] = c; prec[y] = -1; tas.push(c, y); }
+  }
+  let fin = -1;
   while (tas.taille) {
-    const [d, u] = tas.pop();
-    if (d > dist[u]) continue;
-    if (u === arrivee) break;
-    for (const [iE, v] of adj[u]) {
-      let b = bloque.get(iE);
-      const e = r.aretes[iE];
-      if (b === undefined) {
-        b = ctx.bloque(e);
-        bloque.set(iE, b);
-      }
-      if (b) continue;
-      // Tronçon d'arrivée sur u : celui du meilleur chemin (ou du tronçon précédent l'étape, au départ d'une étape).
-      const pu = u === depart ? areteArrivee : prec[u];
-      const nd = d + tempsArete(e, vConvoi) + ctx.surcout(e, pu >= 0 ? r.aretes[pu] : null);
-      if (nd < dist[v]) {
-        dist[v] = nd;
-        prec[v] = iE;
-        tas.push(nd, v);
-      }
+    const [d, x] = tas.pop();
+    if (d > dist[x]) continue;
+    const h = teteArc(r, x);
+    if (h === arrivee) { fin = x; break; }
+    const ix = x >> 1;
+    const ex = P(r.aretes[ix]);
+    for (let k = g.debut[h]; k < g.debut[h + 1]; k++) {
+      const y = g.arcs[k], i = y >> 1;
+      if (i === ix) continue; // demi-tour en pleine voie : interdit
+      if (bloque(i)) continue;
+      const e = r.aretes[i];
+      const nd = d + tempsArete(e, vConvoi) + ctx.surcout(P(e), ex);
+      if (nd < dist[y]) { dist[y] = nd; prec[y] = x; tas.push(nd, y); }
     }
   }
-  if (!Number.isFinite(dist[arrivee])) return null;
+  if (fin < 0) return null;
   const chemin: number[] = [];
-  let u = arrivee;
-  while (u !== depart) {
-    const iE = prec[u];
-    chemin.push(iE);
-    const e = r.aretes[iE];
-    u = e.a === u ? e.b : e.a;
-  }
+  for (let x = fin; x >= 0; x = prec[x]) chemin.push(x);
   return chemin.reverse();
-}
-
-const cacheAdj = new WeakMap<Reseau, [number, number][][]>();
-function adjacence(r: Reseau) {
-  let adj = cacheAdj.get(r);
-  if (!adj) {
-    adj = Array.from({ length: r.noeuds.length / 2 }, () => []);
-    r.aretes.forEach((e, i) => {
-      if (e.sens !== -1) adj![e.a].push([i, e.b]);
-      if (e.sens !== 1) adj![e.b].push([i, e.a]);
-    });
-    cacheAdj.set(r, adj);
-  }
-  return adj;
 }
 
 /* ---------- API ---------- */
 
 export function calculerItineraire(
-  r: Reseau,
+  r0: Reseau,
   ouvrages: Ouvrage[],
   elements: ElementConvoi[],
   ref: Referentiel,
@@ -343,28 +440,36 @@ export function calculerItineraire(
   });
   if (etapes.length < 2) return echec('Indiquez au moins un départ et une arrivée.');
   if (!elements.length) return echec('Le convoi est vide.');
-  const ctx = preparer(r, ouvrages, elements, ref, opt);
+  const ctx = preparer(r0, ouvrages, elements, ref, opt);
 
-  const noeuds: number[] = [];
+  const accroches: Accroche[] = [];
+  const alertesAccroche: { etape: number; texte: string }[] = [];
   for (const [i, p] of etapes.entries()) {
-    const n = noeudLePlusProche(r, p, ctx);
-    if (!n) return echec(`Point ${i + 1} : aucun tronçon routier praticable.`);
-    if (n.distance > 2000) return echec(`Point ${i + 1} : situé à ${(n.distance / 1000).toFixed(1)} km du réseau chargé (hors zone ?).`);
-    noeuds.push(n.noeud);
+    const a = accrocher(r0, p, ctx.bloque);
+    if (!a) return echec(`Point ${i + 1} : aucun tronçon routier praticable.`);
+    if (a.distance > 2000) return echec(`Point ${i + 1} : situé à ${(a.distance / 1000).toFixed(1)} km du réseau chargé (hors zone ?).`);
+    if (a.distance > 50) {
+      const e = r0.aretes[a.arete];
+      alertesAccroche.push({ etape: i, texte: `Point ${i + 1} accroché à ${Math.round(a.distance)} m, sur ${e.nom || e.ref || 'le tronçon praticable le plus proche'} : vérifier qu'il s'agit bien de la route voulue.` });
+    }
+    accroches.push(a);
   }
+  const { reseau: r, noeuds, parent } = decouperAuxEtapes(r0, accroches);
+  const P = (e: Arete) => parent.get(e) ?? e;
 
-  const aretesChemin: { i: number; depuis: number }[] = [];
+  const arcsChemin: number[] = [];
+  const alertes: AlerteTroncon[] = [];
+  const demiToursEtapes: { arc: number; etape: number }[] = [];
   for (let k = 1; k < noeuds.length; k++) {
     if (noeuds[k] === noeuds[k - 1]) continue;
-    const c = plusCourtChemin(r, noeuds[k - 1], noeuds[k], ctx, opt.vitesseConvoiKmh, aretesChemin.length ? aretesChemin[aretesChemin.length - 1].i : -1);
+    const arcPrec = arcsChemin.length ? arcsChemin[arcsChemin.length - 1] : -1;
+    // Demi-tour permis à une étape (halte : le convoi y a la place de se retourner, à reconnaître), jamais en pleine voie.
+    const c = plusCourtChemin(r, noeuds[k - 1], noeuds[k], ctx, P, opt.vitesseConvoiKmh, arcPrec, true);
+    if (c?.length && arcPrec >= 0 && c[0] >> 1 === arcPrec >> 1) demiToursEtapes.push({ arc: arcsChemin.length, etape: k - 1 });
     if (!c) return echec(`Aucun itinéraire praticable entre les points ${k} et ${k + 1} avec les contraintes retenues.`);
-    let u = noeuds[k - 1];
-    for (const iE of c) {
-      aretesChemin.push({ i: iE, depuis: u });
-      const e = r.aretes[iE];
-      u = e.a === u ? e.b : e.a;
-    }
+    arcsChemin.push(...c);
   }
+  const aretesChemin = arcsChemin.map((x) => ({ i: x >> 1, depuis: queueArc(r, x) }));
 
   const coords: [number, number][] = [];
   const traverses: OuvrageTraverse[] = [];
@@ -374,24 +479,32 @@ export function calculerItineraire(
   const petitsSignales = new Set<string>();
   let precedente: Arete | null = null;
   const dimsConvoi = dimensionsConvoi(elements);
-  const alertes: AlerteTroncon[] = [];
+  for (const a of alertesAccroche) alertes.push({ pk: 0, texte: a.texte });
   let pk = 0;
   let duree = 0;
   let penalites = 0;
   let surTE = 0;
   let catTE: number | null = null;
-  for (const { i, depuis } of aretesChemin) {
+  const demiTourA = new Map(demiToursEtapes.map((d) => [d.arc, d.etape]));
+  for (const [n, { i, depuis }] of aretesChemin.entries()) {
     const e = r.aretes[i];
+    const pe = P(e);
+    if (demiTourA.has(n)) {
+      // Demi-tour imposé à une étape : l'ouvrage du tronçon est franchi à nouveau (nouveau passage).
+      alertes.push({ pk, texte: `Demi-tour au point ${demiTourA.get(n)! + 1} : place de retournement à reconnaître.` });
+      precedente = null;
+      ouvragesPrecedents = new Set();
+    }
     let pts = coordsArete(r, e);
     if (depuis !== e.a) pts = pts.reverse();
     if (coords.length) pts = pts.slice(1);
     coords.push(...pts);
-    const surArete = ctx.ouvrageParArete.get(e) ?? [];
+    const surArete = ctx.ouvrageParArete.get(pe) ?? [];
     for (const o of surArete) {
       if (!ouvragesPrecedents.has(o.id)) traverses.push({ ouvrage: o, verdict: ctx.verdicts.get(o.id) ?? verifierConvoi(o, elements, opt.voies, ref), pk, tS: duree });
     }
     // Petits ouvrages sous chaussée : avertissement quand l'ouvrage est sur ce tronçon (à 25 m près), une fois par ouvrage.
-    for (const p of ctx.petitsParArete.get(e) ?? []) {
+    for (const p of ctx.petitsParArete.get(pe) ?? []) {
       if (petitsSignales.has(p.id) || !estNombre(p.lat) || !estNombre(p.lon)) continue;
       const q: [number, number] = [p.lat, p.lon];
       const geomE = coordsArete(r, e);
@@ -414,7 +527,7 @@ export function calculerItineraire(
       alertes.push({ pk, texte: `Chaussée étroite sur ${e.nom || e.ref || 'tronçon'} : ${e.largeur} m (valeur indicative) pour ${dimsConvoi.largeur} m de largeur de véhicule.` });
     }
     if (estNombre(e.te)) { surTE += e.long; catTE = catTE === null ? e.te : Math.min(catTE, e.te); }
-    penalites += ctx.surcout(e, precedente);
+    penalites += ctx.surcout(pe, precedente ? P(precedente) : null);
     precedente = e;
     ouvragesPrecedents = new Set(surArete.map((o) => o.id));
     pk += e.long;

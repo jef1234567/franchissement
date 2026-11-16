@@ -41,6 +41,44 @@ export function milieuPolyligne(pts: [number, number][]): [number, number] {
   return pts[pts.length - 1];
 }
 
+/** Projection d'un point sur une polyligne : distance (m), abscisse curviligne depuis le premier point (m, Haversine),
+ *  point projeté. Approximation plane locale par segment, comme `distancePointSegment`. */
+export function projeterPolyligne(p: [number, number], pts: [number, number][]): { d: number; s: number; pt: [number, number] } {
+  const kx = Math.cos(p[0] * RAD) * 111320;
+  const ky = 110540;
+  let best = { d: Infinity, s: 0, pt: pts[0] };
+  let cumul = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i];
+    const ax = (a[1] - p[1]) * kx, ay = (a[0] - p[0]) * ky;
+    const dx = (b[1] - a[1]) * kx, dy = (b[0] - a[0]) * ky;
+    const l2 = dx * dx + dy * dy;
+    const t = l2 > 0 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / l2)) : 0;
+    const x = ax + t * dx, y = ay + t * dy;
+    const d = Math.sqrt(x * x + y * y);
+    const lg = haversine(a[0], a[1], b[0], b[1]);
+    if (d < best.d) best = { d, s: cumul + t * lg, pt: [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])] };
+    cumul += lg;
+  }
+  return best;
+}
+
+/** Coupe une polyligne à l'abscisse curviligne `s` (m) : [avant, après], le point de coupe appartenant aux deux. */
+export function couperPolyligne(pts: [number, number][], s: number): [[number, number][], [number, number][]] {
+  let cumul = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], b = pts[i];
+    const lg = haversine(a[0], a[1], b[0], b[1]);
+    if (cumul + lg >= s || i === pts.length - 1) {
+      const f = lg > 0 ? Math.max(0, Math.min(1, (s - cumul) / lg)) : 0;
+      const c: [number, number] = [a[0] + f * (b[0] - a[0]), a[1] + f * (b[1] - a[1])];
+      return [[...pts.slice(0, i), c], [c, ...pts.slice(i)]];
+    }
+    cumul += lg;
+  }
+  return [pts, pts];
+}
+
 /** Distance (m) d'un point à un segment, approximation plane locale (suffisante < quelques km). */
 export function distancePointSegment(p: [number, number], a: [number, number], b: [number, number]): number {
   const kx = Math.cos(p[0] * RAD) * 111320;
