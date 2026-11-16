@@ -188,8 +188,10 @@ export function evaluerVehicule(
   const classeOuvrageConnue = classes.normal !== null || classes.precaution !== null || classes.risque !== null;
 
   if (supposer && classeOuvrageConnue) {
-    mode = 'normal';
-    motifs.push(`Classe MLC ${el.etat === 'vide' ? 'à vide' : 'en charge'} du véhicule non renseignée : compatibilité SUPPOSÉE, à vérifier.`);
+    // Compatibilité supposée dans le mode le plus favorable que l'ouvrage établit réellement (audit A2-2, A2-3) : une
+    // double voie sans classe double, ou un ouvrage n'ayant qu'une classe de précaution ou de risque, n'est pas « normal ».
+    mode = classes.normal !== null ? 'normal' : classes.precaution !== null ? 'precaution' : 'risque';
+    motifs.push(`Classe MLC ${el.etat === 'vide' ? 'à vide' : 'en charge'} du véhicule non renseignée : compatibilité SUPPOSÉE${mode === 'normal' ? '' : ` en mode ${mode === 'precaution' ? 'précaution' : 'risque'} (seule classe établie de l'ouvrage)`}, à vérifier.`);
   } else if (cv === null) {
     mode = 'inconnu';
     motifs.push(`Classe MLC ${el.etat === 'vide' ? 'à vide' : 'en charge'} du véhicule non renseignée.`);
@@ -228,6 +230,10 @@ export function evaluerVehicule(
   if (civilPoids === 'nok') motifs.push(`Restriction civile : masse ${v.masseT} t > ${o.civil.poidsMaxT} t signalés.`);
   if (civilHauteur === 'nok') motifs.push(`Restriction civile : hauteur ${v.hauteurM} m > ${o.civil.hauteurMaxM} m signalés.`);
   if (civilLargeur === 'nok') motifs.push(`Restriction civile : largeur ${v.largeurM} m > ${o.civil.largeurMaxM} m signalés.`);
+  // Donnée du véhicule manquante face à une limite signalée : contrôle impossible, signalé (audit A2-4).
+  if (civilPoids === 'nc') motifs.push(`Limite de ${o.civil.poidsMaxT} t signalée : masse du véhicule inconnue, à vérifier.`);
+  if (civilHauteur === 'nc') motifs.push(`Limite de hauteur de ${o.civil.hauteurMaxM} m signalée : hauteur du véhicule inconnue, à vérifier.`);
+  if (civilLargeur === 'nc') motifs.push(`Limite de largeur de ${o.civil.largeurMaxM} m signalée : largeur du véhicule inconnue, à vérifier.`);
   const civilEssieu = controleEssieu(v, o.civil.essieuMaxT ?? null);
   if (civilEssieu === 'nok') motifs.push(`Restriction civile : charge à l'essieu ${chargeEssieuVehicule(v)?.toFixed(1)} t${v.chargeEssieuT == null ? ' (moyenne masse / essieux, borne basse)' : ''} > ${o.civil.essieuMaxT} t signalés.`);
   else if (civilEssieu === 'nc') motifs.push(`Limite de ${o.civil.essieuMaxT} t par essieu : charge à l'essieu du véhicule inconnue, à vérifier.`);
@@ -277,7 +283,7 @@ export function verifierConvoi(o: Ouvrage, elements: ElementConvoi[], voies: Voi
   const evaluations = elements.map((e) => evaluerVehicule(o, e, voies, ref));
   const mode = evaluations.length ? pireMode(evaluations.map((e) => e.mode)) : 'inconnu';
   const alerteCivile = evaluations.some((e) => e.civilPoids === 'nok' || e.civilHauteur === 'nok' || e.civilLargeur === 'nok' || e.civilEssieu === 'nok');
-  const controlesIncomplets = evaluations.some((e) => e.largeur === 'nc' || e.hauteur === 'nc' || e.civilEssieu === 'nc');
+  const controlesIncomplets = evaluations.some((e) => e.largeur === 'nc' || e.hauteur === 'nc' || e.civilEssieu === 'nc' || e.civilPoids === 'nc' || e.civilHauteur === 'nc' || e.civilLargeur === 'nc');
   const mlcSupposees = [...new Set(evaluations.filter((e) => e.mlcSupposee).map((e) => e.vehicule.nom))];
   const noms = (m: ModeRequis) =>
     evaluations
@@ -302,6 +308,12 @@ export function verifierConvoi(o: Ouvrage, elements: ElementConvoi[], voies: Voi
     default:
       synthese = `Franchissement interdit pour : ${noms('interdit')}.`;
   }
+  if (alerteCivile) {
+    const civ = evaluations.filter((e) => e.civilPoids === 'nok' || e.civilHauteur === 'nok' || e.civilLargeur === 'nok' || e.civilEssieu === 'nok').map((e) => e.vehicule.nom);
+    synthese = synthese.replace("Franchissement normal possible pour l'ensemble du convoi", 'Classe compatible pour l\'ensemble du convoi') +
+      ` ⚠ Restriction civile de l'ouvrage dépassée par : ${[...new Set(civ)].join(', ')} (passage refusé quand les restrictions civiles sont respectées).`;
+  }
+  if (controlesIncomplets) synthese += ' Contrôle incomplet : donnée du véhicule manquante, à vérifier.';
   if (mlcSupposees.length && mode !== 'interdit') synthese += ` ⚠ Compatibilité supposée (classe MLC non renseignée) : ${mlcSupposees.join(', ')} — à vérifier.`;
   return { ouvrage: o, voies, evaluations, mode, alerteCivile, controlesIncomplets, mlcSupposees, synthese };
 }

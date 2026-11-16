@@ -1,6 +1,6 @@
 # FRANCHIR — fichier de reprise
 
-Dernière mise à jour : 13/11/2026, midi (lot 2 de l'audit, robustesse). Branche `evolution-nationale-convois` du dépôt `jef1234567/franchissement` (privé), partie du commit `ee29fcb` (v2.0 de septembre).
+Dernière mise à jour : 16/11/2026 (lot fiabilisation, phase 2 faite). Branche `evolution-nationale-convois` du dépôt `jef1234567/franchissement` (privé), partie du commit `ee29fcb` (v2.0 de septembre).
 
 ## Pour reprendre dans une nouvelle session
 
@@ -86,9 +86,18 @@ Ordre de grandeur mesuré hors navigateur (Node, réseau synthétique en grille,
 4. **Lot 3, ergonomie** : bilan cliquable (afficher sur la carte ce que chaque étape a apporté) ; annuler l'intégration d'un jeu data.gouv ; fonds de carte hors ligne en option du bouton, avec estimation en Mo.
 5. **Lot 4, dette** : découper `DonneesVue.svelte` (865 lignes) ; chronogramme des convois avec cumul des attentes ; prescriptions TE.
 
-## Prochain lot : fiabilisation (16/11/2026)
+## Lot fiabilisation (16/11/2026) — en cours
 
-Plan détaillé, décisions de Jean-François et message de reprise : `docs/ORCHESTRATION-FIABILISATION.md`. Cas réel : `docs/cas-reel/`.
+Plan, décisions et message de reprise : `docs/ORCHESTRATION-FIABILISATION.md`. Constats des trois audits et leur suite : `docs/AUDIT-FIABILISATION.md`. Cas réel : `docs/cas-reel/`.
+
+**Fait (phase 2, calculs)** :
+- Dijkstra par tronçon orienté : coût exact, demi-tour interdit en pleine voie, permis aux étapes et signalé ; 180 000 tronçons ≈ 300 ms.
+- Étapes projetées sur le tronçon, coupé au point ; route au sol préférée à un pont (20 m) ; étape dans un trou refusée.
+- **Zones de demi-tour tous les 15 km** (décision de Jean-François : « trouver une zone de demi-tour tous les 15 km ») : giratoires OSM sur le trajet ou à 500 m, praticables, diamètre à l'axe indicatif, portions sans zone signalées ; option réglable (0 = non) ; panneau, rapport, carte.
+- Restriction civile de la fiche d'ouvrage bloquante ; MLC supposée jamais « normal » sans classe normale ; données véhicule manquantes signalées ; écoulement (interdits exclus en mode imposé, 10 m par longueur inconnue, convoi partiel = incertain, pont flottant) ; attentes cumulées aux ouvrages successifs ; trous évités dès le calcul ; « Pourquoi pas par ici ? » emprunte bien le tronçon.
+- Le rapport imprimé reprend désormais les alertes.
+
+**Reste** : corrections B (sources, `AUDIT-FIABILISATION.md` §B, priorité B1, B2, B-I1, B-I4, B-I5, B-I2, B-I3, B-I6), mineurs A restants, relecture indépendante (phase 4), cas réel avec le paquet Saumur de Jean-François.
 
 ## Reste à faire (ordre proposé)
 
@@ -111,7 +120,7 @@ Plan détaillé, décisions de Jean-François et message de reprise : `docs/ORCH
 - Porte-char avec Leclerc : environ 100 t calculées contre un poids total roulant autorisé publié de 98 t (Wikipédia). À vérifier.
 - VBCI : largeur de 3,7 m retenue (ministère, équipements extérieurs probablement inclus) au lieu de 2,98 m : plus prudent, mais peut bloquer des ponts étroits.
 - VAB : 15 t retenues (masse à vide publiée par le ministère pour le VAB T3), borne basse.
-- Le chronogramme des convois suppose une vitesse constante et ne cumule pas les attentes aux ouvrages précédents.
+- Le chronogramme des convois cumule depuis le 16/11/2026 les attentes aux ouvrages précédents (borne : retard = écoulement − passage à la vitesse de marche).
 
 ## Audit indépendant (13/11/2026) et suites données
 

@@ -43,9 +43,14 @@ describe('Trous du réseau (tuiles en échec)', () => {
   it('itinéraire refusé s’il traverse un trou, accepté sinon', () => {
     expect(calculerItineraire(reseau, [], [vbl], ref, etapes, OPTIONS_ITINERAIRE_DEFAUT).ok).toBe(true);
     const avecTrou = { ...reseau, trous: [{ sud: 47.275, nord: 47.285, ouest: -0.07, est: -0.05 }] };
+    // Lot fiabilisation (A1-6) : le trou est contourné quand un détour existe, et le tracé n'y entre jamais.
     const r = calculerItineraire(avecTrou, [], [vbl], ref, etapes, OPTIONS_ITINERAIRE_DEFAUT);
-    expect(r.ok).toBe(false);
-    expect(r.erreur).toMatch(/n'a pas pu être téléchargé/);
+    if (r.ok) expect(r.coords.some(([la, lo]) => la > 47.275 && la < 47.285 && lo > -0.07 && lo < -0.05)).toBe(false);
+    else expect(r.erreur).toMatch(/n'a pas pu être téléchargé|Aucun itinéraire/);
+    // Étape posée dans le trou : refus explicite.
+    const dedans = calculerItineraire({ ...reseau, trous: [{ sud: 47.27, nord: 47.29, ouest: -0.05, est: -0.03 }] }, [], [vbl], ref, etapes, OPTIONS_ITINERAIRE_DEFAUT);
+    expect(dedans.ok).toBe(false);
+    expect(dedans.erreur).toMatch(/n'a pas pu être téléchargé/);
     const ailleurs = { ...reseau, trous: [{ sud: 47.21, nord: 47.22, ouest: -0.19, est: -0.18 }] };
     expect(calculerItineraire(ailleurs, [], [vbl], ref, etapes, OPTIONS_ITINERAIRE_DEFAUT).ok).toBe(true);
   });

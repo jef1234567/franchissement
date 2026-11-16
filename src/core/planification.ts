@@ -1,6 +1,7 @@
 import type { Ouvrage, Referentiel } from './model';
 import type { Reseau } from './reseau';
 import type { ElementConvoi } from './verification';
+import { LONGUEUR_INCONNUE_M } from './ecoulement';
 import { calculerItineraire, pireModeItineraire, type OptionsItineraire, type ResultatItineraire } from './itineraire';
 import { calculerEcoulement } from './ecoulement';
 import type { ModeRequis } from './verification';
@@ -88,10 +89,12 @@ export function sEnHeure(s: number): string {
 export function dureeEstimee(o: Ouvrage, elements: ElementConvoi[], ref: Referentiel, mode: ModeRequis = 'inconnu'): number {
   const m = mode === 'normal' || mode === 'precaution' || mode === 'risque' ? mode : 'precaution';
   const p = ref.modes[m];
-  const v = p.vitesseKmh / 3.6;
+  // Pont flottant : vitesse plafonnée comme dans l'écoulement (audit A2-10).
+  const vKmh = m === 'normal' && o.type === 'militaire_flottant' && ref.vitesseNormalFlottantKmh > 0 ? Math.min(p.vitesseKmh, ref.vitesseNormalFlottantKmh) : p.vitesseKmh;
+  const v = vKmh / 3.6;
   const lo = o.longueurM ?? 50;
   let n = 0, longueur = 0;
-  for (const e of elements) { n += e.quantite; longueur += e.quantite * (e.vehicule.longueurM ?? 10); }
+  for (const e of elements) { n += e.quantite; longueur += e.quantite * (e.vehicule.longueurM ?? LONGUEUR_INCONNUE_M); }
   if (p.unSeulVehicule) return (n * lo + longueur) / v;
   return (longueur + Math.max(0, n - 1) * p.espacementM + lo) / v;
 }
@@ -103,14 +106,23 @@ export function planifierConvoi(r: Reseau, ouvrages: Ouvrage[], ref: Referentiel
   const itineraire = calculerItineraire(r, ouvrages, m.elements, ref, m.etapes, m.options);
   const occupations: OccupationOuvrage[] = [];
   if (itineraire.ok) {
+    // Attentes cumulées : la tête du convoi arrive à l'ouvrage k retardée de ce que les ouvrages précédents ont coûté
+    // au-delà d'un passage à la vitesse de marche (colonne entière + ouvrage). Limite connue levée (audit A2, 16/11/2026).
+    const vMarche = m.options.vitesseConvoiKmh / 3.6;
+    let n = 0, lgVeh = 0;
+    for (const e of m.elements) { n += e.quantite; lgVeh += e.quantite * (e.vehicule.longueurM ?? LONGUEUR_INCONNUE_M); }
+    const colonne = lgVeh + Math.max(0, n - 1) * ref.modes.normal.espacementM;
+    let retard = 0;
     for (const t of itineraire.ouvrages) {
-      const debutS = departS + t.tS;
+      const debutS = departS + t.tS + retard;
       const e = calculerEcoulement(t.ouvrage, [{ nom: m.nom, elements: m.elements, intervalleApresS: 0 }], ref, { voies: m.options.voies, mode: 'auto', regrouperSeuls: true });
       const ok = e.ok && e.dureeTotaleS > 0;
-      occupations.push({
-        convoiId: m.id, convoi: m.nom, ouvrage: t.ouvrage, debutS,
-        finS: debutS + (ok ? e.dureeTotaleS : dureeEstimee(t.ouvrage, m.elements, ref, t.verdict.mode)), mode: t.verdict.mode, dureeIncertaine: !ok,
-      });
+      const estimee = dureeEstimee(t.ouvrage, m.elements, ref, t.verdict.mode);
+      // Une partie du convoi exclue du calcul (sans classe…) : la durée calculée ne couvre pas tout le convoi (audit A2-5).
+      const partiel = ok && e.exclus.length > 0;
+      const duree = !ok ? estimee : partiel ? Math.max(e.dureeTotaleS, estimee) : e.dureeTotaleS;
+      occupations.push({ convoiId: m.id, convoi: m.nom, ouvrage: t.ouvrage, debutS, finS: debutS + duree, mode: t.verdict.mode, dureeIncertaine: !ok || partiel });
+      retard += Math.max(0, duree - (colonne + (t.ouvrage.longueurM ?? 0)) / vMarche);
     }
   }
   return {

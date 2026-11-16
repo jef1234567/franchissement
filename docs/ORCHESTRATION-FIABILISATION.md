@@ -11,6 +11,7 @@ Rendre fiables les **calculs** (itinéraire, verdicts, écoulement), le **traite
 
 1. **Demi-tours** : à ajouter **en option**, avec un pas de **X km à choisir** par l'utilisateur. Interprétation à confirmer en début de séance (une question, pas plus) : « un convoi ne peut faire demi-tour qu'à des points espacés d'au moins X km » ou « demi-tour interdit, sauf aux places de retournement tous les X km ». Par défaut, sans réponse : demi-tour interdit en cours de route, autorisé seulement aux étapes et au plus une fois tous les X km (X = 5 km par défaut), réglable dans les options avancées.
 2. **Cas réel de référence** : itinéraire « Peloton Jaguar » Saumur du 16/11/2026, exporté par Jean-François : `docs/cas-reel/saumur-peloton-jaguar-20261116.kml` et `.geojson` (35,66 km ; 4 ponts sans classe : Fouchard, Cadre Noir, route de Villebernier, rue du Marais). Ces fichiers donnent le **tracé obtenu**, pas les données d'entrée : pour rejouer le calcul, demander le **paquet** (Données & zone → Exporter le paquet, sans tuiles).
+**Réponse de Jean-François (16/11/2026)** : « je veux que tu trouves plutôt une zone de demi-tour tous les 15 km ». Mis en œuvre : demi-tour interdit en pleine voie ; permis aux étapes (signalé) ; l'outil repère une zone (giratoire OSM) environ tous les 15 km et signale les portions sans zone.
 3. **Ordre** : A (calculs) → B (données) → C (contrôle indépendant et essai réel).
 
 ## Organisation (agent principal + sous-agents)
@@ -67,3 +68,9 @@ L'agent principal tient la liste des tâches, intègre, teste et pousse. Il ne d
 ## Message à coller dans la nouvelle conversation
 
 > Reprends FRANCHIR : dépôt jef1234567/franchissement, branche evolution-nationale-convois. Lis docs/REPRISE.md puis docs/ORCHESTRATION-FIABILISATION.md et exécute le lot fiabilisation dans l'ordre prévu (phase 0 à 4), en me posant d'abord la seule question sur les demi-tours. Je joindrai mon paquet Saumur.
+
+## Reprise après la phase 2 (16/11/2026)
+
+Phases 0 à 2 faites (voir `REPRISE.md`, `AUDIT-FIABILISATION.md`). Message à coller dans une nouvelle conversation :
+
+> Reprends FRANCHIR : dépôt jef1234567/franchissement, branche evolution-nationale-convois. Lis docs/REPRISE.md, docs/ORCHESTRATION-FIABILISATION.md puis docs/AUDIT-FIABILISATION.md. Les phases 0 à 2 sont faites : exécute la phase 3 (corrections B, dans l'ordre de priorité du fichier d'audit, un test par défaut, VERSION_CACHE augmenté) puis la phase 4 (relecture indépendante du diff depuis 2b6e6cb). Je joins mon paquet Saumur si je l'ai.

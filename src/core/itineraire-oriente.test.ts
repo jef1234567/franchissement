@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { referentielParDefaut, vehiculesParDefaut } from './reference';
 import { nouvelOuvrage } from './model';
 import { construireReseau, extraireOuvrages } from './reseau';
-import { accrocher, calculerItineraire, OPTIONS_ITINERAIRE_DEFAUT } from './itineraire';
+import { accrocher, calculerItineraire, expliquerTroncon, OPTIONS_ITINERAIRE_DEFAUT } from './itineraire';
 import { overpassSynthetique } from '../test/fixtures';
 
 /* Lot fiabilisation (16/11/2026) : Dijkstra par tronçon orienté, accrochage par projection, demi-tours. */
@@ -106,5 +106,23 @@ describe('Invariants (réseau synthétique)', () => {
       expect(inverse.coutS).toBeCloseTo(avec.coutS!, 6);
       expect(inverse.coords).toEqual(avec.coords);
     }
+  });
+});
+
+describe('« Pourquoi pas par ici ? » emprunte le tronçon cliqué (audit A1-7)', () => {
+  // Entre X et Y : rue résidentielle directe (lente) et départementale un peu plus longue (rapide).
+  const r = construireReseau(osm([[1, 47, 0], [2, 47, 0.01], [3, 47, 0.05], [4, 47, 0.06], [5, 47.004, 0.03]], [
+    { id: 40, nodes: [1, 2], tags: { highway: 'secondary' } },
+    { id: 41, nodes: [2, 3], tags: { highway: 'residential', name: 'Rue lente' } },
+    { id: 42, nodes: [2, 5, 3], tags: { highway: 'secondary', name: 'Départementale' } },
+    { id: 43, nodes: [3, 4], tags: { highway: 'secondary' } },
+  ]) as never, bbox);
+  it('itinéraire forcé passant réellement par la rue lente', () => {
+    const x = expliquerTroncon(r, [], [vbl], ref, [[47, 0], [47, 0.06]], OPTIONS_ITINERAIRE_DEFAUT, [47, 0.03])!;
+    expect(r.aretes[x.arete].nom).toBe('Rue lente');
+    expect(x.retenu.coords.some(([la]) => la > 47.003)).toBe(true); // retenu : départementale
+    expect(x.via).not.toBeNull();
+    expect(x.via!.coords.some(([la]) => la > 47.001)).toBe(false); // forcé : rue lente
+    expect(x.via!.coutS!).toBeGreaterThan(x.retenu.coutS!);
   });
 });

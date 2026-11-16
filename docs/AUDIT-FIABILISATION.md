@@ -11,32 +11,32 @@ Trois audits en lecture seule (A1 itinéraire, A2 verdicts et écoulement, B sou
 | A1-3 | Important | Accrochage sans niveau : point sur la route du dessous accroché au pont ; point sur tronçon interdit déplacé sans le dire (vérifié) | Corrigé : `layer` lu, route au sol préférée (écart ≤ 20 m), distance signalée |
 | A1-4 | Important | Aller-retour sur un pont = 1 passage, 1 pénalité (vérifié) | Corrigé : demi-tour = nouveau passage |
 | A1-5 | Important | Dimension inconnue d'un véhicule : restriction civile franchie sans alerte (vérifié) | Voir A2-4 |
-| A1-6 | Important | Trous testés après calcul : refus alors qu'un détour existe (vérifié) | À faire : tronçons dans un trou bloqués dans `bloque` |
-| A1-7 | Important | « Pourquoi pas par ici ? » peut ne pas emprunter le tronçon cliqué (vérifié) | À faire : vérifier/imposer l'arête |
+| A1-6 | Important | Trous testés après calcul : refus alors qu'un détour existe (vérifié) | Corrigé : tronçons du trou évités dès le calcul ; étape dans un trou refusée |
+| A1-7 | Important | « Pourquoi pas par ici ? » peut ne pas emprunter le tronçon cliqué (vérifié) | Corrigé : deux points imposés sur le tronçon, variantes à demi-tour artificiel écartées |
 | A1-8 | Mineur | Sens contradictoires entre paquets à l'assemblage : premier gardé (hypothèse) | À faire |
 | A1-9 | Mineur | Pieds → m arrondis au plus proche (+2 mm) ; `below_default` = aucune restriction | À faire (avec B-I2) |
 | A1-10 | Mineur | Plusieurs ouvrages sur un tronçon : pénalité max, pas somme (voulu, doublons de sources) | Invariant écrit en conséquence |
 | A1-11 | Mineur | « Plus court sans contrainte » = plus rapide, avec interdits et pénalités ; détour pouvant être négatif | À faire (libellé) |
-| A1-12 | Mineur | Performance : 411 ms / 180 000 tronçons ; accrochage linéaire | Mesuré après refonte |
+| A1-12 | Mineur | Performance : 411 ms / 180 000 tronçons ; accrochage linéaire | Après refonte : ≈ 300 ms (grille de 179 400 tronçons) |
 
 ## A2 — Verdicts, écoulement, planification (`verification.ts`, `ecoulement.ts`, `planification.ts`)
 
 | # | Gravité | Constat | Suite |
 |---|---|---|---|
-| A2-1 | Bloquant | Restriction civile de la **fiche** d'ouvrage (import CSV / data.gouv) jamais bloquante ; synthèse « normal possible » (vérifié) | À faire |
-| A2-2 | Important | MLC inconnue « supposée compatible » en double voie sans classe double → normal (vérifié) | À faire |
-| A2-3 | Important | MLC inconnue sur ouvrage n'ayant que précaution ou risque → normal (vérifié) | À faire |
-| A2-4 | Important | Masse / hauteur / largeur inconnue face à une limite civile : ni contrôle incomplet ni motif (vérifié) ; idem `dimensionsConvoi` sur l'itinéraire | À faire |
-| A2-5 | Important | Écoulement en mode auto : véhicules sans MLC retirés, fenêtre sous-estimée sans « incertaine » (vérifié) | À faire |
+| A2-1 | Bloquant | Restriction civile de la **fiche** d'ouvrage (import CSV / data.gouv) jamais bloquante ; synthèse « normal possible » (vérifié) | Corrigé : bloquante si restrictions civiles respectées, raison donnée, synthèse corrigée |
+| A2-2 | Important | MLC inconnue « supposée compatible » en double voie sans classe double → normal (vérifié) | Corrigé |
+| A2-3 | Important | MLC inconnue sur ouvrage n'ayant que précaution ou risque → normal (vérifié) | Corrigé : mode le plus favorable réellement établi |
+| A2-4 | Important | Masse / hauteur / largeur inconnue face à une limite civile : ni contrôle incomplet ni motif (vérifié) ; idem `dimensionsConvoi` sur l'itinéraire | Corrigé : contrôle incomplet + motif ; alerte sur l'itinéraire |
+| A2-5 | Important | Écoulement en mode auto : véhicules sans MLC retirés, fenêtre sous-estimée sans « incertaine » (vérifié) | Corrigé : max(écoulement, estimation), marquée incertaine |
 | A2-6 | Important (hyp.) | Précaution / risque uniques quelle que soit la propulsion | Décision Jean-François / Génie |
 | A2-7 | Mineur | Motif trompeur en double voie non classée | À faire |
-| A2-8 | Mineur | Longueur inconnue = 0 m dans l'écoulement (10 m dans `dureeEstimee`) | À faire |
-| A2-9 | Mineur | Mode imposé « tout en normal » fait passer des véhicules interdits | À faire |
-| A2-10 | Mineur | `dureeEstimee` ignore 24 km/h sur pont flottant | À faire |
+| A2-8 | Mineur | Longueur inconnue = 0 m dans l'écoulement (10 m dans `dureeEstimee`) | Corrigé : 10 m partout (`LONGUEUR_INCONNUE_M`) |
+| A2-9 | Mineur | Mode imposé « tout en normal » fait passer des véhicules interdits | Corrigé |
+| A2-10 | Mineur | `dureeEstimee` ignore 24 km/h sur pont flottant | Corrigé |
 | A2-11 | Mineur | Synthèses risque / interdit incomplètes | À faire |
 | A2-12 | Mineur (hyp.) | Classe double seule non utilisée en voie unique | Décision Génie |
 | A2-13 | Mineur (hyp.) | Convoi jamais en conflit avec lui-même (demi-tour court) | À faire |
-| — | Limite connue | Attentes non cumulées aux ouvrages successifs ; borne prudente proposée : début(k) = départ + marche jusqu'à k + Σ (écoulement − marche sur l'ouvrage) des précédents | À faire |
+| — | Limite connue | Attentes non cumulées aux ouvrages successifs ; borne prudente proposée : début(k) = départ + marche jusqu'à k + Σ (écoulement − marche sur l'ouvrage) des précédents | Corrigé : retard cumulé = Σ max(0, durée − (colonne + ouvrage) / vitesse de marche) |
 
 ## B — Sources ouvertes (`enligne.ts`, `ign.ts`, `datagouv.ts`, `importation.ts`, `restrictions-lineaires.ts`, `preparation*.ts`, `reseau.ts`)
 

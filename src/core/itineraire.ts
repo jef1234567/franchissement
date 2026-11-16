@@ -2,7 +2,7 @@ import { chargeEssieuVehicule } from './verification';
 import { estNombre, type Ouvrage, type Referentiel, type Voies } from './model';
 import { coordsArete, ouvragesParArete, type Arete, type Reseau } from './reseau';
 import { couperPolyligne, distancePointSegment, longueurPolyligne, projeterPolyligne } from './geo';
-import { trouTraverse } from './trous';
+import { segmentDansRectangle, trouTraverse } from './trous';
 import { zonesDemiTour, type BilanDemiTour } from './demi-tour';
 import { classeVehicule, RANG_MODE, verifierConvoi, type ElementConvoi, type ModeRequis, type VerdictConvoi } from './verification';
 
@@ -164,6 +164,14 @@ export function dimensionsConvoi(elements: ElementConvoi[]) {
     masse: max((e) => e.vehicule.masseT),
     essieu: max((e) => chargeEssieuVehicule(e.vehicule)),
     classe: max((e) => classeVehicule(e.vehicule, e.etat)),
+    /** Au moins un véhicule sans la donnée : une restriction ne peut pas être contrôlée en entier (audit A1-5). */
+    manque: {
+      hauteur: elements.some((e) => !estNombre(e.vehicule.hauteurM)),
+      largeur: elements.some((e) => !estNombre(e.vehicule.largeurM)),
+      longueur: elements.some((e) => !estNombre(e.vehicule.longueurM)),
+      masse: elements.some((e) => !estNombre(e.vehicule.masseT)),
+      essieu: elements.some((e) => chargeEssieuVehicule(e.vehicule) == null),
+    },
   };
 }
 
@@ -202,16 +210,28 @@ function preparer(r: Reseau, ouvrages: Ouvrage[], elements: ElementConvoi[], ref
       (estNombre(e.lgmax) && estNombre(dims.longueur) && dims.longueur > e.lgmax) ||
       !!e.barre);
 
+  // Tronçons qui entrent dans une partie non téléchargée : évités dès le calcul (audit A1-6 : avant, l'itinéraire était
+  // refusé après coup alors qu'un détour existait). Le contrôle final sur le tracé reste en place.
+  const dansTrou = new Set<Arete>();
+  if (r.trous?.length) {
+    for (const e of r.aretes) {
+      const pts = coordsArete(r, e);
+      if (r.trous.some((t) => pts.some((p, k) => k > 0 && segmentDansRectangle(pts[k - 1], p, t)))) dansTrou.add(e);
+    }
+  }
   return {
     ouvrageParArete,
     petitsParArete,
     verdicts,
     bloque: (e) => {
+      if (dansTrou.has(e)) return true;
       if (!opt.autoroutes && (e.hw === 'motorway' || e.hw === 'motorway_link')) return true;
       if (civilBloque(e)) return true;
       if (e.gue && (opt.gues ?? 'eviter') === 'eviter') return true;
       return (ouvrageParArete.get(e) ?? []).some((o) => {
         if (exclus.has(o.id)) return true;
+        // Restriction civile portée par la fiche de l'ouvrage (import CSV, data.gouv) : bloquante comme sur le tronçon (audit A2-1).
+        if (opt.restrictionsCiviles && verdict(o).alerteCivile) return true;
         const m = verdict(o).mode;
         if (m === 'interdit') return true;
         if (m === 'inconnu') return opt.inconnus === 'bloquer';
@@ -229,6 +249,7 @@ function preparer(r: Reseau, ouvrages: Ouvrage[], elements: ElementConvoi[], ref
       const bloquants: string[] = [];
       const penalites: { texte: string; s: number }[] = [];
       const f = (x: number | null | undefined) => (estNombre(x) ? String(Math.round(x * 100) / 100).replace('.', ',') : '?');
+      if (dansTrou.has(e)) bloquants.push('dans une partie de la zone dont le réseau n\'a pas pu être téléchargé (tracée en rouge)');
       if (!opt.autoroutes && (e.hw === 'motorway' || e.hw === 'motorway_link')) bloquants.push('autoroute exclue par les options');
       if (opt.restrictionsCiviles) {
         if (estNombre(e.hmax) && estNombre(dims.hauteur) && dims.hauteur > e.hmax) bloquants.push(`hauteur limitée à ${f(e.hmax)} m (convoi : ${f(dims.hauteur)} m)`);
@@ -241,6 +262,7 @@ function preparer(r: Reseau, ouvrages: Ouvrage[], elements: ElementConvoi[], ref
       if (e.gue && (opt.gues ?? 'eviter') === 'eviter') bloquants.push('gué ou radier (évités par les options)');
       for (const o of ouvrageParArete.get(e) ?? []) {
         if (exclus.has(o.id)) { bloquants.push(`ouvrage « ${o.nom} » exclu manuellement`); continue; }
+        if (opt.restrictionsCiviles && verdict(o).alerteCivile) bloquants.push(`ouvrage « ${o.nom} » : restriction civile de sa fiche dépassée (${[o.civil.poidsMaxT != null && `${f(o.civil.poidsMaxT)} t`, o.civil.hauteurMaxM != null && `h ${f(o.civil.hauteurMaxM)} m`, o.civil.largeurMaxM != null && `l ${f(o.civil.largeurMaxM)} m`, o.civil.essieuMaxT != null && `${f(o.civil.essieuMaxT)} t/essieu`].filter(Boolean).join(', ')})`);
         const { m, total } = penaliteOuvrage(o);
         if (m === 'interdit') bloquants.push(`ouvrage « ${o.nom} » interdit pour ce convoi`);
         else if (m === 'inconnu' && opt.inconnus === 'bloquer') bloquants.push(`ouvrage « ${o.nom} » sans classe (évité par les options)`);
@@ -452,6 +474,8 @@ export function calculerItineraire(
   const accroches: Accroche[] = [];
   const alertesAccroche: { etape: number; texte: string }[] = [];
   for (const [i, p] of etapes.entries()) {
+    const t = r0.trous?.find((b) => p[0] >= b.sud && p[0] <= b.nord && p[1] >= b.ouest && p[1] <= b.est);
+    if (t) return echec(`Point ${i + 1} : dans une partie de la zone dont le réseau n'a pas pu être téléchargé (tracée en rouge). Relancez « Préparer la zone » pour la compléter.`);
     const a = accrocher(r0, p, ctx.bloque);
     if (!a) return echec(`Point ${i + 1} : aucun tronçon routier praticable.`);
     if (a.distance > 2000) return echec(`Point ${i + 1} : situé à ${(a.distance / 1000).toFixed(1)} km du réseau chargé (hors zone ?).`);
@@ -528,6 +552,11 @@ export function calculerItineraire(
     const memeVoie = precedente !== null && precedente.way === e.way;
     if (e.gue && !(memeVoie && precedente!.gue)) {
       alertes.push({ pk, texte: `Gué ou radier sur ${e.nom || e.ref || 'tronçon'} : praticabilité à reconnaître (hauteur d'eau, portance du fond, berges).` });
+    }
+    if (opt.restrictionsCiviles && !memeVoie) {
+      const m = dimsConvoi.manque;
+      const nc = [estNombre(e.hmax) && m.hauteur && `hauteur ${e.hmax} m`, estNombre(e.lmax) && m.largeur && `largeur ${e.lmax} m`, estNombre(e.pmax) && m.masse && `${e.pmax} t`, estNombre(e.emax) && m.essieu && `${e.emax} t/essieu`, estNombre(e.lgmax) && m.longueur && `longueur ${e.lgmax} m`].filter(Boolean);
+      if (nc.length) alertes.push({ pk, texte: `Restriction ${nc.join(', ')} sur ${e.nom || e.ref || 'tronçon'} : donnée manquante pour au moins un véhicule du convoi, contrôle incomplet, à vérifier.` });
     }
     const etroite = estNombre(e.largeur) && estNombre(dimsConvoi.largeur) && dimsConvoi.largeur > e.largeur;
     if (etroite && !(memeVoie && estNombre(precedente!.largeur) && dimsConvoi.largeur! > precedente!.largeur)) {
@@ -612,14 +641,19 @@ export function expliquerTroncon(
   const retenu = calculerItineraire(r, ouvrages, elements, ref, etapes, opt);
   let via: ResultatItineraire | null = null;
   if (!raisons.bloquants.length && etapes.length >= 2) {
-    // Le tronçon est imposé par ses deux extrémités, dans un sens puis dans l'autre, entre chaque paire d'étapes : le moins coûteux l'emporte.
-    const pa: [number, number] = [r.noeuds[2 * e.a], r.noeuds[2 * e.a + 1]];
-    const pb: [number, number] = [r.noeuds[2 * e.b], r.noeuds[2 * e.b + 1]];
+    // Le tronçon est imposé par deux points pris sur lui (au quart et aux trois quarts), dans un sens puis dans l'autre,
+    // entre chaque paire d'étapes ; le moins coûteux l'emporte. Ses extrémités ne suffisaient pas : le calcul pouvait
+    // aller de l'une à l'autre par une route plus rapide sans emprunter le tronçon (audit A1-7). Un demi-tour à l'un de
+    // ces points ajoutés serait artificiel : ces variantes sont écartées.
+    const geomE = coordsArete(r, e);
+    const pt = (f: number) => couperPolyligne(geomE, e.long * f)[0].at(-1)!;
+    const pa = pt(0.25), pb = pt(0.75);
     for (let k = 1; k < etapes.length; k++) {
       for (const [x, y] of [[pa, pb], [pb, pa]]) {
         const pts = [...etapes.slice(0, k), x, y, ...etapes.slice(k)];
         const c = calculerItineraire(r, ouvrages, elements, ref, pts, opt);
-        if (c.ok && (!via || (c.coutS ?? Infinity) < (via.coutS ?? Infinity))) via = c;
+        if (!c.ok || c.alertes.some((al) => al.texte.startsWith(`Demi-tour au point ${k + 1} `) || al.texte.startsWith(`Demi-tour au point ${k + 2} `))) continue;
+        if (!via || (c.coutS ?? Infinity) < (via.coutS ?? Infinity)) via = c;
       }
     }
   }
