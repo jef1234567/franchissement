@@ -86,6 +86,10 @@ Ordre de grandeur mesuré hors navigateur (Node, réseau synthétique en grille,
 4. **Lot 3, ergonomie** : bilan cliquable (afficher sur la carte ce que chaque étape a apporté) ; annuler l'intégration d'un jeu data.gouv ; fonds de carte hors ligne en option du bouton, avec estimation en Mo.
 5. **Lot 4, dette** : découper `DonneesVue.svelte` (865 lignes) ; chronogramme des convois avec cumul des attentes ; prescriptions TE.
 
+## Prochain lot : fiabilisation (16/11/2026)
+
+Plan détaillé, décisions de Jean-François et message de reprise : `docs/ORCHESTRATION-FIABILISATION.md`. Cas réel : `docs/cas-reel/`.
+
 ## Reste à faire (ordre proposé)
 
 1. ~~Couverture nationale~~ : fait (voir ci-dessus) ; mesure réelle à faire (« Non vérifié », point 4). Limite connue : l'emprise administrative est un rectangle englobant (déborde sur les départements voisins, sans gravité puisque l'assemblage dédoublonne).
