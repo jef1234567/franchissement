@@ -140,7 +140,8 @@ interface ContexteContraintes {
   petitsParArete: Map<Arete, Ouvrage[]>;
   verdicts: Map<string, VerdictConvoi>;
   bloque: (e: Arete) => boolean;
-  surcout: (e: Arete) => number;
+  /** Pénalité en entrant sur `e` depuis `prec` : un ouvrage n'est pénalisé qu'à son entrée (une fois par passage). */
+  surcout: (e: Arete, prec: Arete | null) => number;
   raisons: (e: Arete) => RaisonsTroncon;
 }
 
@@ -165,13 +166,13 @@ function preparer(r: Reseau, ouvrages: Ouvrage[], elements: ElementConvoi[], ref
   for (const [i, l] of ouvragesParArete(r, ouvrages)) ouvrageParArete.set(r.aretes[i], l);
   const petitsParArete = new Map<Arete, Ouvrage[]>();
   for (const [i, l] of ouvragesParArete(r, ouvrages, { petits: true })) petitsParArete.set(r.aretes[i], l);
-  // Un pont découpé en plusieurs tronçons n'est pénalisé qu'une fois par passage : pénalité répartie entre ses tronçons.
-  const nbAretes = new Map<string, number>();
-  for (const l of ouvrageParArete.values()) for (const o of l) nbAretes.set(o.id, (nbAretes.get(o.id) ?? 0) + 1);
+  // Pénalité entière à l'entrée de l'ouvrage, nulle sur ses tronçons suivants : un passage = une pénalité, quel que soit
+  // le découpage du pont en tronçons ou en voies (chaussées séparées). Relecture de l'essai réel du 16/11/2026 : la
+  // répartition entre tronçons sous-comptait les ponts franchis en partie (24 min affichées pour 8 ponts à 5 min).
   const penaliteOuvrage = (o: Ouvrage) => {
     const m = verdict(o).mode;
     const total = m === 'inconnu' && opt.inconnus === 'penaliser' ? opt.penaliteInconnuMin * 60 : m === 'precaution' ? 120 : m === 'risque' ? 600 : 0;
-    return { m, total, parArete: total / (nbAretes.get(o.id) ?? 1) };
+    return { m, total };
   };
   const verdicts = new Map<string, VerdictConvoi>();
   const exclus = new Set(opt.ouvragesExclus);
@@ -211,9 +212,10 @@ function preparer(r: Reseau, ouvrages: Ouvrage[], elements: ElementConvoi[], ref
       });
     },
     // Précaution : ralentissement / mise en place (2 min) ; risque : 10 min ; sans classe : pénalité réglable.
-    surcout: (e) => {
+    surcout: (e, prec) => {
       let s = 0;
-      for (const o of ouvrageParArete.get(e) ?? []) s = Math.max(s, penaliteOuvrage(o).parArete);
+      const avant = prec ? ouvrageParArete.get(prec) : undefined;
+      for (const o of ouvrageParArete.get(e) ?? []) if (!avant?.includes(o)) s = Math.max(s, penaliteOuvrage(o).total);
       return s;
     },
     raisons: (e) => {
@@ -268,7 +270,7 @@ export function noeudLePlusProche(r: Reseau, p: [number, number], ctx?: Contexte
 }
 
 /* ---------- Dijkstra ---------- */
-function plusCourtChemin(r: Reseau, depart: number, arrivee: number, ctx: ContexteContraintes, vConvoi: number): number[] | null {
+function plusCourtChemin(r: Reseau, depart: number, arrivee: number, ctx: ContexteContraintes, vConvoi: number, areteArrivee: number = -1): number[] | null {
   const n = r.noeuds.length / 2;
   // Liste d'adjacence (construite à la demande, mise en cache par réseau).
   const adj = adjacence(r);
@@ -290,7 +292,9 @@ function plusCourtChemin(r: Reseau, depart: number, arrivee: number, ctx: Contex
         bloque.set(iE, b);
       }
       if (b) continue;
-      const nd = d + tempsArete(e, vConvoi) + ctx.surcout(e);
+      // Tronçon d'arrivée sur u : celui du meilleur chemin (ou du tronçon précédent l'étape, au départ d'une étape).
+      const pu = u === depart ? areteArrivee : prec[u];
+      const nd = d + tempsArete(e, vConvoi) + ctx.surcout(e, pu >= 0 ? r.aretes[pu] : null);
       if (nd < dist[v]) {
         dist[v] = nd;
         prec[v] = iE;
@@ -352,7 +356,7 @@ export function calculerItineraire(
   const aretesChemin: { i: number; depuis: number }[] = [];
   for (let k = 1; k < noeuds.length; k++) {
     if (noeuds[k] === noeuds[k - 1]) continue;
-    const c = plusCourtChemin(r, noeuds[k - 1], noeuds[k], ctx, opt.vitesseConvoiKmh);
+    const c = plusCourtChemin(r, noeuds[k - 1], noeuds[k], ctx, opt.vitesseConvoiKmh, aretesChemin.length ? aretesChemin[aretesChemin.length - 1].i : -1);
     if (!c) return echec(`Aucun itinéraire praticable entre les points ${k} et ${k + 1} avec les contraintes retenues.`);
     let u = noeuds[k - 1];
     for (const iE of c) {
@@ -410,11 +414,11 @@ export function calculerItineraire(
       alertes.push({ pk, texte: `Chaussée étroite sur ${e.nom || e.ref || 'tronçon'} : ${e.largeur} m (valeur indicative) pour ${dimsConvoi.largeur} m de largeur de véhicule.` });
     }
     if (estNombre(e.te)) { surTE += e.long; catTE = catTE === null ? e.te : Math.min(catTE, e.te); }
+    penalites += ctx.surcout(e, precedente);
     precedente = e;
     ouvragesPrecedents = new Set(surArete.map((o) => o.id));
     pk += e.long;
     duree += tempsArete(e, opt.vitesseConvoiKmh);
-    penalites += ctx.surcout(e);
   }
 
   const trou = trouTraverse(coords, r.trous);

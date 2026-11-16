@@ -32,6 +32,17 @@ describe('Pourquoi pas par ici ?', () => {
     expect(res.coutS).toBeCloseTo(res.dureeS + (res.penalitesS ?? 0), 3);
   });
 
+  it('un pont franchi en partie (chaussées séparées) coûte une pénalité entière, une seule fois (essai réel du 16/11)', () => {
+    const r = base();
+    // Ouvrage porté par deux tracés parallèles (301-302 et 211) : le convoi n'en emprunte qu'un.
+    const o = nouvelOuvrage({ id: 'double', nom: 'Pont à chaussées séparées', osmWayIds: [301, 302, 211] });
+    const res = calculerItineraire(r, [o], [vbl], ref, [[47.24, -0.08], [47.28, -0.08]], { ...OPTIONS_ITINERAIRE_DEFAUT, penaliteInconnuMin: 1 });
+    expect(res.ok).toBe(true);
+    const passages = res.ouvrages.filter((t) => t.ouvrage.id === 'double').length;
+    expect(passages).toBe(1);
+    expect(res.penalitesS).toBeCloseTo(60 * passages, 6);
+  });
+
   it('tronçon bloqué par un tonnage IGN : la raison est donnée, pas d’itinéraire forcé', () => {
     const r = base();
     const i = r.aretes.findIndex((e) => e.way === 100);

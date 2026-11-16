@@ -172,7 +172,13 @@
                 </tbody>
               </table>
               <p class="petit-txt">
-                {#if ecart != null && ecart > 30}Passer par ici coûterait <strong>{min(ecart)} min</strong> de plus (marche + pénalités) : c'est pourquoi le calcul ne l'a pas retenue.
+                {#if ecart != null && ecart > 30}
+                  {@const dm = x.via.dureeS - x.retenu.dureeS}
+                  {@const dp = (x.via.penalitesS ?? 0) - (x.retenu.penalitesS ?? 0)}
+                  Passer par ici coûterait <strong>{min(ecart)} min</strong> de plus :
+                  {dm < 0 ? `${min(-dm)} min de marche en moins` : `${min(dm)} min de marche en plus`},
+                  {dp >= 0 ? `${min(dp)} min de pénalités en plus` : `${min(-dp)} min de pénalités en moins`}{#if dp > 0 && iti.options.inconnus === 'penaliser'} (ponts sans classe à {iti.options.penaliteInconnuMin} min chacun){/if}.
+                  C'est pourquoi le calcul ne l'a pas retenue{#if dm < 0} ; si ces ponts sont connus praticables, baissez la pénalité dans les options avancées{/if}.
                 {:else}Praticable et à peu près équivalente (écart inférieur à 1 min) : ajoutez une étape sur cette route pour l'imposer.{/if}
               </p>
             {:else}
