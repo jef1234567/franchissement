@@ -14,7 +14,7 @@ Trois audits en lecture seule (A1 itinéraire, A2 verdicts et écoulement, B sou
 | A1-6 | Important | Trous testés après calcul : refus alors qu'un détour existe (vérifié) | Corrigé : tronçons du trou évités dès le calcul ; étape dans un trou refusée |
 | A1-7 | Important | « Pourquoi pas par ici ? » peut ne pas emprunter le tronçon cliqué (vérifié) | Corrigé : deux points imposés sur le tronçon, variantes à demi-tour artificiel écartées |
 | A1-8 | Mineur | Sens contradictoires entre paquets à l'assemblage : premier gardé (hypothèse) | À faire |
-| A1-9 | Mineur | Pieds → m arrondis au plus proche (+2 mm) ; `below_default` = aucune restriction | À faire (avec B-I2) |
+| A1-9 | Mineur | Pieds → m arrondis au plus proche (+2 mm) ; `below_default` = aucune restriction | Corrigé (avec B-I2) : centimètre inférieur ; « sans valeur » alerté |
 | A1-10 | Mineur | Plusieurs ouvrages sur un tronçon : pénalité max, pas somme (voulu, doublons de sources) | Invariant écrit en conséquence |
 | A1-11 | Mineur | « Plus court sans contrainte » = plus rapide, avec interdits et pénalités ; détour pouvant être négatif | À faire (libellé) |
 | A1-12 | Mineur | Performance : 411 ms / 180 000 tronçons ; accrochage linéaire | Après refonte : ≈ 300 ms (grille de 179 400 tronçons) |
@@ -40,22 +40,22 @@ Trois audits en lecture seule (A1 itinéraire, A2 verdicts et écoulement, B sou
 
 ## B — Sources ouvertes (`enligne.ts`, `ign.ts`, `datagouv.ts`, `importation.ts`, `restrictions-lineaires.ts`, `preparation*.ts`, `reseau.ts`)
 
-| # | Gravité | Constat | Correctif proposé |
-|---|---|---|---|
-| B1 | Bloquant | WFS IGN : pagination arrêtée à une page < 5 000 ; `numberMatched` / `numberReturned` non lus, pas de `SORTBY` ; plafond 200 000 silencieux ; mis en cache 30 j (vérifié) | Comparer à `numberMatched`, avancer de `numberReturned`, `SORTBY=cleabs`, écart → erreur « tronqué », trou, pas de cache ; augmenter `VERSION_CACHE` |
-| B2 | Bloquant | Une tuile IGN / TE en échec : toute l'étape échoue, tuiles reçues non appliquées, réseau enregistré sans trace (lecture) | Appliquer les tuiles reçues ; `reseau.lacunes` (source, emprise) exportées et reportées au rapport d'itinéraire |
-| B-I1 | Important | OSM : `hgv=no`, `motor_vehicle=no`, `vehicle=no`, `maxweight:hgv`, conditionnelles non lues ; balises de **nœuds** ignorées (`barrier=height_restrictor` + `maxheight`, `ford=yes`) (vérifié) | Lire, reporter les nœuds sur les tronçons, conditionnelles : valeur la plus stricte + note |
-| B-I2 | Important | `"3.5;7.5"` → null ; `maxheight=default` masque `maxheight:physical` ; `below_default` ignoré ; `"3 m 50"`, `"20 tonnes"` → null ; aucun compteur des valeurs illisibles (vérifié) | Minimum des valeurs lisibles, drapeau « restriction de valeur inconnue », compteur au bilan |
-| B-I3 | Important | `ref="D 347;D 938"` jamais rapproché (vérifié) | Découper sur `;` |
-| B-I4 | Important | data.gouv : CSV à colonnes lat/lon ou X/Y Lambert 93 jeté (« aucune entité dans la zone », masqué) (vérifié) | Distinguer « pas de géométrie lisible » de « hors zone » ; géométrie depuis la correspondance des colonnes avant filtrage |
-| B-I5 | Important | Bilan muet sur les pertes : rejets de lignes, restrictions non rapprochées, ambigus, ouvrages sans tronçon, jeux écartés (lecture) | Compteurs ; statut « partiel » |
-| B-I6 | Important | Valeurs lues par préfixe : `"1 200"` → 1 t, `"4m20"` → 4 m, `"7.5 / 3.5"` → 7,5, `"35"` m accepté (vérifié) | Nombre strict + unité connue sinon rejet ; minimum si plusieurs ; garde-fou ≈ 10 m |
-| B-m1 | Mineur | Toute autre `remark` Overpass acceptée et mise en cache | Tout `remark` non vide → trou |
-| B-m2 | Mineur | Cache : `te:catalogue` vide gardé 30 j ; fichier data.gouv illisible gardé ; clé WFS sans URL | Ne pas garder les réponses vides / illisibles |
-| B-m3 | Mineur | 429 réessayé sans limite (WFS, data.gouv) | 3 essais puis échec signalé |
-| B-m4 | Mineur | Exception WFS en HTTP 200 → « Unexpected token '<' » | Détecter `ExceptionReport` |
-| B-m5 | Mineur | `bridge=culvert` compté comme pont ; `access=no` exclu même avec `motor_vehicle=yes` | Petit ouvrage ; affiner la requête |
-| B-m6 | Mineur | Recherche data.gouv : 20 résultats sans pagination | Paginer ou signaler |
-| B-m7 | Mineur | Tuile IGN à 0 entité sur zone routière non signalée | Signaler « suspect » |
+| # | Gravité | Constat | Correctif proposé | Suite |
+|---|---|---|---|---|
+| B1 | Bloquant | WFS IGN : pagination arrêtée à une page < 5 000 ; `numberMatched` / `numberReturned` non lus, pas de `SORTBY` ; plafond 200 000 silencieux ; mis en cache 30 j (vérifié) | Comparer à `numberMatched`, avancer de `numberReturned`, `SORTBY=cleabs`, écart → erreur « tronqué », trou, pas de cache ; augmenter `VERSION_CACHE` | Corrigé (`telechargerWFS`, `lirePageWFS`) ; tri refusé → repli sans tri ; test `enligne-wfs.test.ts` |
+| B2 | Bloquant | Une tuile IGN / TE en échec : toute l'étape échoue, tuiles reçues non appliquées, réseau enregistré sans trace (lecture) | Appliquer les tuiles reçues ; `reseau.lacunes` (source, emprise) exportées et reportées au rapport d'itinéraire | Corrigé : `reseau.lacunes` (source, emprise, motif), levées à la relance, alerte au rapport avec PK ; tests `lacunes.test.ts`, e2e zone |
+| B-I1 | Important | OSM : `hgv=no`, `motor_vehicle=no`, `vehicle=no`, `maxweight:hgv`, conditionnelles non lues ; balises de **nœuds** ignorées (`barrier=height_restrictor` + `maxheight`, `ford=yes`) (vérifié) | Lire, reporter les nœuds sur les tronçons, conditionnelles : valeur la plus stricte + note | Corrigé : accès bloquants (hgv=no si convoi > 3,5 t ou masse inconnue), variantes hgv, conditionnelles permanentes + alerte, nœuds reportés ; `osm-balises.test.ts` |
+| B-I2 | Important | `"3.5;7.5"` → null ; `maxheight=default` masque `maxheight:physical` ; `below_default` ignoré ; `"3 m 50"`, `"20 tonnes"` → null ; aucun compteur des valeurs illisibles (vérifié) | Minimum des valeurs lisibles, drapeau « restriction de valeur inconnue », compteur au bilan | Corrigé : minimum, physical, below_default = « sans valeur » alerté, écritures françaises, compteur au bilan OSM |
+| B-I3 | Important | `ref="D 347;D 938"` jamais rapproché (vérifié) | Découper sur `;` | Corrigé |
+| B-I4 | Important | data.gouv : CSV à colonnes lat/lon ou X/Y Lambert 93 jeté (« aucune entité dans la zone », masqué) (vérifié) | Distinguer « pas de géométrie lisible » de « hors zone » ; géométrie depuis la correspondance des colonnes avant filtrage | Corrigé : `geometriesDepuisColonnes` (lat / lon, Lambert 93 / II étendu, jamais UTM) ; « pas de position lisible » listé à part ; `sources-b.test.ts` |
+| B-I5 | Important | Bilan muet sur les pertes : rejets de lignes, restrictions non rapprochées, ambigus, ouvrages sans tronçon, jeux écartés (lecture) | Compteurs ; statut « partiel » | Corrigé : lignes rejetées, restrictions non rapprochées, ambigus, ponts sans tronçon, jeux hors zone comptés ; statut partiel |
+| B-I6 | Important | Valeurs lues par préfixe : `"1 200"` → 1 t, `"4m20"` → 4 m, `"7.5 / 3.5"` → 7,5, `"35"` m accepté (vérifié) | Nombre strict + unité connue sinon rejet ; minimum si plusieurs ; garde-fou ≈ 10 m | Corrigé : `mesureStricte` (bornes 10 m hauteur / largeur, 50 m longueur, 200 t) pour les restrictions linéaires et les fiches |
+| B-m1 | Mineur | Toute autre `remark` Overpass acceptée et mise en cache | Tout `remark` non vide → trou | Corrigé |
+| B-m2 | Mineur | Cache : `te:catalogue` vide gardé 30 j ; fichier data.gouv illisible gardé ; clé WFS sans URL | Ne pas garder les réponses vides / illisibles | Corrigé pour le catalogue TE vide ; fichier data.gouv illisible : à faire |
+| B-m3 | Mineur | 429 réessayé sans limite (WFS, data.gouv) | 3 essais puis échec signalé | Corrigé (WFS et recherche data.gouv) |
+| B-m4 | Mineur | Exception WFS en HTTP 200 → « Unexpected token '<' » | Détecter `ExceptionReport` | Corrigé (avec B1) |
+| B-m5 | Mineur | `bridge=culvert` compté comme pont ; `access=no` exclu même avec `motor_vehicle=yes` | Petit ouvrage ; affiner la requête | À faire |
+| B-m6 | Mineur | Recherche data.gouv : 20 résultats sans pagination | Paginer ou signaler | À faire |
+| B-m7 | Mineur | Tuile IGN à 0 entité sur zone routière non signalée | Signaler « suspect » | À faire |
 
 Points conformes (B) : trou Overpass et réponse vide non confirmée ; recherches data.gouv et grille geo.api incomplètes non gardées ; BOM, windows-1252, séparateur, virgule décimale ; ordre des axes BBOX ; dédoublonnage par `cleabs`.

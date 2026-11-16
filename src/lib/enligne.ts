@@ -129,7 +129,8 @@ export async function telechargerReseauOSM(
       try {
         // Serveur Europe : plusieurs tuiles à la fois (deux au plus, voir la préparation) ; les autres, une seule requête à la fois.
         const j = srv.nom === 'Europe' ? await essai() : await uneALaFois(essai);
-        if (j.remark && /runtime error|timed out|out of memory/i.test(j.remark)) throw new Error('réponse tronquée : ' + j.remark);
+        // Toute remarque du serveur signale une réponse incomplète (délai, mémoire, requête interrompue) : jamais gardée (audit B-m1).
+        if (j.remark && j.remark.trim()) throw new Error('réponse tronquée : ' + j.remark);
         if (srv.nom === 'Europe' && !j.elements?.length) { videEurope = j; continue; }
         return j;
       } catch (e) {
@@ -329,7 +330,7 @@ export async function chercherDataGouv(depts: Departement[], suivi: (msg: string
   const acc = new Map<string, JeuDataGouv>();
   const echecs: string[] = [];
   const total = depts.length * THEMES_DATAGOUV.length;
-  let fait = 0, bloquees = 0;
+  let fait = 0, bloquees = 0, refus = 0;
   for (const d of depts) {
     const requetes = requetesDepartement(d);
     for (let k = 0; k < requetes.length; k++) {
@@ -346,7 +347,9 @@ export async function chercherDataGouv(depts: Departement[], suivi: (msg: string
         }
       }
       if (!r) { echecs.push(`${requetes[k]} (sans réponse)`); bloquees++; continue; }
-      if (r.status === 429) { await new Promise((res) => setTimeout(res, 3000)); k--; fait--; continue; }
+      // Trop de demandes : pause et nouvel essai, trois fois au plus pour une même requête (audit B-m3).
+      if (r.status === 429 && ++refus < 3) { await attendre(3000 * refus, signal); k--; fait--; continue; }
+      refus = 0;
       if (!r.ok) { echecs.push(`${requetes[k]} (HTTP ${r.status})`); continue; }
       integrerReponseRecherche(acc, await r.json(), d, THEMES_DATAGOUV[k]);
     }

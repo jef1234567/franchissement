@@ -68,3 +68,27 @@ describe('telechargerWFS (B1)', () => {
     vi.useRealTimers();
   });
 });
+
+describe('Mineurs B-m1, B-m3', async () => {
+  const { chercherDataGouv, telechargerReseauOSM } = await import('./enligne');
+  it('B-m1 : toute « remark » Overpass = réponse tronquée, jamais renvoyée comme complète', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ elements: [{ type: 'node', id: 1, lat: 47, lon: 0 }], remark: 'runtime remark: query interrupted' }), { status: 200 })));
+    const p = telechargerReseauOSM({ sud: 47, ouest: 0, nord: 47.1, est: 0.1 }, false, () => {});
+    const attente = expect(p).rejects.toThrow(/indisponible/);
+    await vi.runAllTimersAsync();
+    await attente;
+    vi.useRealTimers();
+  });
+  it('B-m3 : 429 data.gouv répété → requête comptée en échec après 3 essais (avant : sans limite)', async () => {
+    vi.useFakeTimers();
+    const f = vi.fn(async () => new Response('', { status: 429 }));
+    vi.stubGlobal('fetch', f);
+    const p = chercherDataGouv([{ code: '49', nom: 'Maine-et-Loire' }], () => {});
+    await vi.runAllTimersAsync();
+    const r = await p;
+    expect(r.echecs.every((e) => /429/.test(e))).toBe(true);
+    expect(f.mock.calls.length).toBeLessThanOrEqual(3 * r.echecs.length);
+    vi.useRealTimers();
+  });
+});

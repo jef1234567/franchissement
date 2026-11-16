@@ -4,10 +4,10 @@ import * as stockage from './stockage';
 import { assemblerReseaux } from '../core/assemblage';
 import { nomFichierRessource, type Departement, type JeuDataGouv, type RessourceDataGouv } from '../core/datagouv';
 import { appliquerRestrictionsIGN, appliquerTroncsTE, coucheTEUtile, marquerReseauTE, COUCHE_BDTOPO_ROUTES, type EntiteGeo } from '../core/ign';
-import { appliquerFusion, convertirOuvrages, integrerOuvragesOSM, planifierFusion, tableDepuisCSV, tableDepuisGeoJSON, tableDepuisKML, type TableImport } from '../core/importation';
+import { appliquerFusion, convertirOuvrages, geometriesDepuisColonnes, integrerOuvragesOSM, planifierFusion, tableDepuisCSV, tableDepuisGeoJSON, tableDepuisKML, type TableImport } from '../core/importation';
 import { carreAutour, cleEmprise, decouperEnTuiles, dedoublonnerEntites, filtrerDansEmprise, reconnaitreJeu } from '../core/preparation';
 import { entitesRestrictions } from '../core/restrictions-lineaires';
-import { construireReseau, extraireOuvrages, requeteOverpassReseau, type Lacune, type Reseau } from '../core/reseau';
+import { construireReseau, extraireOuvrages, ouvragesParArete, requeteOverpassReseau, type Lacune, type Reseau } from '../core/reseau';
 import { tableDepuisShapefile } from '../core/shapefile';
 import { haversine, type BBox } from '../core/geo';
 import { assemblerZones, type Zone } from '../core/paquet';
@@ -172,6 +172,8 @@ class Preparation {
         }
       });
       const morceaux = resultats.filter((r): r is Reseau => !!r && r.aretes.length > 0);
+      const illisibles = morceaux.reduce((n, r) => n + (r.illisibles ?? 0), 0);
+      for (const m of morceaux) delete m.illisibles; // compteur du bilan, pas une donnée du réseau
       if (!morceaux.length) throw new Error(echecs.length ? `aucune tuile reçue (${echecs[0].motif})` : 'aucune route dans la zone');
       // Tuile en échec : réseau partiel gardé, la tuile devient un trou.
       const trous = echecs.map((x) => x.tuile);
@@ -194,7 +196,7 @@ class Preparation {
       const osm = extraireOuvrages(reseau);
       const { ouvrages, ajoutes, completes } = integrerOuvragesOSM($state.snapshot(etat.projet.ouvrages) as Ouvrage[], osm);
       etat.projet.ouvrages = ouvrages;
-      const base = `${reseau.aretes.length.toLocaleString('fr-FR')} tronçons, ${osm.length} ponts (${ajoutes} nouveaux, ${completes} complétés)${tuiles.length > 1 ? `, ${tuiles.length} tuiles` : ''}${existant ? ', assemblé à la zone existante' : ''}`;
+      const base = `${reseau.aretes.length.toLocaleString('fr-FR')} tronçons, ${osm.length} ponts (${ajoutes} nouveaux, ${completes} complétés)${tuiles.length > 1 ? `, ${tuiles.length} tuiles` : ''}${existant ? ', assemblé à la zone existante' : ''}${illisibles ? ` ; ${illisibles} valeur(s) de restriction OSM illisible(s), ignorée(s)` : ''}`;
       if (echecs.length) this.etape('osm', 'partiel', `${base} ; ${echecs.length} tuile(s) non reçue(s), en rouge sur la carte (itinéraire refusé s'il les traverse) : relancez « ${existant ? 'Ajouter ce carré à la zone' : 'Préparer la zone'} » sans bouger la carte pour les compléter. Motif : ${echecs[0].motif}`);
       else this.etape('osm', 'ok', base);
       return structuredClone($state.snapshot(etat.reseau)) as Reseau;
@@ -317,6 +319,9 @@ class Preparation {
       // Seuls les jeux qui citent un département de la zone : la recherche par mots-clés ramène aussi ceux d'ailleurs.
       const candidats = jeux.filter((j) => j.mentionneDepartement);
       let troncons = 0, nouveaux = 0, petits = 0, lus = 0;
+      // Pertes comptées et dites au bilan (audit B-I5) : rien ne disparaît en silence.
+      let lignesRejetees = 0, nonRapprochees = 0, ambigus = 0, sansTroncon = 0;
+      const horsZone: string[] = [];
       for (let k = 0; k < candidats.length; k++) {
         if (signal.aborted) throw new Error('arrêté');
         const j = candidats[k];
@@ -326,27 +331,49 @@ class Preparation {
         if (r.taille && r.taille > TAILLE_MAX_AUTO) { nonReconnus.push({ jeu: j, ressource: r, motif: `fichier de ${Math.round(r.taille / 1e6)} Mo` }); continue; }
         this.progression = `data.gouv : jeu ${k + 1} / ${candidats.length} (« ${j.titre} »)…`;
         let t: TableImport;
-        try { t = filtrerDansEmprise(await this.lireRessource(r, signal), bbox); }
-        catch (e) { nonReconnus.push({ jeu: j, ressource: r, motif: 'téléchargement ou lecture impossible : ' + (e as Error).message }); continue; }
+        try {
+          // Géométrie lue aussi dans les colonnes lat / lon ou X / Y (audit B-I4), avant de réduire à la zone.
+          const complete = geometriesDepuisColonnes(await this.lireRessource(r, signal)).table;
+          if (!complete.geometries.some(Boolean)) { nonReconnus.push({ jeu: j, ressource: r, motif: 'pas de position lisible (ni géométrie, ni colonnes latitude / longitude, ni X / Y Lambert)' }); continue; }
+          t = filtrerDansEmprise(complete, bbox);
+        } catch (e) { nonReconnus.push({ jeu: j, ressource: r, motif: 'téléchargement ou lecture impossible : ' + (e as Error).message }); continue; }
+        if (!t.lignes.length) { horsZone.push(j.titre); continue; } // positions lues, aucune dans la zone
         const rec = reconnaitreJeu(t, j.titre);
-        if (rec.nature === 'inconnu') { if (rec.motif !== 'aucune entité dans la zone') nonReconnus.push({ jeu: j, ressource: r, motif: rec.motif }); continue; }
+        if (rec.nature === 'inconnu') { nonReconnus.push({ jeu: j, ressource: r, motif: rec.motif }); continue; }
         lus++;
         const source = `data.gouv – ${j.producteur || j.titre}`.slice(0, 80);
         if (rec.nature === 'troncons') {
-          const b = appliquerRestrictionsIGN(reseau, ouvrages, entitesRestrictions(t, rec.param).entites, source);
+          const er = entitesRestrictions(t, rec.param);
+          lignesRejetees += er.rejets.length;
+          const b = appliquerRestrictionsIGN(reseau, ouvrages, er.entites, source);
           troncons += b.aretesModifiees;
+          nonRapprochees += b.avecRestriction - b.rapprochees;
+          ambigus += b.ambigus;
         } else {
           const conv = convertirOuvrages(t, rec.corr, { type: 'datagouv', libelle: source, reference: r.url, date: new Date().toISOString().slice(0, 10), auteur: j.producteur }, 'reconnu');
+          lignesRejetees += conv.rejets.length;
           const plan = planifierFusion(ouvrages, conv.ouvrages, 60);
           nouveaux += plan.filter((p) => p.action === 'creer' && !p.entrant.petitOuvrage).length;
           petits += plan.filter((p) => p.action === 'creer' && p.entrant.petitOuvrage).length;
           const fusion = appliquerFusion(ouvrages, plan, reseau);
           ouvrages.splice(0, ouvrages.length, ...fusion);
+          // Ouvrages créés qu'aucun tronçon ne porte : sans effet sur les itinéraires, à signaler.
+          const crees = new Set(plan.filter((p) => p.action === 'creer' && !p.entrant.petitOuvrage).map((p) => p.entrant.id));
+          const portes = new Set([...ouvragesParArete(reseau, ouvrages).values()].flat().map((o) => o.id));
+          sansTroncon += [...crees].filter((id) => !portes.has(id)).length;
         }
       }
       this.nonReconnus = nonReconnus;
-      const msg = `${depts.map((d) => d.nom).join(', ')} : ${lus} jeu(x) intégré(s), ${troncons} tronçon(s) restreints, ${nouveaux} pont(s) ajoutés${petits ? `, ${petits} petit(s) ouvrage(s) sous chaussée (avertissement seulement)` : ''}${nonReconnus.length ? ` ; ${nonReconnus.length} jeu(x) à voir à la main` : ''}${avertDepts}${avertDg}`;
-      this.etape('datagouv', nonReconnus.length || pointsEnEchec || avertDg ? 'partiel' : 'ok', msg);
+      const pertes = [
+        lignesRejetees && `${lignesRejetees} ligne(s) rejetée(s) (valeur, nature ou position illisible)`,
+        nonRapprochees && `${nonRapprochees} restriction(s) sans tronçon correspondant`,
+        ambigus && `${ambigus} point(s) ambigus (pont ou route dessous) écartés`,
+        sansTroncon && `${sansTroncon} pont(s) ajouté(s) sans tronçon routier (sans effet sur les itinéraires)`,
+        horsZone.length && `${horsZone.length} jeu(x) sans entité dans la zone`,
+      ].filter(Boolean);
+      const msg = `${depts.map((d) => d.nom).join(', ')} : ${lus} jeu(x) intégré(s), ${troncons} tronçon(s) restreints, ${nouveaux} pont(s) ajoutés${petits ? `, ${petits} petit(s) ouvrage(s) sous chaussée (avertissement seulement)` : ''}${nonReconnus.length ? ` ; ${nonReconnus.length} jeu(x) à voir à la main` : ''}${pertes.length ? ` ; ${pertes.join(', ')}` : ''}${avertDepts}${avertDg}`;
+      const perte = lignesRejetees || nonRapprochees || ambigus || sansTroncon;
+      this.etape('datagouv', nonReconnus.length || pointsEnEchec || avertDg || perte ? 'partiel' : 'ok', msg);
     } catch (e) {
       this.nonReconnus = nonReconnus;
       this.etape('datagouv', 'echec', signal.aborted ? 'arrêté' : (e as Error).message);

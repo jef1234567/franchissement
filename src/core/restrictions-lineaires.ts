@@ -1,6 +1,6 @@
 import { haversine } from './geo';
 import type { EntiteGeo } from './ign';
-import type { TableImport } from './importation';
+import { mesureStricte, type GenreMesure, type TableImport } from './importation';
 
 /* =========================================================================
    Restrictions linéaires (jeux départementaux « limitation de tonnage »,
@@ -82,14 +82,14 @@ export function entitesRestrictions(t: TableImport, p: ParamRestrictions): Resul
     // Géométrie multiple : chaque partie séparément (les mettre bout à bout créerait un faux segment entre elles).
     const parties = (t.parties?.[i] ?? (g ? [g] : [])).filter((x) => x.length > 1);
     if (!g || g.length < 2 || !parties.length) { res.rejets.push({ ligne: n, motif: 'géométrie non linéaire (importer comme ouvrage)' }); return; }
-    const brut = (l[p.colValeur] ?? '').replace(',', '.');
-    const v = parseFloat(brut);
-    if (!Number.isFinite(v) || v <= 0) { res.rejets.push({ ligne: n, motif: `valeur illisible « ${l[p.colValeur] ?? ''} »` }); return; }
     const type = p.type === 'nature' ? natureVersType(p.colNature ? l[p.colNature] : undefined) : p.type;
     if (!type) { res.rejets.push({ ligne: n, motif: `nature de restriction non reconnue « ${p.colNature ? l[p.colNature] ?? '' : ''} »` }); return; }
-    // Garde-fou d'unités : une hauteur, largeur ou longueur au-delà de 50 m est probablement en cm ; un tonnage au-delà de 200 t, en kg.
-    const max = type === 'pmax' || type === 'emax' ? 200 : 50;
-    if (v > max) { res.rejets.push({ ligne: n, motif: `valeur ${v} invraisemblable pour ${TYPES_RESTRICTION.find((x) => x.cle === type)!.libelle} (unité ?)` }); return; }
+    // Lecture stricte (audit B-I6) : « 1 200 », « 4m20 », « 7.5 / 3.5 » ne sont plus lus par leur début ;
+    // garde-fou d'unités : hauteur ou largeur > 10 m, longueur > 50 m, tonnage > 200 t → rejet (unité ?).
+    const genre: GenreMesure = type === 'pmax' || type === 'emax' ? 'masse' : type === 'hmax' ? 'hauteur' : type === 'lmax' ? 'largeur' : 'longueur';
+    const lu = mesureStricte(l[p.colValeur], genre);
+    const v = lu.valeur;
+    if (v == null) { res.rejets.push({ ligne: n, motif: `valeur illisible ou invraisemblable pour ${TYPES_RESTRICTION.find((x) => x.cle === type)!.libelle} « ${l[p.colValeur] ?? ''} »` }); return; }
     const champ = TYPES_RESTRICTION.find((x) => x.cle === type)!.champ;
     res.entites.push({
       properties: { [champ]: v, cpx_numero: refAxe(p.colAxe ? l[p.colAxe] : undefined) || null },

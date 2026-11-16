@@ -15,7 +15,7 @@ import {
 } from './model';
 import { completerVehicules, referentielParDefaut } from './reference';
 import { areteLaPlusProche, type Reseau } from './reseau';
-import { versWGS84, type CodeSCR } from './projections';
+import { devinerSCR, versWGS84, type CodeSCR } from './projections';
 
 /* =========================================================================
    Table générique issue d'un fichier (CSV, GeoJSON, KML)
@@ -316,6 +316,37 @@ export function proposerCorrespondance(colonnes: string[]): Correspondance {
   return res;
 }
 
+/**
+ * Géométrie lue dans les colonnes quand le fichier n'en porte pas (CSV à colonnes lat / lon ou X / Y) : audit B-I4,
+ * un tel jeu était jeté comme « aucune entité dans la zone ». X / Y : Lambert 93 ou Lambert II étendu reconnus
+ * par l'ordre de grandeur, jamais un UTM (zone indéterminable). Seules les lignes sans géométrie sont complétées.
+ */
+export function geometriesDepuisColonnes(t: TableImport): { table: TableImport; methode: string | null } {
+  if (t.geometries.every(Boolean)) return { table: t, methode: null };
+  const corr = proposerCorrespondance(t.colonnes);
+  const geoms = [...t.geometries];
+  let methode: string | null = null;
+  if (corr.lat && corr.lon) {
+    t.lignes.forEach((l, i) => {
+      if (geoms[i]) return;
+      const la = nombreFR(l[corr.lat!]), lo = nombreFR(l[corr.lon!]);
+      if (la != null && lo != null && Math.abs(la) <= 90 && Math.abs(lo) <= 180 && (la !== 0 || lo !== 0)) { geoms[i] = [[la, lo]]; methode = 'colonnes latitude / longitude'; }
+    });
+  }
+  if (corr.x && corr.y && geoms.some((g) => !g)) {
+    const xs = t.lignes.map((l) => nombreFR(l[corr.x!]) ?? NaN), ys = t.lignes.map((l) => nombreFR(l[corr.y!]) ?? NaN);
+    const scr = devinerSCR(xs, ys);
+    if (scr === 'l93' || scr === 'l2e' || scr === 'wgs84') {
+      t.lignes.forEach((_, i) => {
+        if (geoms[i] || !Number.isFinite(xs[i]) || !Number.isFinite(ys[i])) return;
+        const p = scr === 'wgs84' ? [ys[i], xs[i]] as [number, number] : versWGS84(scr, xs[i], ys[i]);
+        if (p && Math.abs(p[0]) <= 90 && Math.abs(p[1]) <= 180) { geoms[i] = [p]; methode = `colonnes X / Y (${scr === 'l93' ? 'Lambert 93' : scr === 'l2e' ? 'Lambert II étendu' : 'degrés'})`; }
+      });
+    }
+  }
+  return { table: { ...t, geometries: geoms }, methode };
+}
+
 /* =========================================================================
    Conversion table → ouvrages (avec validation ligne à ligne)
    ========================================================================= */
@@ -328,6 +359,39 @@ export function nombreFR(txt: string | undefined): number | null {
   if (!m) return null;
   const v = parseFloat(m[0]);
   return Number.isFinite(v) ? v : null;
+}
+
+export type GenreMesure = 'masse' | 'hauteur' | 'largeur' | 'longueur';
+
+/** Bornes de vraisemblance : au-delà, l'unité est probablement fausse (cm, kg) : valeur rejetée, jamais corrigée. */
+export const BORNES_MESURE: Record<GenreMesure, number> = { masse: 200, hauteur: 10, largeur: 10, longueur: 50 };
+
+/**
+ * Valeur de restriction lue strictement (audit B-I6) : nombre entier ou décimal (virgule ou point, milliers séparés
+ * par une espace), unité connue ou absente ; « 4m20 », « 4 m 20 » ; plusieurs valeurs (« 7,5 / 3,5 ») → la plus petite.
+ * Tout autre texte, ou une valeur hors bornes, est « illisible » : rejetée, jamais lue par son début.
+ */
+export function mesureStricte(txt: string | undefined, genre: GenreMesure): { valeur: number | null; illisible: boolean } {
+  const brut = (txt ?? '').trim();
+  if (!brut) return { valeur: null, illisible: false };
+  const KO = { valeur: null, illisible: true };
+  let min: number | null = null;
+  for (const partie of brut.split(/\s*(?:\/|;|\||\bet\b|\bou\b)\s*/i).filter(Boolean)) {
+    const s = partie.toLowerCase().replace(/\u00a0/g, ' ').replace(/^(\d{1,3}(?: \d{3})+)(?=[.,]|\D|$)/, (m) => m.replace(/ /g, '')).replace(',', '.').trim();
+    let v: number | null = null;
+    if (genre === 'masse') {
+      const m = /^(\d+(?:\.\d+)?)\s*(t|tonnes?|kg)?$/.exec(s);
+      if (m) v = m[2] === 'kg' ? parseFloat(m[1]) / 1000 : parseFloat(m[1]);
+    } else {
+      const mc = /^(\d+)\s*m\s*(\d{1,2})$/.exec(s);
+      const m = /^(\d+(?:\.\d+)?)\s*(m|cm)?$/.exec(s);
+      if (mc) v = parseInt(mc[1], 10) + parseInt(mc[2], 10) / (mc[2].length === 1 ? 10 : 100);
+      else if (m) v = m[2] === 'cm' ? parseFloat(m[1]) / 100 : parseFloat(m[1]);
+    }
+    if (v == null || !(v > 0) || v > BORNES_MESURE[genre]) return KO;
+    min = min == null ? v : Math.min(min, v);
+  }
+  return { valeur: min, illisible: false };
 }
 
 function typeDepuis(txt: string | undefined): Ouvrage['type'] {
@@ -403,6 +467,12 @@ export function convertirOuvrages(
       }
       return v;
     };
+    // Restrictions civiles lues strictement (audit B-I6) : illisible ou invraisemblable → ignorée et signalée.
+    const civil = (c: ChampCible, genre: GenreMesure) => {
+      const m = mesureStricte(get(l, c), genre);
+      if (m.illisible) avertissements.push({ ligne: n, motif: `${CHAMPS_CIBLES.find((x) => x.cle === c)!.libelle} « ${get(l, c)} » illisible ou invraisemblable : ignoré(e), à vérifier.` });
+      return m.valeur;
+    };
     // Voie franchie : la route citée passe sous l'ouvrage. Elle n'est pas la route portée, et la hauteur
     // éventuelle est celle du passage dessous : ni l'une ni l'autre ne s'appliquent aux véhicules sur l'ouvrage.
     const franchie = voieFranchie(get(l, 'rattachement'));
@@ -429,7 +499,7 @@ export function convertirOuvrages(
         precaution: classe('classePrecaution'),
         risque: classe('classeRisque'),
       },
-      civil: { poidsMaxT: nombreFR(get(l, 'poidsMax')), hauteurMaxM: nombreFR(get(l, 'hauteurMax')), largeurMaxM: nombreFR(get(l, 'largeurMax')), essieuMaxT: nombreFR(get(l, 'essieuMax')) },
+      civil: { poidsMaxT: civil('poidsMax', 'masse'), hauteurMaxM: civil('hauteurMax', 'hauteur'), largeurMaxM: civil('largeurMax', 'largeur'), essieuMaxT: civil('essieuMax', 'masse') },
       fiabilite: fiabiliteDepuis(get(l, 'fiabilite'), fiabiliteDefaut),
       notes: [notesLues, noteFranchie].filter(Boolean).join(' '),
       // Sans colonne identifiant, chaque ligne garde une référence propre (sinon, au second import du même fichier,
