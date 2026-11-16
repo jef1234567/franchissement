@@ -101,10 +101,15 @@ describe('Planification', () => {
     for (const o of occ) { expect(o.dureeIncertaine).toBe(true); expect(o.finS - o.debutS).toBeGreaterThan(60); }
   });
 
-  it('attentes cumulées : chaque ouvrage commence après la fin de l’écoulement au précédent', () => {
+  it('attentes cumulées : le début à chaque ouvrage inclut le retard pris aux précédents', () => {
     const p = planifier(r, ouv, ref, [mv([el(veh({ mlcCharge: 10 }), 40)], [[47.24, -0.08], [47.28, -0.04], [47.24, -0.12]])], 600);
-    const occ = p.convois[0].occupations;
+    const c = p.convois[0];
+    const occ = c.occupations;
     expect(occ.length).toBeGreaterThan(1);
-    for (let k = 1; k < occ.length; k++) expect(occ[k].debutS).toBeGreaterThanOrEqual(occ[k - 1].debutS);
+    const sansRetard = (k: number) => c.departS + c.itineraire.ouvrages[k].tS;
+    expect(occ[0].debutS).toBe(sansRetard(0));
+    // 40 véhicules : l'écoulement au premier ouvrage dépasse le passage à la vitesse de marche, donc retard au suivant.
+    expect(occ[1].debutS).toBeGreaterThan(sansRetard(1));
+    for (let k = 1; k < occ.length; k++) expect(occ[k].debutS).toBeGreaterThanOrEqual(sansRetard(k));
   });
 });

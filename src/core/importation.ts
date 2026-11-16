@@ -1,6 +1,7 @@
 import { analyserPosition, haversine, longueurPolyligne, milieuPolyligne } from './geo';
 import {
   valeursEnDesaccord,
+  MARQUE_CIVIL_ILLISIBLE,
   estNombre,
   nouvelOuvrage,
   nouveauVehicule,
@@ -468,13 +469,16 @@ export function convertirOuvrages(
       return v;
     };
     // Restrictions civiles lues strictement (audit B-I6) : illisible ou invraisemblable → ignorée et signalée.
+    const illisibles: string[] = [];
     const civil = (c: ChampCible, genre: GenreMesure) => {
       const m = mesureStricte(get(l, c), genre);
+      if (m.illisible) illisibles.push(`${CHAMPS_CIBLES.find((x) => x.cle === c)!.libelle} « ${get(l, c)} »`);
       if (m.illisible) avertissements.push({ ligne: n, motif: `${CHAMPS_CIBLES.find((x) => x.cle === c)!.libelle} « ${get(l, c)} » illisible ou invraisemblable : ignoré(e), à vérifier.` });
       return m.valeur;
     };
     // Voie franchie : la route citée passe sous l'ouvrage. Elle n'est pas la route portée, et la hauteur
     // éventuelle est celle du passage dessous : ni l'une ni l'autre ne s'appliquent aux véhicules sur l'ouvrage.
+    const illisiblesNote = () => illisibles.length ? `${MARQUE_CIVIL_ILLISIBLE} ${illisibles.join(', ')} : à vérifier.` : '';
     const franchie = voieFranchie(get(l, 'rattachement'));
     const petit = !franchie && petitOuvrageSousChaussee(get(l, 'type'), nombreFR(get(l, 'ouverture')));
     const routeLue = (get(l, 'route') ?? '').trim();
@@ -501,7 +505,7 @@ export function convertirOuvrages(
       },
       civil: { poidsMaxT: civil('poidsMax', 'masse'), hauteurMaxM: civil('hauteurMax', 'hauteur'), largeurMaxM: civil('largeurMax', 'largeur'), essieuMaxT: civil('essieuMax', 'masse') },
       fiabilite: fiabiliteDepuis(get(l, 'fiabilite'), fiabiliteDefaut),
-      notes: [notesLues, noteFranchie].filter(Boolean).join(' '),
+      notes: [notesLues, noteFranchie, illisiblesNote()].filter(Boolean).join(' '),
       // Sans colonne identifiant, chaque ligne garde une référence propre (sinon, au second import du même fichier,
       // toutes les lignes se rapprochaient du même ouvrage par la référence commune).
       provenance: { ...provenance, reference: (get(l, 'reference') ?? '').trim() || (provenance.reference ? `${provenance.reference}#ligne ${n}` : undefined) },

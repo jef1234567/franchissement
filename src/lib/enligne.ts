@@ -272,6 +272,7 @@ export async function telechargerWFS(
     if (page.annonce != null) annonce = Math.max(annonce ?? 0, page.annonce);
     toutes.push(...page.features);
     debut += page.features.length;
+    refus = 0; // trois refus consécutifs au plus
     if (!page.features.length || (annonce != null && toutes.length >= annonce)) break;
   }
   if (annonce != null && toutes.length < annonce) throw new ErreurTronquee(`IGN : ${toutes.length.toLocaleString('fr-FR')} entités reçues sur ${annonce.toLocaleString('fr-FR')} annoncées pour ${couche} (réponse tronquée).`);

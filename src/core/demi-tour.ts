@@ -133,6 +133,10 @@ export function zonesDemiTour(r: Reseau, arcs: number[], pasM: number, estBloque
     if (!pkNoeud.has(vers)) pkNoeud.set(vers, pk);
   }
   const longueur = pk;
+  // Giratoire hors trajet : retenu seulement s'il est atteignable depuis le trajet et permet d'y revenir, par des tronçons
+  // praticables, en moins de 1,5 km chaque fois (relecture du lot : un anneau proche mais sans raccordement n'est pas une zone).
+  const aller = distancesBornees(r, [...pkNoeud.keys()], 1500, estBloque, false);
+  const retour = distancesBornees(r, [...pkNoeud.keys()], 1500, estBloque, true);
   const candidats: ZoneDemiTour[] = [];
   if (pts.length >= 2) {
     const marge = ECART_MAX_DEMI_TOUR_M / 111000 + 0.01;
@@ -148,6 +152,7 @@ export function zonesDemiTour(r: Reseau, arcs: number[], pasM: number, estBloque
       let pkSur: number | null = null;
       for (const nd of g.noeuds) { const v = pkNoeud.get(nd); if (v !== undefined && (pkSur === null || v < pkSur)) pkSur = v; }
       if (pkSur !== null) { candidats.push({ pk: pkSur, lat: cl, lon: co, nom, diametreM, ecartM: 0, source: g.source }); continue; }
+      if (![...g.noeuds].some((nd) => aller.has(nd)) || ![...g.noeuds].some((nd) => retour.has(nd))) continue;
       const pr = projeterPolyligne(g.centre, pts);
       const ecart = Math.max(0, pr.d - diametreM / 2);
       if (ecart > ECART_MAX_DEMI_TOUR_M) continue;
@@ -184,4 +189,29 @@ export function zonesDemiTour(r: Reseau, arcs: number[], pasM: number, estBloque
     dernier = choix.pk;
   }
   return { pasM, zones, lacunes, sansBalise };
+}
+
+/** Distances (m) depuis un ensemble de nœuds, bornées, par tronçons praticables dans leur sens permis
+ *  (`inverse` : distances VERS ces nœuds). Petit Dijkstra sans tas : les voisinages explorés sont réduits. */
+function distancesBornees(r: Reseau, depart: number[], maxM: number, estBloque: (e: Arete) => boolean, inverse: boolean): Map<number, number> {
+  const adj = new Map<number, [number, number][]>();
+  const ajouter = (u: number, v: number, l: number) => (adj.get(u) ?? adj.set(u, []).get(u)!).push([v, l]);
+  for (const e of r.aretes) {
+    if (estBloque(e)) continue;
+    const ab = e.sens !== -1, ba = e.sens !== 1;
+    if (ab) { if (inverse) ajouter(e.b, e.a, e.long); else ajouter(e.a, e.b, e.long); }
+    if (ba) { if (inverse) ajouter(e.a, e.b, e.long); else ajouter(e.b, e.a, e.long); }
+  }
+  const dist = new Map<number, number>(depart.map((n) => [n, 0]));
+  const ouverts = new Set(depart);
+  while (ouverts.size) {
+    let u = -1, du = Infinity;
+    for (const n of ouverts) { const d = dist.get(n)!; if (d < du) { du = d; u = n; } }
+    ouverts.delete(u);
+    for (const [v, l] of adj.get(u) ?? []) {
+      const d = du + l;
+      if (d <= maxM && d < (dist.get(v) ?? Infinity)) { dist.set(v, d); ouverts.add(v); }
+    }
+  }
+  return dist;
 }

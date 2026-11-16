@@ -224,3 +224,6 @@ export function nouveauVehicule(partiel: Partial<Vehicule> = {}): Vehicule {
 export function estNombre(x: unknown): x is number {
   return typeof x === 'number' && Number.isFinite(x);
 }
+
+/** Marque portée dans les notes d'un ouvrage dont une restriction civile était illisible dans la source (alerte sur l'itinéraire). */
+export const MARQUE_CIVIL_ILLISIBLE = '[Restriction civile illisible]';

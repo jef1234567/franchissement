@@ -192,6 +192,11 @@ class Preparation {
         reseau = assemblerReseaux([existant, carre]).reseau;
         zone = assemblerZones(etat.zone ? ($state.snapshot(etat.zone) as Zone) : null, zoneCarre, reseau.bbox) ?? zoneCarre;
       }
+      // Compléments IGN et TE marqués manquants d'office sur ce carré, levés seulement par leur étape réussie :
+      // un arrêt ou une page fermée en cours de route ne laisse jamais un réseau présenté comme complet (relecture du lot).
+      const enAttente = [{ emprise: bbox, motif: 'non téléchargé (préparation arrêtée ou interrompue)' }];
+      this.noterLacunes(reseau, 'IGN BD TOPO', bbox, enAttente);
+      this.noterLacunes(reseau, 'IGN transports exceptionnels', bbox, enAttente);
       await etat.definirReseau(reseau, zone);
       const osm = extraireOuvrages(reseau);
       const { ouvrages, ajoutes, completes } = integrerOuvragesOSM($state.snapshot(etat.projet.ouvrages) as Ouvrage[], osm);
@@ -248,7 +253,7 @@ class Preparation {
       if (lacunes.length) this.etape('bdtopo', 'partiel', `${base} ; ${lacunes.length} tuile(s) sur ${tuiles.length} non obtenue(s), signalées sur les itinéraires qui les traversent (relancez « Préparer la zone »). Motif : ${lacunes[0].motif}`);
       else this.etape('bdtopo', 'ok', base);
     } catch (e) {
-      if (!signal.aborted && !(reseau.lacunes ?? []).some((l) => l.source === 'IGN BD TOPO')) this.noterLacunes(reseau, 'IGN BD TOPO', carre, [{ emprise: carre, motif: (e as Error).message }]);
+      if (!signal.aborted) this.noterLacunes(reseau, 'IGN BD TOPO', carre, [{ emprise: carre, motif: (e as Error).message }]);
       this.etape('bdtopo', 'echec', signal.aborted ? 'arrêté' : `${(e as Error).message} ; restrictions IGN absentes de la zone, signalées sur les itinéraires`);
     }
   }
@@ -259,7 +264,10 @@ class Preparation {
     try {
       const catalogue = await enCache('te:catalogue', () => listerCouchesTE(signal), (c) => c.length > 0); // catalogue vide : jamais gardé
       const couches = catalogue.filter((c) => coucheTEUtile(c.nom));
-      if (!couches.length) { this.etape('te', 'partiel', 'aucune couche « transports exceptionnels » dans le catalogue IGN'); return; }
+      if (!couches.length) {
+        this.noterLacunes(reseau, 'IGN transports exceptionnels', carre, [{ emprise: carre, motif: 'aucune couche TE dans le catalogue IGN' }]);
+        this.etape('te', 'partiel', 'aucune couche « transports exceptionnels » dans le catalogue IGN'); return;
+      }
       let aretes = 0, annotes = 0, ambigus = 0;
       const lacunes: { emprise: BBox; motif: string }[] = [];
       for (const c of couches) {
@@ -320,7 +328,7 @@ class Preparation {
       const candidats = jeux.filter((j) => j.mentionneDepartement);
       let troncons = 0, nouveaux = 0, petits = 0, lus = 0;
       // Pertes comptées et dites au bilan (audit B-I5) : rien ne disparaît en silence.
-      let lignesRejetees = 0, nonRapprochees = 0, ambigus = 0, sansTroncon = 0;
+      let lignesRejetees = 0, nonRapprochees = 0, ambigus = 0, sansTroncon = 0, sansPosition = 0, civilsIllisibles = 0;
       const horsZone: string[] = [];
       for (let k = 0; k < candidats.length; k++) {
         if (signal.aborted) throw new Error('arrêté');
@@ -335,6 +343,7 @@ class Preparation {
           // Géométrie lue aussi dans les colonnes lat / lon ou X / Y (audit B-I4), avant de réduire à la zone.
           const complete = geometriesDepuisColonnes(await this.lireRessource(r, signal)).table;
           if (!complete.geometries.some(Boolean)) { nonReconnus.push({ jeu: j, ressource: r, motif: 'pas de position lisible (ni géométrie, ni colonnes latitude / longitude, ni X / Y Lambert)' }); continue; }
+          sansPosition += complete.geometries.filter((g) => !g).length; // lignes écartées faute de position
           t = filtrerDansEmprise(complete, bbox);
         } catch (e) { nonReconnus.push({ jeu: j, ressource: r, motif: 'téléchargement ou lecture impossible : ' + (e as Error).message }); continue; }
         if (!t.lignes.length) { horsZone.push(j.titre); continue; } // positions lues, aucune dans la zone
@@ -352,6 +361,7 @@ class Preparation {
         } else {
           const conv = convertirOuvrages(t, rec.corr, { type: 'datagouv', libelle: source, reference: r.url, date: new Date().toISOString().slice(0, 10), auteur: j.producteur }, 'reconnu');
           lignesRejetees += conv.rejets.length;
+          civilsIllisibles += conv.avertissements.filter((a) => /illisible ou invraisemblable/.test(a.motif)).length;
           const plan = planifierFusion(ouvrages, conv.ouvrages, 60);
           nouveaux += plan.filter((p) => p.action === 'creer' && !p.entrant.petitOuvrage).length;
           petits += plan.filter((p) => p.action === 'creer' && p.entrant.petitOuvrage).length;
@@ -370,9 +380,11 @@ class Preparation {
         ambigus && `${ambigus} point(s) ambigus (pont ou route dessous) écartés`,
         sansTroncon && `${sansTroncon} pont(s) ajouté(s) sans tronçon routier (sans effet sur les itinéraires)`,
         horsZone.length && `${horsZone.length} jeu(x) sans entité dans la zone`,
+        sansPosition && `${sansPosition} ligne(s) sans position lisible écartée(s)`,
+        civilsIllisibles && `${civilsIllisibles} restriction(s) civile(s) d'ouvrage illisible(s), signalée(s) sur les fiches et les itinéraires`,
       ].filter(Boolean);
       const msg = `${depts.map((d) => d.nom).join(', ')} : ${lus} jeu(x) intégré(s), ${troncons} tronçon(s) restreints, ${nouveaux} pont(s) ajoutés${petits ? `, ${petits} petit(s) ouvrage(s) sous chaussée (avertissement seulement)` : ''}${nonReconnus.length ? ` ; ${nonReconnus.length} jeu(x) à voir à la main` : ''}${pertes.length ? ` ; ${pertes.join(', ')}` : ''}${avertDepts}${avertDg}`;
-      const perte = lignesRejetees || nonRapprochees || ambigus || sansTroncon;
+      const perte = lignesRejetees || nonRapprochees || ambigus || sansTroncon || sansPosition || civilsIllisibles;
       this.etape('datagouv', nonReconnus.length || pointsEnEchec || avertDg || perte ? 'partiel' : 'ok', msg);
     } catch (e) {
       this.nonReconnus = nonReconnus;

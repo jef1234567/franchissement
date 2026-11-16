@@ -31,9 +31,10 @@ describe('Lecture stricte des restrictions (B-I6)', () => {
   });
   it('fiche d’ouvrage : valeur civile illisible ignorée et signalée', () => {
     const t = tableDepuisCSV('nom;lat;lon;tonnage\nPont A;47.1;-0.1;3.5 t sauf riverains\n');
-    const c = convertirOuvrages(t, proposerCorrespondance(t.colonnes), { type: 'import', libelle: 'essai' }, 'reconnu');
+    const c = convertirOuvrages(t, proposerCorrespondance(t.colonnes), { type: 'datagouv', libelle: 'essai' }, 'reconnu');
     expect(c.ouvrages[0].civil.poidsMaxT).toBeNull();
     expect(c.avertissements.some((a) => /illisible/.test(a.motif))).toBe(true);
+    expect(c.ouvrages[0].notes).toContain('[Restriction civile illisible]'); // trace sur la fiche, alerte sur l'itinéraire
   });
 });
 

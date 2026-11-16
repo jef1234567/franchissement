@@ -1,5 +1,5 @@
 import { chargeEssieuVehicule } from './verification';
-import { estNombre, type Ouvrage, type Referentiel, type Voies } from './model';
+import { estNombre, MARQUE_CIVIL_ILLISIBLE, type Ouvrage, type Referentiel, type Voies } from './model';
 import { coordsArete, ouvragesParArete, type Arete, type Reseau } from './reseau';
 import { couperPolyligne, distancePointSegment, longueurPolyligne, projeterPolyligne } from './geo';
 import { lacunesTraversees, segmentDansRectangle, trouTraverse } from './trous';
@@ -37,6 +37,8 @@ export interface OptionsItineraire {
   gues?: 'eviter' | 'autoriser';
   /** Intervalle (km) entre deux zones de demi-tour cherchées le long du trajet (giratoires OSM) ; 0 : pas de recherche. */
   zonesDemiTourKm?: number;
+  /** Interne (« Pourquoi pas par ici ? ») : étapes dont l'accroche est imposée sur un tronçon donné (indice d'étape → indice d'arête). */
+  accrochesImposees?: Record<number, number>;
 }
 
 export const OPTIONS_ITINERAIRE_DEFAUT: OptionsItineraire = {
@@ -262,6 +264,9 @@ function preparer(r: Reseau, ouvrages: Ouvrage[], elements: ElementConvoi[], ref
         if (e.barre) bloquants.push('passage barré (BD TOPO)');
         if (interditConvoi(e)) bloquants.push(e.interdit === 'tous' ? 'interdit aux véhicules à moteur (OSM)' : 'interdit aux poids lourds de plus de 3,5 t (OSM hgv=no)');
       }
+      // Origine des valeurs : conditionnelle appliquée en permanence, restriction connue sans valeur (relecture du lot).
+      if (e.cond && bloquants.length) bloquants.push(`dont restriction conditionnelle appliquée en permanence par prudence (${e.cond})`);
+      if (e.sansValeur?.length) penalites.push({ texte: `restriction de ${e.sansValeur.join(', ')} signalée sans valeur (OSM) : à reconnaître`, s: 0 });
       if (e.gue && (opt.gues ?? 'eviter') === 'eviter') bloquants.push('gué ou radier (évités par les options)');
       for (const o of ouvrageParArete.get(e) ?? []) {
         if (exclus.has(o.id)) { bloquants.push(`ouvrage « ${o.nom} » exclu manuellement`); continue; }
@@ -312,7 +317,7 @@ export function accrocher(r: Reseau, p: [number, number], estBloque?: (e: Arete)
     const pr = projeterPolyligne(p, pts);
     const c: Accroche = { arete: i, s: Math.min(pr.s, e.long), distance: pr.d };
     if (!best || c.distance < best.distance) best = c;
-    const surSol = !e.pont && !(e.niveau && e.niveau > 0);
+    const surSol = !e.pont && !e.tunnel && !e.niveau; // ni pont, ni tunnel, ni niveau OSM non nul
     if (surSol && (!bestSol || c.distance < bestSol.distance)) bestSol = c;
   });
   const b = best as Accroche | null, bs = bestSol as Accroche | null;
@@ -479,7 +484,9 @@ export function calculerItineraire(
   for (const [i, p] of etapes.entries()) {
     const t = r0.trous?.find((b) => p[0] >= b.sud && p[0] <= b.nord && p[1] >= b.ouest && p[1] <= b.est);
     if (t) return echec(`Point ${i + 1} : dans une partie de la zone dont le réseau n'a pas pu être téléchargé (tracée en rouge). Relancez « Préparer la zone » pour la compléter.`);
-    const a = accrocher(r0, p, ctx.bloque);
+    // Accroche imposée : le point est pris sur ce tronçon même si une route au sol est plus proche (pont court, relecture du lot).
+    const imposee = opt.accrochesImposees?.[i];
+    const a = imposee != null ? accrocher(r0, p, (e) => e !== r0.aretes[imposee] || ctx.bloque(e)) : accrocher(r0, p, ctx.bloque);
     if (!a) return echec(`Point ${i + 1} : aucun tronçon routier praticable.`);
     if (a.distance > 2000) return echec(`Point ${i + 1} : situé à ${(a.distance / 1000).toFixed(1)} km du réseau chargé (hors zone ?).`);
     if (a.distance > 50) {
@@ -535,7 +542,11 @@ export function calculerItineraire(
     coords.push(...pts);
     const surArete = ctx.ouvrageParArete.get(pe) ?? [];
     for (const o of surArete) {
-      if (!ouvragesPrecedents.has(o.id)) traverses.push({ ouvrage: o, verdict: ctx.verdicts.get(o.id) ?? verifierConvoi(o, elements, opt.voies, ref), pk, tS: duree });
+      if (!ouvragesPrecedents.has(o.id)) {
+        traverses.push({ ouvrage: o, verdict: ctx.verdicts.get(o.id) ?? verifierConvoi(o, elements, opt.voies, ref), pk, tS: duree });
+        // Restriction civile illisible dans la source : ignorée faute de valeur, jamais passée sous silence (relecture du lot).
+        if (o.notes.includes(MARQUE_CIVIL_ILLISIBLE)) alertes.push({ pk, texte: `Ouvrage « ${o.nom} » : restriction civile illisible dans la source, non contrôlée (voir sa fiche) : à vérifier.` });
+      }
     }
     // Petits ouvrages sous chaussée : avertissement quand l'ouvrage est sur ce tronçon (à 25 m près), une fois par ouvrage.
     for (const p of ctx.petitsParArete.get(pe) ?? []) {
@@ -594,7 +605,7 @@ export function calculerItineraire(
     }
   }
   for (const l of lacunesTraversees(coords, r.lacunes, (a, b) => longueurPolyligne([a, b])))
-    alertes.push({ pk: l.pkM, texte: `Données ${l.source} non obtenues sur une partie du trajet (à partir de ce PK ; ${l.motif}) : restrictions de hauteur, largeur ou tonnage peut-être manquantes. Relancez « Préparer la zone » ou reconnaissez la portion.` });
+    alertes.push({ pk: l.pkM, texte: `Données ${l.source} non obtenues sur une partie du trajet (à partir de ce PK ; ${l.motif}) : ${/transports exceptionnels/.test(l.source) ? 'catégories du réseau TE peut-être manquantes' : 'restrictions de hauteur, largeur ou tonnage peut-être manquantes'}. Relancez « Préparer la zone » ou reconnaissez la portion.` });
   const lacunesTriees = r.lacunes?.length;
   const pasDT = opt.zonesDemiTourKm ?? 0;
   const demiTour = pasDT > 0 ? zonesDemiTour(r, arcsChemin, pasDT * 1000, (e) => ctx.bloque(P(e))) : undefined;
@@ -663,7 +674,7 @@ export function expliquerTroncon(
     for (let k = 1; k < etapes.length; k++) {
       for (const [x, y] of [[pa, pb], [pb, pa]]) {
         const pts = [...etapes.slice(0, k), x, y, ...etapes.slice(k)];
-        const c = calculerItineraire(r, ouvrages, elements, ref, pts, opt);
+        const c = calculerItineraire(r, ouvrages, elements, ref, pts, { ...opt, accrochesImposees: { [k]: i, [k + 1]: i } });
         if (!c.ok || c.alertes.some((al) => al.texte.startsWith(`Demi-tour au point ${k + 1} `) || al.texte.startsWith(`Demi-tour au point ${k + 2} `))) continue;
         if (!via || (c.coutS ?? Infinity) < (via.coutS ?? Infinity)) via = c;
       }

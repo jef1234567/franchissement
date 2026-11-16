@@ -1,6 +1,6 @@
 # FRANCHIR — fichier de reprise
 
-Dernière mise à jour : 16/11/2026 (lot fiabilisation, phase 2 faite). Branche `evolution-nationale-convois` du dépôt `jef1234567/franchissement` (privé), partie du commit `ee29fcb` (v2.0 de septembre).
+Dernière mise à jour : 16/11/2026 (lot fiabilisation, phases 3 et 4 faites). Branche `evolution-nationale-convois` du dépôt `jef1234567/franchissement` (privé), partie du commit `ee29fcb` (v2.0 de septembre).
 
 ## Pour reprendre dans une nouvelle session
 
@@ -36,7 +36,7 @@ Coller ce texte :
 | Jeux réels du 49 | Essai des trois CSV Opendatasoft complets (gabarit, tonnage, ouvrages d'art). Quatre défauts corrigés : **(1)** un CSV n'avait jamais de géométrie (colonnes `Geo Shape` GeoJSON et `Geo Point` « lat, lon » désormais lues), donc aucun jeu CSV n'était utilisable ; **(2)** les MultiLineString étaient mises bout à bout, avec un faux segment densifié entre les parties : elles restent maintenant séparées (`TableImport.parties`) ; **(3)** `49 D0323  G` donnait D323G et ne correspondait à aucune route OSM : il donne maintenant D323 ; **(4)** « hauteur » seule était proposée comme hauteur libre, alors que dans l'inventaire 49 c'est l'ouverture sous voûte ou buse : elle ne l'est plus. Nouveau champ « Voie portée / franchie » : sur une voie franchie, ni la route portée ni la hauteur n'est appliquée et une note est ajoutée. Résultat : gabarit 31/31, tonnage 104/104, ouvrages 1 063/1 063 positionnés, 0 hauteur libre erronée | `importation.ts` (`geometriesCSV`, `voieFranchie`), `restrictions-lineaires.ts`, `donnees-49.test.ts`, `SOURCES-NATIONALES.md` §4b |
 | Sources IGN | Bloc « Compléter avec l'IGN » dans Données & zone : restrictions BD TOPO (poids total, par essieu, hauteur, largeur) rapprochées des tronçons OSM, valeur la plus contraignante retenue, écarts tracés ; découverte des couches du réseau national des transports exceptionnels dans le catalogue IGN puis annotation des ouvrages concernés (information, sans classe) | `src/core/ign.ts`, `src/lib/enligne.ts`, `DonneesVue.svelte` |
 
-Tests : 178 tests unitaires (`npm test`) ; bout en bout dans Chromium : `npm run e2e` (existant), `npm run e2e:convois`, `npm run e2e:ign` (service IGN simulé), `npm run e2e:assemblage`, `npm run e2e:datagouv` (data.gouv et geo.api simulés), `npm run e2e:zone` (préparation en un bouton : Overpass, IGN, geo.api et data.gouv simulés ; depuis le lot 2 : deux requêtes simultanées sur Europe, rechargement de page sans retéléchargement, panne d'une tuile puis reprise par « Ajouter ce carré »). Dans l'environnement de développement, `CHROMIUM=/usr/bin/google-chrome`. `npm run e2e` exige `tests/e2e/demo-overpass.json`, non versionné : le régénérer par `npx tsx tests/e2e/paquet-demo.ts`. Les fichiers de démonstration se régénèrent par `npx tsx tests/e2e/paquet-demo.ts`. Variable `CHROMIUM` à renseigner si le chemin du navigateur diffère.
+Tests : 234 tests unitaires (`npm test`) ; bout en bout dans Chromium : `npm run e2e` (existant), `npm run e2e:convois`, `npm run e2e:ign` (service IGN simulé), `npm run e2e:assemblage`, `npm run e2e:datagouv` (data.gouv et geo.api simulés), `npm run e2e:zone` (préparation en un bouton : Overpass, IGN, geo.api et data.gouv simulés ; depuis le lot 2 : deux requêtes simultanées sur Europe, rechargement de page sans retéléchargement, panne d'une tuile puis reprise par « Ajouter ce carré »). Dans l'environnement de développement, `CHROMIUM=/usr/bin/google-chrome`. `npm run e2e` exige `tests/e2e/demo-overpass.json`, non versionné : le régénérer par `npx tsx tests/e2e/paquet-demo.ts`. Les fichiers de démonstration se régénèrent par `npx tsx tests/e2e/paquet-demo.ts`. Variable `CHROMIUM` à renseigner si le chemin du navigateur diffère.
 
 ## Premier essai réel de « Préparer la zone » (13/11/2026, 11 h 25)
 
@@ -97,7 +97,25 @@ Plan, décisions et message de reprise : `docs/ORCHESTRATION-FIABILISATION.md`. 
 - Restriction civile de la fiche d'ouvrage bloquante ; MLC supposée jamais « normal » sans classe normale ; données véhicule manquantes signalées ; écoulement (interdits exclus en mode imposé, 10 m par longueur inconnue, convoi partiel = incertain, pont flottant) ; attentes cumulées aux ouvrages successifs ; trous évités dès le calcul ; « Pourquoi pas par ici ? » emprunte bien le tronçon.
 - Le rapport imprimé reprend désormais les alertes.
 
-**Reste** : corrections B (sources, `AUDIT-FIABILISATION.md` §B, priorité B1, B2, B-I1, B-I4, B-I5, B-I2, B-I3, B-I6), mineurs A restants, relecture indépendante (phase 4), cas réel avec le paquet Saumur de Jean-François.
+**Fait (phase 3, sources)** — détail et tests dans `AUDIT-FIABILISATION.md` §B (colonne « Suite ») :
+- B1 pagination WFS contrôlée (nombre annoncé, tri `cleabs`, réponse tronquée = erreur, jamais en cache) ; B2 tuiles IGN / TE en échec = **lacunes** (`reseau.lacunes`), alerte au rapport d'itinéraire avec PK.
+- B-I1 accès OSM (`hgv=no`, `motor_vehicle=no`), variantes `:hgv`, conditionnelles (permanentes par prudence, alertées), balises de nœuds ; B-I2 valeurs OSM (minimum, `physical`, `below_default` alerté, écritures françaises, compteur) ; B-I3 `ref` multiples ; B-I4 positions lues dans les colonnes lat / lon ou Lambert ; B-I5 pertes comptées au bilan ; B-I6 lecture stricte des valeurs (bornes 10 m / 50 m / 200 t).
+- Mineurs : A1-9, B-m1, B-m2 (catalogue TE), B-m3, B-m4. `VERSION_CACHE` = 2.
+
+**Fait (phase 4, relecture indépendante du diff depuis `2b6e6cb`)** : 4 constats importants et 10 mineurs, aucun bloquant.
+
+| Gravité | Constat | Suite |
+|---|---|---|
+| Important | « Pourquoi pas par ici ? » ne passait pas par un pont court (< 80 m) : points imposés ramenés sur la route au sol | Corrigé : accroche imposée sur le tronçon cliqué ; test |
+| Important | Giratoire proche du trajet mais non raccordé proposé comme zone de demi-tour | Corrigé : atteignable aller et retour en 1,5 km par tronçons praticables ; test |
+| Important | Arrêt pendant IGN / TE (ou page fermée) : réseau sans restrictions IGN et sans lacune | Corrigé : lacunes posées d'office après OSM, levées par l'étape réussie (e2e zone) |
+| Important | Restriction civile d'ouvrage illisible : disparaissait en silence | Corrigé : note sur la fiche, alerte sur l'itinéraire, compte au bilan (statut partiel) ; test |
+| Mineur | Lignes sans position non comptées ; tunnel pris pour route au sol à l'accrochage ; giratoire / niveau perdus à l'assemblage ; compteur 429 jamais remis à zéro ; erreur de type dans un test ; test des attentes cumulées trop faible ; origine conditionnelle / sans valeur absente de « Pourquoi pas par ici ? » | Corrigés |
+| Mineur | Accès `private`, `destination`, `agricultural` non signalés | À faire (alerte « autorisation à vérifier ») |
+| Mineur (hyp.) | Giratoires accolés fusionnés (diamètre surestimé) ; alerte « paquet antérieur » sur un paquet récent sans giratoire | À faire |
+| Mineur (hyp.) | Couches TE paginées sans tri : doublon + manque peuvent égaler le nombre annoncé | À faire (comparer après dédoublonnage) |
+
+**Reste** : mineurs ci-dessus et de l'audit (A1-8, A1-11, A2-7, A2-11, A2-13, B-m2 fichier illisible, B-m5 à B-m7) ; décisions A2-6 et A2-12 (Génie) ; **phase 5** : essai réel de Jean-François et cas réel avec son paquet Saumur (non fourni le 16/11).
 
 ## Reste à faire (ordre proposé)
 
