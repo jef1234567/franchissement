@@ -28,6 +28,14 @@
     etat.initialiser();
   });
 
+  // Navigation latérale rabattable (icônes seules), mémorisée dans ce navigateur.
+  const lireReglage = (k: string) => { try { return localStorage.getItem(k) === '1'; } catch { return false; } };
+  let navRepliee = $state(lireReglage('franchir:nav-repliee'));
+  function basculerNav() {
+    navRepliee = !navRepliee;
+    try { localStorage.setItem('franchir:nav-repliee', navRepliee ? '1' : '0'); } catch { /* stockage indisponible : réglage de session */ }
+  }
+
   // Sauvegarde automatique à chaque modification du projet.
   $effect(() => {
     JSON.stringify(etat.projet);
@@ -58,7 +66,7 @@
 
 <svelte:window onkeydown={clavier} />
 
-<div class="app">
+<div class="app" class:nav-repliee={navRepliee}>
   <header class="entete pas-imprimer">
     <div class="marque">
       <svg viewBox="0 0 32 32" width="30" height="30" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#0B2545" /><path d="M4 21h24M7 21v-4a9 6 0 0 1 18 0v4" stroke="#C9A227" stroke-width="2.5" fill="none" /></svg>
@@ -119,6 +127,9 @@
     <p class="pied muted">
       Aide à la décision — ne remplace ni la reconnaissance ni l'avis du Génie.
     </p>
+    <button class="replier" onclick={basculerNav} title={navRepliee ? 'Déplier le menu' : 'Replier le menu'} aria-label={navRepliee ? 'Déplier le menu' : 'Replier le menu'} aria-expanded={!navRepliee}>
+      <Icone nom={navRepliee ? 'droite' : 'gauche'} taille={18} /><span>Replier le menu</span>
+    </button>
   </nav>
 
   <main class="contenu">
@@ -207,6 +218,10 @@
   .vue.cachee { display: none; }
   .chargement { padding: 40px; color: var(--muted); }
   .bandeau-v1 { display: flex; align-items: center; gap: 10px; padding: 8px 16px; background: var(--m-precaution-bg); border-bottom: 1px solid var(--border); font-size: 13px; }
+  .nav .replier { color: var(--muted); font-weight: 500; font-size: 13px; }
+  .app.nav-repliee { grid-template-columns: 58px minmax(0, 1fr); }
+  .app.nav-repliee .nav button span, .app.nav-repliee .pied { display: none; }
+  .app.nav-repliee .nav button { justify-content: center; padding: 9px 0; }
   @media (max-width: 900px) {
     .app { grid-template-columns: 58px minmax(0, 1fr); }
     .nav button span, .pied, .marque span { display: none; }

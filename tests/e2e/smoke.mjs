@@ -67,6 +67,32 @@ verifier(listeOuvrages.length >= 1, 'au moins un ouvrage traversé');
 verifier(await page.getByText(/de détour/).isVisible(), 'détour affiché par rapport à l\'itinéraire sans contrainte');
 await page.waitForTimeout(400);
 await page.screenshot({ path: path.join(captures, '01-itineraire.png') });
+verifier(await page.getByText('Pourquoi ce trajet ?').isVisible(), 'bloc « Pourquoi ce trajet ? » affiché');
+
+// « Pourquoi pas par ici ? » sur le pont de Varrains (classe 16, évité) : la carte est centrée sur le pont, clic au centre.
+await page.getByRole('button', { name: /Ouvrages/ }).first().click();
+await page.getByPlaceholder('Nom, route, source, notes…').fill('Varrains');
+await page.locator('.ouvrages table.tableau tbody tr').first().click();
+await page.getByRole('button', { name: 'Carte', exact: true }).click();
+await page.getByRole('tab', { name: /Itinéraire/ }).click();
+await page.getByRole('button', { name: 'Pourquoi pas par ici ?' }).click();
+const boite = await page.locator('.carte').boundingBox();
+await page.mouse.click(boite.x + boite.width / 2, boite.y + boite.height / 2);
+await page.locator('.explication').waitFor();
+const expl = await page.locator('.explication').innerText();
+console.log('   explication :', expl.replace(/\n/g, ' | '));
+verifier(/Varrains.*interdit|interdit.*Varrains/s.test(expl), 'pont de Varrains : « interdit pour ce convoi » expliqué');
+await page.screenshot({ path: path.join(captures, '01b-pourquoi.png') });
+await page.locator('.pourquoi').getByRole('button', { name: 'Effacer' }).click();
+
+// Panneaux latéraux rabattables
+await page.getByRole('button', { name: 'Rabattre le panneau' }).click();
+verifier(await page.locator('aside.panneau').isHidden(), 'panneau de droite rabattu');
+await page.getByRole('button', { name: 'Afficher le panneau' }).click();
+verifier(await page.locator('aside.panneau').isVisible(), 'panneau de droite rouvert');
+await page.getByRole('button', { name: 'Replier le menu' }).click();
+verifier(await page.locator('nav.nav button span', { hasText: 'Convois' }).isHidden(), 'menu de gauche replié (icônes seules)');
+await page.getByRole('button', { name: 'Déplier le menu' }).click();
 
 // Fiche d'un ouvrage depuis la carte
 await page.locator('.liste-ouvrages button').first().click();

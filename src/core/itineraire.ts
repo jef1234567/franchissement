@@ -40,7 +40,9 @@ export const OPTIONS_ITINERAIRE_DEFAUT: OptionsItineraire = {
   voies: 'unique',
   modeMax: 'normal',
   inconnus: 'penaliser',
-  penaliteInconnuMin: 30,
+  // 5 min (choix de Jean-François, 16/11/2026) : à 30 min, tant que les classes MLC sont vides (presque tous les ponts
+  // « sans classe »), le calcul cherchait surtout à éviter les ponts et faisait de grands détours. Réglable.
+  penaliteInconnuMin: 5,
   restrictionsCiviles: true,
   vitesseConvoiKmh: 50,
   ouvragesExclus: [],
@@ -76,6 +78,16 @@ export interface ResultatItineraire {
   ouvragesInconnus: Ouvrage[];
   /** Part du trajet sur le réseau des transports exceptionnels (IGN), si ce réseau a été chargé : information, pas une classe. */
   reseauTE?: { surM: number; categorieMin: number | null };
+  /** Coût minimisé par le calcul (s) : temps de marche + pénalités (ponts sans classe, précaution, risque). */
+  coutS?: number;
+  /** Part des pénalités dans ce coût (s). */
+  penalitesS?: number;
+}
+
+/** Ce qui écarte un tronçon : bloquants (le rendent impraticable) et pénalités (le rendent plus « cher »). */
+export interface RaisonsTroncon {
+  bloquants: string[];
+  penalites: { texte: string; s: number }[];
 }
 
 /* ---------- Tas binaire minimal ---------- */
@@ -129,6 +141,7 @@ interface ContexteContraintes {
   verdicts: Map<string, VerdictConvoi>;
   bloque: (e: Arete) => boolean;
   surcout: (e: Arete) => number;
+  raisons: (e: Arete) => RaisonsTroncon;
 }
 
 export function dimensionsConvoi(elements: ElementConvoi[]) {
@@ -152,6 +165,14 @@ function preparer(r: Reseau, ouvrages: Ouvrage[], elements: ElementConvoi[], ref
   for (const [i, l] of ouvragesParArete(r, ouvrages)) ouvrageParArete.set(r.aretes[i], l);
   const petitsParArete = new Map<Arete, Ouvrage[]>();
   for (const [i, l] of ouvragesParArete(r, ouvrages, { petits: true })) petitsParArete.set(r.aretes[i], l);
+  // Un pont découpé en plusieurs tronçons n'est pénalisé qu'une fois par passage : pénalité répartie entre ses tronçons.
+  const nbAretes = new Map<string, number>();
+  for (const l of ouvrageParArete.values()) for (const o of l) nbAretes.set(o.id, (nbAretes.get(o.id) ?? 0) + 1);
+  const penaliteOuvrage = (o: Ouvrage) => {
+    const m = verdict(o).mode;
+    const total = m === 'inconnu' && opt.inconnus === 'penaliser' ? opt.penaliteInconnuMin * 60 : m === 'precaution' ? 120 : m === 'risque' ? 600 : 0;
+    return { m, total, parArete: total / (nbAretes.get(o.id) ?? 1) };
+  };
   const verdicts = new Map<string, VerdictConvoi>();
   const exclus = new Set(opt.ouvragesExclus);
   const dims = dimensionsConvoi(elements);
@@ -189,15 +210,35 @@ function preparer(r: Reseau, ouvrages: Ouvrage[], elements: ElementConvoi[], ref
         return RANG_MODE[m] > rangMax;
       });
     },
+    // Précaution : ralentissement / mise en place (2 min) ; risque : 10 min ; sans classe : pénalité réglable.
     surcout: (e) => {
       let s = 0;
-      for (const o of ouvrageParArete.get(e) ?? []) {
-        const m = verdict(o).mode;
-        if (m === 'inconnu' && opt.inconnus === 'penaliser') s = Math.max(s, opt.penaliteInconnuMin * 60);
-        if (m === 'precaution') s = Math.max(s, 120); // ralentissement / mise en place
-        if (m === 'risque') s = Math.max(s, 600);
-      }
+      for (const o of ouvrageParArete.get(e) ?? []) s = Math.max(s, penaliteOuvrage(o).parArete);
       return s;
+    },
+    raisons: (e) => {
+      const bloquants: string[] = [];
+      const penalites: { texte: string; s: number }[] = [];
+      const f = (x: number | null | undefined) => (estNombre(x) ? String(Math.round(x * 100) / 100).replace('.', ',') : '?');
+      if (!opt.autoroutes && (e.hw === 'motorway' || e.hw === 'motorway_link')) bloquants.push('autoroute exclue par les options');
+      if (opt.restrictionsCiviles) {
+        if (estNombre(e.hmax) && estNombre(dims.hauteur) && dims.hauteur > e.hmax) bloquants.push(`hauteur limitée à ${f(e.hmax)} m (convoi : ${f(dims.hauteur)} m)`);
+        if (estNombre(e.lmax) && estNombre(dims.largeur) && dims.largeur > e.lmax) bloquants.push(`largeur limitée à ${f(e.lmax)} m (convoi : ${f(dims.largeur)} m)`);
+        if (estNombre(e.pmax) && estNombre(dims.masse) && dims.masse > e.pmax) bloquants.push(`tonnage limité à ${f(e.pmax)} t (véhicule le plus lourd : ${f(dims.masse)} t)`);
+        if (estNombre(e.emax) && estNombre(dims.essieu) && dims.essieu > e.emax) bloquants.push(`charge à l'essieu limitée à ${f(e.emax)} t (convoi : ${f(dims.essieu)} t)`);
+        if (estNombre(e.lgmax) && estNombre(dims.longueur) && dims.longueur > e.lgmax) bloquants.push(`longueur limitée à ${f(e.lgmax)} m (convoi : ${f(dims.longueur)} m)`);
+        if (e.barre) bloquants.push('passage barré (BD TOPO)');
+      }
+      if (e.gue && (opt.gues ?? 'eviter') === 'eviter') bloquants.push('gué ou radier (évités par les options)');
+      for (const o of ouvrageParArete.get(e) ?? []) {
+        if (exclus.has(o.id)) { bloquants.push(`ouvrage « ${o.nom} » exclu manuellement`); continue; }
+        const { m, total } = penaliteOuvrage(o);
+        if (m === 'interdit') bloquants.push(`ouvrage « ${o.nom} » interdit pour ce convoi`);
+        else if (m === 'inconnu' && opt.inconnus === 'bloquer') bloquants.push(`ouvrage « ${o.nom} » sans classe (évité par les options)`);
+        else if (m !== 'inconnu' && RANG_MODE[m] > rangMax) bloquants.push(`ouvrage « ${o.nom} » en mode ${m === 'risque' ? 'risque' : 'précaution'}, au-delà du mode toléré`);
+        else if (total > 0) penalites.push({ texte: m === 'inconnu' ? `ouvrage « ${o.nom} » sans classe : pénalité de ${Math.round(total / 60)} min` : `ouvrage « ${o.nom} » en mode ${m === 'risque' ? 'risque' : 'précaution'} : ${Math.round(total / 60)} min`, s: total });
+      }
+      return { bloquants, penalites };
     },
   };
 }
@@ -332,6 +373,7 @@ export function calculerItineraire(
   const alertes: AlerteTroncon[] = [];
   let pk = 0;
   let duree = 0;
+  let penalites = 0;
   let surTE = 0;
   let catTE: number | null = null;
   for (const { i, depuis } of aretesChemin) {
@@ -372,6 +414,7 @@ export function calculerItineraire(
     ouvragesPrecedents = new Set(surArete.map((o) => o.id));
     pk += e.long;
     duree += tempsArete(e, opt.vitesseConvoiKmh);
+    penalites += ctx.surcout(e);
   }
 
   const trou = trouTraverse(coords, r.trous);
@@ -389,11 +432,64 @@ export function calculerItineraire(
     }
   }
   const ouvragesInconnus = [...new Set(traverses.filter((t) => t.verdict.mode === 'inconnu').map((t) => t.ouvrage))];
-  return { ok: true, coords, distanceM: pk, dureeS: duree, ouvrages: traverses, alertes, classeItineraire, maillonFaible, ouvragesInconnus, reseauTE: r.aretes.some((x) => estNombre(x.te)) ? { surM: surTE, categorieMin: catTE } : undefined };
+  return { ok: true, coords, distanceM: pk, dureeS: duree, ouvrages: traverses, alertes, classeItineraire, maillonFaible, ouvragesInconnus, reseauTE: r.aretes.some((x) => estNombre(x.te)) ? { surM: surTE, categorieMin: catTE } : undefined, coutS: duree + penalites, penalitesS: penalites };
 }
 
 export function pireModeItineraire(res: ResultatItineraire): ModeRequis {
   let m: ModeRequis = 'normal';
   for (const t of res.ouvrages) if (RANG_MODE[t.verdict.mode] > RANG_MODE[m]) m = t.verdict.mode;
   return m;
+}
+
+/* =========================================================================
+   « Pourquoi pas par ici ? » : ce qui écarte un tronçon choisi sur la carte,
+   et ce que coûterait un itinéraire forcé à l'emprunter.
+   ========================================================================= */
+
+export interface ExplicationTroncon {
+  /** Indice de l'arête retenue (la plus proche du clic). */
+  arete: number;
+  nom: string;
+  /** Distance du clic au tronçon (m). */
+  distanceClicM: number;
+  raisons: RaisonsTroncon;
+  /** Itinéraire retenu (même options). */
+  retenu: ResultatItineraire;
+  /** Itinéraire forcé par ce tronçon (absent si le tronçon est bloqué). */
+  via: ResultatItineraire | null;
+}
+
+/** Explique un tronçon proche de `point` (à 150 m au plus), au regard de l'itinéraire `etapes`. */
+export function expliquerTroncon(
+  r: Reseau, ouvrages: Ouvrage[], elements: ElementConvoi[], ref: Referentiel,
+  etapes: [number, number][], opt: OptionsItineraire, point: [number, number],
+): ExplicationTroncon | null {
+  let best: { i: number; d: number } | null = null;
+  r.aretes.forEach((e, i) => {
+    const pts = coordsArete(r, e);
+    for (let k = 1; k < pts.length; k++) {
+      const d = distancePointSegment(point, pts[k - 1], pts[k]);
+      if (!best || d < best.d) best = { i, d };
+    }
+  });
+  if (!best || (best as { d: number }).d > 150) return null;
+  const { i, d } = best as { i: number; d: number };
+  const e = r.aretes[i];
+  const ctx = preparer(r, ouvrages, elements, ref, opt);
+  const raisons = ctx.raisons(e);
+  const retenu = calculerItineraire(r, ouvrages, elements, ref, etapes, opt);
+  let via: ResultatItineraire | null = null;
+  if (!raisons.bloquants.length && etapes.length >= 2) {
+    // Le tronçon est imposé par ses deux extrémités, dans un sens puis dans l'autre, entre chaque paire d'étapes : le moins coûteux l'emporte.
+    const pa: [number, number] = [r.noeuds[2 * e.a], r.noeuds[2 * e.a + 1]];
+    const pb: [number, number] = [r.noeuds[2 * e.b], r.noeuds[2 * e.b + 1]];
+    for (let k = 1; k < etapes.length; k++) {
+      for (const [x, y] of [[pa, pb], [pb, pa]]) {
+        const pts = [...etapes.slice(0, k), x, y, ...etapes.slice(k)];
+        const c = calculerItineraire(r, ouvrages, elements, ref, pts, opt);
+        if (c.ok && (!via || (c.coutS ?? Infinity) < (via.coutS ?? Infinity))) via = c;
+      }
+    }
+  }
+  return { arete: i, nom: e.nom || e.ref || `voie OSM ${e.way}`, distanceClicM: d, raisons, retenu, via };
 }

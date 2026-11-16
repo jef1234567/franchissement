@@ -1,4 +1,4 @@
-import { calculerItineraire, OPTIONS_ITINERAIRE_DEFAUT, type OptionsItineraire, type ResultatItineraire } from '../core/itineraire';
+import { calculerItineraire, expliquerTroncon, OPTIONS_ITINERAIRE_DEFAUT, type ExplicationTroncon, type OptionsItineraire, type ResultatItineraire } from '../core/itineraire';
 import { calculerEcoulement } from '../core/ecoulement';
 import { versMGRS } from '../core/geo';
 import { convoiVide, developper, type Convoi } from './convoi';
@@ -25,6 +25,24 @@ class EtatItineraire {
   reference = $state.raw<ResultatItineraire | null>(null);
   ecoulementTotalS = $state<number | null>(null);
   calculEnCours = $state(false);
+  /** « Pourquoi pas par ici ? » : en attente d'un clic sur une route de la carte. */
+  saisiePourquoi = $state(false);
+  explication = $state.raw<ExplicationTroncon | null>(null);
+  /** Message quand le clic n'a rien donné (trop loin d'une route). */
+  explicationVide = $state('');
+
+  /** Explique le tronçon le plus proche du point cliqué, avec le convoi et les options de l'itinéraire courant. */
+  expliquer(point: [number, number]) {
+    this.saisiePourquoi = false;
+    this.explicationVide = '';
+    const r = etat.reseau;
+    const pts = this.etapes.map((e) => e.pos).filter((p): p is [number, number] => !!p);
+    const dev = developper(etat.projet, this.convoi);
+    if (!r || pts.length < 2 || !dev.elements.length) { this.explicationVide = "Calculez d'abord un itinéraire."; return; }
+    const x = expliquerTroncon(r, etat.projet.ouvrages, dev.elements, etat.projet.referentiel, pts, $state.snapshot(this.options) as OptionsItineraire, point);
+    if (!x) { this.explication = null; this.explicationVide = 'Aucune route à moins de 150 m du clic : cliquez sur la route elle-même.'; return; }
+    this.explication = x;
+  }
 
   definirEtape(id: number, pos: [number, number]) {
     const e = this.etapes.find((x) => x.id === id);
@@ -42,6 +60,8 @@ class EtatItineraire {
     const dev = developper(etat.projet, this.convoi);
     if (!dev.elements.length) { etat.notifier('Choisissez une unité ou des véhicules.', 'err'); return; }
     this.calculEnCours = true;
+    this.explication = null;
+    this.explicationVide = '';
     await new Promise((res) => setTimeout(res, 20)); // laisse l'interface afficher « calcul… »
     try {
       const opts = $state.snapshot(this.options) as OptionsItineraire;
@@ -69,6 +89,9 @@ class EtatItineraire {
   }
 
   effacer() {
+    this.explication = null;
+    this.explicationVide = '';
+    this.saisiePourquoi = false;
     this.resultat = null;
     this.reference = null;
     this.ecoulementTotalS = null;

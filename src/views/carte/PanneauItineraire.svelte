@@ -22,6 +22,13 @@
   const mlcSupposees = $derived(res?.ok ? [...new Set(res.ouvrages.flatMap((t) => t.verdict.mlcSupposees ?? []))] : []);
   const pire = $derived(res?.ok ? pireModeItineraire(res) : null);
   const detour = $derived(res?.ok && iti.reference?.ok ? res.distanceM - iti.reference.distanceM : 0);
+  const nbInconnus = $derived(res?.ok ? res.ouvrages.filter((t) => t.verdict.mode === 'inconnu').length : 0);
+  const min = (s: number) => Math.round(s / 60);
+  const x = $derived(iti.explication);
+  /** Écart de coût (s) entre l'itinéraire forcé par le tronçon et l'itinéraire retenu. */
+  const ecart = $derived(x?.via?.ok && x.retenu.ok ? (x.via.coutS ?? 0) - (x.retenu.coutS ?? 0) : null);
+  /** Amène l'explication dans le champ du panneau dès qu'elle apparaît. */
+  const montrer = (el: HTMLElement) => { el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); };
   const titre = $derived(() => {
     const u = iti.convoi.type === 'unite' ? etat.projet.unites.find((x) => x.id === (iti.convoi as { uniteId: string }).uniteId)?.nom : 'Convoi à la carte';
     return `Itinéraire ${u ?? ''}`.trim();
@@ -129,6 +136,52 @@
         <div><span>Franchissements</span><strong>{iti.ecoulementTotalS != null ? formatDuree(iti.ecoulementTotalS) : '—'}</strong><em>écoulement cumulé</em></div>
       </div>
       {#if pire}<p>Mode le plus contraignant : <Pastille mode={pire} /></p>{/if}
+
+      <div class="pourquoi">
+        <h4>Pourquoi ce trajet ?</h4>
+        <p class="petit-txt">
+          Le calcul retient le trajet le moins « coûteux » : <strong>{formatDuree(res.dureeS)}</strong> de marche{#if (res.penalitesS ?? 0) > 0}
+            + <strong>{min(res.penalitesS ?? 0)} min</strong> de pénalités{/if}.
+          {#if nbInconnus && iti.options.inconnus === 'penaliser'}{nbInconnus} pont(s) sans classe traversé(s), {iti.options.penaliteInconnuMin} min chacun.{/if}
+          {#if detour > 50}Le plus court sans aucune contrainte fait {((iti.reference?.distanceM ?? 0) / 1000).toFixed(1)} km (tireté gris) : les {(detour / 1000).toFixed(1)} km de plus viennent des contraintes.{/if}
+        </p>
+        <div class="ligne">
+          <button class="btn petit" class:primaire={iti.saisiePourquoi} onclick={() => { iti.saisiePourquoi = !iti.saisiePourquoi; iti.saisieCarte = null; }}>
+            <Icone nom="viseur" taille={15} /> {iti.saisiePourquoi ? 'Cliquez sur une route…' : 'Pourquoi pas par ici ?'}
+          </button>
+          {#if x || iti.explicationVide}<button class="btn petit fantome" onclick={() => { iti.explication = null; iti.explicationVide = ''; }}>Effacer</button>{/if}
+        </div>
+        {#if iti.explicationVide}<p class="petit-txt muted">{iti.explicationVide}</p>{/if}
+        {#if x}
+          {#key x}
+          <div class="explication" role="status" use:montrer>
+            <p><strong>{x.nom}</strong> <span class="muted petit-txt">(surlignée sur la carte{x.via?.ok ? ", passage forcé en tireté orange" : ""})</span></p>
+            {#if x.raisons.bloquants.length}
+              <p class="petit-txt">Écartée, impraticable pour ce convoi :</p>
+              <ul>{#each x.raisons.bloquants as b, i (i)}<li>{b}</li>{/each}</ul>
+              <p class="petit-txt muted">Pour l'autoriser quand même : options avancées (restrictions civiles, gués, ponts sans classe) ou fiche de l'ouvrage.</p>
+            {:else if x.via?.ok && x.retenu.ok}
+              {#if x.raisons.penalites.length}<ul>{#each x.raisons.penalites as p, i (i)}<li>{p.texte}</li>{/each}</ul>{/if}
+              <table class="comparaison">
+                <thead><tr><th></th><th>Retenu</th><th>Par ici</th></tr></thead>
+                <tbody>
+                  <tr><td>Distance</td><td>{(x.retenu.distanceM / 1000).toFixed(1)} km</td><td>{(x.via.distanceM / 1000).toFixed(1)} km</td></tr>
+                  <tr><td>Marche</td><td>{formatDuree(x.retenu.dureeS)}</td><td>{formatDuree(x.via.dureeS)}</td></tr>
+                  <tr><td>Pénalités</td><td>{min(x.retenu.penalitesS ?? 0)} min</td><td>{min(x.via.penalitesS ?? 0)} min</td></tr>
+                  <tr><td>Ponts sans classe</td><td>{x.retenu.ouvrages.filter((t) => t.verdict.mode === 'inconnu').length}</td><td>{x.via.ouvrages.filter((t) => t.verdict.mode === 'inconnu').length}</td></tr>
+                </tbody>
+              </table>
+              <p class="petit-txt">
+                {#if ecart != null && ecart > 30}Passer par ici coûterait <strong>{min(ecart)} min</strong> de plus (marche + pénalités) : c'est pourquoi le calcul ne l'a pas retenue.
+                {:else}Praticable et à peu près équivalente (écart inférieur à 1 min) : ajoutez une étape sur cette route pour l'imposer.{/if}
+              </p>
+            {:else}
+              <p class="petit-txt">Praticable, mais aucun itinéraire ne permet de l'emprunter entre vos points avec les contraintes retenues.</p>
+            {/if}
+          </div>
+          {/key}
+        {/if}
+      </div>
       {#if mlcSupposees.length}
         <p class="encadre alerte petit-txt" role="alert"><strong>Compatibilité supposée, à vérifier :</strong> {mlcSupposees.join(', ')} — classe MLC non renseignée, déclarée compatible sur les ouvrages classés. Faire confirmer chaque franchissement par le Génie.</p>
       {/if}
@@ -180,4 +233,11 @@
   .pk { color: var(--muted); text-align: right; }
   .nom { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .classe { text-align: right; font-weight: 650; }
+  .pourquoi { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--border); padding-top: 8px; }
+  .pourquoi p { margin: 0; }
+  .explication { background: color-mix(in srgb, #f08c00 9%, var(--surface)); border: 1px solid color-mix(in srgb, #f08c00 45%, var(--border)); border-radius: 6px; padding: 8px 10px; display: flex; flex-direction: column; gap: 5px; }
+  .explication ul { margin: 0; padding-left: 18px; font-size: 13px; }
+  .comparaison { border-collapse: collapse; font-size: 12.5px; width: 100%; }
+  .comparaison th, .comparaison td { padding: 3px 6px; text-align: right; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+  .comparaison th:first-child, .comparaison td:first-child { text-align: left; color: var(--muted); }
 </style>
