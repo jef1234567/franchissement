@@ -79,6 +79,8 @@ function combiner(sources: Arete[]): Omit<Arete, 'a' | 'b' | 'long' | 'geom'> {
   const r: Omit<Arete, 'a' | 'b' | 'long' | 'geom'> = { ...base };
   for (const s of sources.slice(1)) {
     if (s.pont) r.pont = 1;
+    if (s.buse) r.buse = 1;
+    if (s.acces && !r.acces) r.acces = s.acces;
     if (s.tunnel) r.tunnel = 1;
     if (s.gue) r.gue = 1;
     if (s.barre) r.barre = 1;

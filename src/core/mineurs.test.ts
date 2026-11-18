@@ -87,3 +87,82 @@ describe('A2-11 : synthèses complètes', () => {
     expect(v.synthese).toMatch(/données manquantes \(Sans classe\)\. Avec précaution pour : Moyen\./);
   });
 });
+
+/* OSM : accès soumis à autorisation, access=no levé, buses (B-m5). */
+import { construireReseau, extraireOuvrages, requeteOverpassReseau, restrictionsOSM } from './reseau';
+
+describe('Accès OSM soumis à autorisation (relecture phase 4)', () => {
+  const r = (t: Record<string, string>) => restrictionsOSM(t, { illisibles: 0 });
+  it('private, destination, agricultural : signalés, non bloquants', () => {
+    expect(r({ highway: 'unclassified', motor_vehicle: 'private' }).acces).toBe('private');
+    expect(r({ highway: 'unclassified', access: 'destination' }).acces).toBe('destination');
+    expect(r({ highway: 'track', motor_vehicle: 'agricultural;forestry' }).acces).toBe('agricultural');
+    expect(r({ highway: 'unclassified', access: 'destination' }).interdit).toBeUndefined();
+  });
+  it('la clé la plus précise l\'emporte', () => {
+    expect(r({ access: 'private', motor_vehicle: 'yes' }).acces).toBeUndefined();
+    expect(r({ access: 'yes', hgv: 'destination' }).acces).toBe('destination');
+  });
+});
+
+describe('B-m5 : access=no levé par une clé plus précise', () => {
+  const r = (t: Record<string, string>) => restrictionsOSM(t, { illisibles: 0 });
+  it('access=no seul : interdit ; avec motor_vehicle=yes : praticable', () => {
+    expect(r({ access: 'no' }).interdit).toBe('tous');
+    expect(r({ access: 'no', motor_vehicle: 'yes' }).interdit).toBeUndefined();
+    expect(r({ access: 'no', hgv: 'designated' }).interdit).toBeUndefined();
+  });
+  it('la requête Overpass garde ces voies', () => {
+    const q = requeteOverpassReseau(BB, false);
+    expect(q).toContain('["access"!~"^(private|no)$"]');
+    expect(q).toContain('[~"^(vehicle|motor_vehicle|hgv)$"~"^(yes|designated|permissive|destination)$"]');
+  });
+});
+
+describe('B-m5 : bridge=culvert = petit ouvrage, pas un pont', () => {
+  const json = {
+    elements: [
+      { type: 'node' as const, id: 1, lat: 47.01, lon: 0.01 },
+      { type: 'node' as const, id: 2, lat: 47.0101, lon: 0.0101 },
+      { type: 'node' as const, id: 3, lat: 47.0102, lon: 0.0102 },
+      { type: 'node' as const, id: 4, lat: 47.02, lon: 0.02 },
+      { type: 'way' as const, id: 10, nodes: [1, 2], tags: { highway: 'primary', ref: 'D 1' } },
+      { type: 'way' as const, id: 11, nodes: [2, 3], tags: { highway: 'primary', ref: 'D 1', bridge: 'culvert', layer: '1' } },
+      { type: 'way' as const, id: 12, nodes: [3, 4], tags: { highway: 'primary', ref: 'D 1' } },
+    ],
+  };
+  it('tronçon non marqué pont, ouvrage « petit ouvrage » estimé', () => {
+    const res = construireReseau(json, BB);
+    const e = res.aretes.find((x) => x.way === 11)!;
+    expect(e.pont).toBeUndefined();
+    expect(e.buse).toBe(1);
+    const ouv = extraireOuvrages(res);
+    expect(ouv).toHaveLength(1);
+    expect(ouv[0].petitOuvrage).toBe(true);
+    expect(ouv[0].nom).toBe('Buse D 1');
+  });
+});
+
+import { calculerItineraire, OPTIONS_ITINERAIRE_DEFAUT } from './itineraire';
+describe('Itinéraire : accès à autorisation et buse signalés', () => {
+  it('alertes au rapport, itinéraire non bloqué', () => {
+    const json = {
+      elements: [
+        { type: 'node' as const, id: 1, lat: 47.01, lon: 0.01 },
+        { type: 'node' as const, id: 2, lat: 47.011, lon: 0.011 },
+        { type: 'node' as const, id: 3, lat: 47.012, lon: 0.012 },
+        { type: 'node' as const, id: 4, lat: 47.02, lon: 0.02 },
+        { type: 'way' as const, id: 10, nodes: [1, 2], tags: { highway: 'primary', ref: 'D 1' } },
+        { type: 'way' as const, id: 11, nodes: [2, 3], tags: { highway: 'primary', ref: 'D 1', bridge: 'culvert' } },
+        { type: 'way' as const, id: 12, nodes: [3, 4], tags: { highway: 'primary', ref: 'D 2', motor_vehicle: 'destination' } },
+      ],
+    };
+    const res = construireReseau(json, BB);
+    const it = calculerItineraire(res, extraireOuvrages(res), [el(veh('V', 20))], ref, [[47.01, 0.01], [47.02, 0.02]], OPTIONS_ITINERAIRE_DEFAUT);
+    expect(it.ok).toBe(true);
+    const textes = it.alertes.map((a) => a.texte).join('\n');
+    expect(textes).toMatch(/Accès « destination » \(OSM\) sur D 2 : autorisation de passage à vérifier/);
+    expect(textes).toMatch(/Petit ouvrage sous chaussée « Buse D 1 »/);
+    expect(it.ouvrages).toHaveLength(0);
+  });
+});

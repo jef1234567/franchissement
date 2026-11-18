@@ -45,7 +45,7 @@ export const TUILES_SIMULTANEES_EUROPE = 2;
 const cache = new Map<string, unknown>();
 let reutilisees = 0;
 /** À augmenter dès que les requêtes ou leur lecture changent : les réponses gardées sous l'ancienne version sont ignorées. */
-const VERSION_CACHE = 2; // 2 : pagination WFS fiabilisée, balises OSM de nœuds et d'accès lues (16/11/2026)
+const VERSION_CACHE = 3; // 2 : pagination WFS fiabilisée, balises OSM de nœuds et d'accès lues (16/11/2026) ; 3 : défauts mineurs (18/11/2026)
 /** Empreinte courte d'un texte (requête Overpass) : une requête modifiée ne réutilise pas une réponse gardée. */
 function empreinte(t: string): string {
   let h = 2166136261;
