@@ -111,11 +111,13 @@ Plan, décisions et message de reprise : `docs/ORCHESTRATION-FIABILISATION.md`. 
 | Important | Arrêt pendant IGN / TE (ou page fermée) : réseau sans restrictions IGN et sans lacune | Corrigé : lacunes posées d'office après OSM, levées par l'étape réussie (e2e zone) |
 | Important | Restriction civile d'ouvrage illisible : disparaissait en silence | Corrigé : note sur la fiche, alerte sur l'itinéraire, compte au bilan (statut partiel) ; test |
 | Mineur | Lignes sans position non comptées ; tunnel pris pour route au sol à l'accrochage ; giratoire / niveau perdus à l'assemblage ; compteur 429 jamais remis à zéro ; erreur de type dans un test ; test des attentes cumulées trop faible ; origine conditionnelle / sans valeur absente de « Pourquoi pas par ici ? » | Corrigés |
-| Mineur | Accès `private`, `destination`, `agricultural` non signalés | À faire (alerte « autorisation à vérifier ») |
-| Mineur (hyp.) | Giratoires accolés fusionnés (diamètre surestimé) ; alerte « paquet antérieur » sur un paquet récent sans giratoire | À faire |
-| Mineur (hyp.) | Couches TE paginées sans tri : doublon + manque peuvent égaler le nombre annoncé | À faire (comparer après dédoublonnage) |
+| Mineur | Accès `private`, `destination`, `agricultural` non signalés | Corrigé le 18/11/2026 : alerte « autorisation de passage à vérifier » (clé la plus précise : hgv > motor_vehicle > vehicle > access) |
+| Mineur (hyp.) | Giratoires accolés fusionnés (diamètre surestimé) ; alerte « paquet antérieur » sur un paquet récent sans giratoire | Corrigé le 18/11/2026 : pas de propagation par un nœud commun à deux anneaux ; marque `giratoiresLus` sur les réseaux construits depuis (paquets antérieurs : alerte maintenue) |
+| Mineur (hyp.) | Couches TE paginées sans tri : doublon + manque peuvent égaler le nombre annoncé | Corrigé le 18/11/2026 : entités dédoublonnées (id WFS, sinon cleabs) avant comparaison |
 
-**Reste** : mineurs ci-dessus et de l'audit (A1-8, A1-11, A2-7, A2-11, A2-13, B-m2 fichier illisible, B-m5 à B-m7) ; décisions A2-6 et A2-12 (Génie) ; **phase 5** : essai réel de Jean-François et cas réel avec son paquet Saumur (non fourni le 16/11).
+**Mineurs traités le 18/11/2026** (branche `fiabilisation-mineurs`, PR vers `evolution-nationale-convois`) : tous ceux ci-dessus et de l'audit (A1-8, A1-11, A2-7, A2-11, A2-13, B-m2, B-m5 à B-m7), tests dans `src/core/mineurs.test.ts`, `src/lib/enligne-wfs.test.ts`, `src/lib/preparation-cache.test.ts` ; `VERSION_CACHE` = 3. Défaut de l'essai réel du 18/11/2026 : la couche `SECUROUT.TE:franchissement_te` renvoie des points, que `marquerReseauTE` ignorait (seules les lignes étaient lues) ; points lus désormais, rattachés au pont OSM à 12 m au plus (`ign.test.ts`) — rayon à confirmer sur les 11 points de Saumur. Requête Overpass modifiée (voies access=no / private rouvertes par une clé plus précise) : à observer lors de l'essai réel.
+
+**Reste** : décisions A2-6 et A2-12 (Génie) ; **phase 5** : essai réel de Jean-François et cas réel avec son paquet Saumur (non fourni le 16/11).
 
 ## Reste à faire (ordre proposé)
 

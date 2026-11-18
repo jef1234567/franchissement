@@ -123,7 +123,7 @@
         <section class="carte-ui section pile">
           <h3>Conflits</h3>
           {#if !res.conflits.length}
-            <p class="muted">Aucun conflit : pas deux convois sur le même ouvrage à moins de {convois.margeMin} min d'intervalle.</p>
+            <p class="muted">Aucun conflit : pas deux passages sur le même ouvrage à moins de {convois.margeMin} min d'intervalle.</p>
           {:else}
             <div class="tableau-wrap">
               <table class="tableau">
@@ -133,14 +133,14 @@
                     <tr>
                       <td><button class="lien" onclick={() => etat.ouvrirFiche(k.ouvrage.id)}>{k.ouvrage.nom}</button>{#if k.ouvrage.route} <span class="muted">({k.ouvrage.route})</span>{/if}</td>
                       <td><i class="puce" style="background:{couleur(k.a.convoiId)}"></i> {k.a.convoi} <span class="mono">{sEnHeure(k.a.debutS)}–{sEnHeure(k.a.finS)}</span></td>
-                      <td><i class="puce" style="background:{couleur(k.b.convoiId)}"></i> {k.b.convoi} <span class="mono">{sEnHeure(k.b.debutS)}–{sEnHeure(k.b.finS)}</span></td>
+                      <td><i class="puce" style="background:{couleur(k.b.convoiId)}"></i> {k.b.convoi} <span class="mono">{sEnHeure(k.b.debutS)}–{sEnHeure(k.b.finS)}</span>{#if k.memeConvoi} <em class="petit-txt">(même convoi, retour : la tête revient avant que la queue ait dégagé)</em>{/if}</td>
                       <td class="num">{duree(k.recouvrementS)}</td>
                     </tr>
                   {/each}
                 </tbody>
               </table>
             </div>
-            <p class="petit-txt muted">Pistes : décaler l'heure H d'un convoi d'au moins le recouvrement, ou exclure l'ouvrage pour l'un des convois.</p>
+            <p class="petit-txt muted">Pistes : décaler l'heure H d'un convoi d'au moins le recouvrement, ou exclure l'ouvrage pour l'un des convois ; pour un même convoi qui repasse, choisir une zone de demi-tour plus éloignée ou marquer un arrêt avant le retour.</p>
           {/if}
         </section>
 
@@ -163,7 +163,7 @@
                 {/each}
               </svg>
             </div>
-            <p class="petit-txt muted">Hypothèses : vitesse constante ; ouvrage sans classe : durée estimée en franchissement avec précaution (prudent) ; fenêtre = arrivée de la tête + durée d'écoulement du convoi sur l'ouvrage ; attentes en amont non cumulées. Contour rouge = conflit ; barre pâle = durée estimée (ouvrage sans classe).</p>
+            <p class="petit-txt muted">Hypothèses : vitesse constante ; ouvrage sans classe : durée estimée en franchissement avec précaution (prudent) ; fenêtre = arrivée de la tête + durée d'écoulement du convoi sur l'ouvrage ; attentes aux ouvrages précédents cumulées (borne prudente). Contour rouge = conflit ; barre pâle = durée estimée (ouvrage sans classe).</p>
           </section>
         {/if}
       {/if}

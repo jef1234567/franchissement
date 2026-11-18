@@ -29,7 +29,7 @@ export interface BilanDemiTour {
   zones: ZoneDemiTour[];
   /** Portions de plus de `pasM` sans zone repérée. */
   lacunes: { deM: number; aM: number }[];
-  /** Aucun giratoire balisé dans le réseau (paquet antérieur au lot) : seule la forme a pu servir. */
+  /** Aucun giratoire balisé dans un réseau construit sans lire la balise (paquet antérieur au lot) : seule la forme a pu servir. */
   sansBalise: boolean;
 }
 
@@ -48,10 +48,12 @@ interface Giratoire {
 }
 
 export function giratoires(r: Reseau): { liste: Giratoire[]; sansBalise: boolean } {
-  const balises = r.aretes.some((e) => e.giratoire);
+  // Balise lue à la construction (`giratoiresLus`) : aucun giratoire balisé = aucun giratoire, pas de recherche par la forme.
+  const balises = r.aretes.some((e) => e.giratoire) || !!r.giratoiresLus;
   const groupes: number[][] = [];
   if (balises) {
-    // Anneaux balisés : tronçons reliés par leurs nœuds.
+    // Anneaux balisés : tronçons reliés par leurs nœuds. Un nœud commun à deux anneaux accolés (4 tronçons d'anneau ou
+    // plus) ne propage pas : chaque anneau reste seul, son diamètre n'est plus surestimé (relecture du lot).
     const parNoeud = new Map<number, number[]>();
     r.aretes.forEach((e, i) => {
       if (!e.giratoire) return;
@@ -67,7 +69,11 @@ export function giratoires(r: Reseau): { liste: Giratoire[]; sansBalise: boolean
         const k = pile.pop()!;
         g.push(k);
         const ek = r.aretes[k];
-        for (const n of [ek.a, ek.b]) for (const j of parNoeud.get(n) ?? []) if (!vu.has(j)) { vu.add(j); pile.push(j); }
+        for (const n of [ek.a, ek.b]) {
+          const l = parNoeud.get(n) ?? [];
+          if (l.length > 2) continue;
+          for (const j of l) if (!vu.has(j)) { vu.add(j); pile.push(j); }
+        }
       }
       groupes.push(g);
     });

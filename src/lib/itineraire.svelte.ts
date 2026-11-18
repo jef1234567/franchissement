@@ -68,7 +68,8 @@ class EtatItineraire {
       const ref = etat.projet.referentiel;
       const ouvrages = etat.projet.ouvrages;
       this.resultat = calculerItineraire(r, ouvrages, dev.elements, ref, pts, opts);
-      // Itinéraire de comparaison : plus court sans contrainte de franchissement.
+      // Itinéraire de comparaison (audit A1-11) : le plus RAPIDE (pas le plus court) sans les contraintes du convoi ;
+      // sens de circulation, trous et pénalités précaution / risque conservés. Écart de distance négatif possible (non affiché).
       this.reference = calculerItineraire(r, ouvrages, dev.elements, ref, pts, {
         ...opts, modeMax: 'risque', inconnus: 'autoriser', restrictionsCiviles: false, ouvragesExclus: [], gues: 'autoriser',
         voies: opts.voies,

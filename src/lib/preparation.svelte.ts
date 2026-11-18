@@ -2,8 +2,8 @@ import { etat } from './etat.svelte';
 import { chercherDataGouv, departementsDesEmprisesDetail, listerCouchesTE, SERVEURS_OVERPASS, telechargerReseauOSM, telechargerRessource, telechargerWFS } from './enligne';
 import * as stockage from './stockage';
 import { assemblerReseaux } from '../core/assemblage';
-import { nomFichierRessource, type Departement, type JeuDataGouv, type RessourceDataGouv } from '../core/datagouv';
-import { appliquerRestrictionsIGN, appliquerTroncsTE, coucheTEUtile, marquerReseauTE, COUCHE_BDTOPO_ROUTES, type EntiteGeo } from '../core/ign';
+import { nomFichierRessource, PAGES_MAX_DATAGOUV, type Departement, type JeuDataGouv, type RessourceDataGouv } from '../core/datagouv';
+import { appliquerRestrictionsIGN, appliquerTroncsTE, coucheTEUtile, marquerReseauTE, COUCHE_BDTOPO_ROUTES, tuileVideSuspecte, type EntiteGeo } from '../core/ign';
 import { appliquerFusion, convertirOuvrages, geometriesDepuisColonnes, integrerOuvragesOSM, planifierFusion, tableDepuisCSV, tableDepuisGeoJSON, tableDepuisKML, type TableImport } from '../core/importation';
 import { carreAutour, cleEmprise, decouperEnTuiles, dedoublonnerEntites, filtrerDansEmprise, reconnaitreJeu } from '../core/preparation';
 import { entitesRestrictions } from '../core/restrictions-lineaires';
@@ -45,7 +45,7 @@ export const TUILES_SIMULTANEES_EUROPE = 2;
 const cache = new Map<string, unknown>();
 let reutilisees = 0;
 /** À augmenter dès que les requêtes ou leur lecture changent : les réponses gardées sous l'ancienne version sont ignorées. */
-const VERSION_CACHE = 2; // 2 : pagination WFS fiabilisée, balises OSM de nœuds et d'accès lues (16/11/2026)
+const VERSION_CACHE = 3; // 2 : pagination WFS fiabilisée, balises OSM de nœuds et d'accès lues (16/11/2026) ; 3 : défauts mineurs (18/11/2026)
 /** Empreinte courte d'un texte (requête Overpass) : une requête modifiée ne réutilise pas une réponse gardée. */
 function empreinte(t: string): string {
   let h = 2166136261;
@@ -54,16 +54,37 @@ function empreinte(t: string): string {
 }
 /** Réponse Overpass vide du seul serveur Europe, non confirmée par un autre serveur : ni gardée, ni prise pour une zone sans route. */
 const nonConfirmee = (v: unknown) => !!v && typeof v === 'object' && Array.isArray((v as { elements?: unknown[] }).elements) && !(v as { elements: unknown[] }).elements.length && !!(v as { nonConfirme?: boolean }).nonConfirme;
-async function enCache<T>(cleBrute: string, f: () => Promise<T>, garder: (v: T) => boolean = () => true): Promise<T> {
+async function enCache<T>(cleBrute: string, f: () => Promise<T>, garder: (v: T) => boolean | Promise<boolean> = () => true): Promise<T> {
   const cle = `v${VERSION_CACHE}:${cleBrute}`;
   if (cache.has(cle)) { reutilisees++; return cache.get(cle) as T; }
   const garde = await stockage.lireCache<T>(cle);
   if (garde !== undefined) { cache.set(cle, garde); reutilisees++; return garde; }
   const v = await f();
-  if (nonConfirmee(v) || !garder(v)) return v;
+  if (nonConfirmee(v) || !(await garder(v))) return v;
   cache.set(cle, v);
   await stockage.ecrireCache(cle, v);
   return v;
+}
+
+async function tableRessource(buf: ArrayBuffer, nomFichier: string): Promise<TableImport> {
+  const nom = nomFichier.toLowerCase();
+  if (nom.endsWith('.zip')) return tableDepuisShapefile(buf);
+  const texte = (() => { try { return new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch { return new TextDecoder('windows-1252').decode(buf); } })();
+  if (nom.endsWith('.kml')) return tableDepuisKML(texte);
+  if (nom.endsWith('.geojson') || nom.endsWith('.json')) return tableDepuisGeoJSON(texte);
+  return tableDepuisCSV(texte);
+}
+
+/** Fichier data.gouv lu ; gardé en cache seulement s'il a pu être lu (audit B-m2 : un fichier illisible restait 30 jours). */
+export async function lireRessourceDataGouv(r: RessourceDataGouv, signal?: AbortSignal): Promise<TableImport> {
+  const nom = nomFichierRessource(r);
+  let table: TableImport | null = null;
+  let erreur: unknown = null;
+  const buf = await enCache(`dg:${r.id}`, () => telechargerRessource(r, signal), async (b) => {
+    try { table = await tableRessource(b, nom); return true; } catch (e) { erreur = e; return false; }
+  });
+  if (erreur) throw erreur;
+  return table ?? (await tableRessource(buf, nom));
 }
 
 /** Oublie les téléchargements gardés (mémoire et navigateur). */
@@ -211,21 +232,25 @@ class Preparation {
     }
   }
 
-  /** Couche WFS tuile par tuile : une tuile en échec n'arrête pas les autres ; elle devient une lacune (source, emprise, motif). */
-  private async wfsParTuiles(couche: string, tuiles: BBox[], signal: AbortSignal): Promise<{ entites: EntiteGeo[]; lacunes: { emprise: BBox; motif: string }[] }> {
+  /** Couche WFS tuile par tuile : une tuile en échec n'arrête pas les autres ; elle devient une lacune (source, emprise, motif).
+   *  `reseauAttendu` (BD TOPO) : une tuile vide là où le réseau OSM a des routes est comptée suspecte et pas gardée en cache (B-m7). */
+  private async wfsParTuiles(couche: string, tuiles: BBox[], signal: AbortSignal, reseauAttendu?: Reseau): Promise<{ entites: EntiteGeo[]; lacunes: { emprise: BBox; motif: string }[]; suspectes: number }> {
     const toutes: EntiteGeo[] = [];
     const lacunes: { emprise: BBox; motif: string }[] = [];
+    let suspectes = 0;
     for (let i = 0; i < tuiles.length; i++) {
       try {
+        const suspecte = (ents: EntiteGeo[]) => !!reseauAttendu && tuileVideSuspecte(reseauAttendu, tuiles[i], ents.length) !== null;
         const ents = await enCache(cleEmprise(couche, tuiles[i]), () =>
-          telechargerWFS(couche, tuiles[i], (m) => (this.progression = `${tuiles.length > 1 ? `Tuile ${i + 1} / ${tuiles.length} — ` : ''}${m}`), signal));
+          telechargerWFS(couche, tuiles[i], (m) => (this.progression = `${tuiles.length > 1 ? `Tuile ${i + 1} / ${tuiles.length} — ` : ''}${m}`), signal), (e) => !suspecte(e));
+        if (suspecte(ents)) suspectes++;
         toutes.push(...ents);
       } catch (e) {
         if (signal.aborted) throw e;
         lacunes.push({ emprise: tuiles[i], motif: (e as Error).message });
       }
     }
-    return { entites: dedoublonnerEntites(toutes), lacunes };
+    return { entites: dedoublonnerEntites(toutes), lacunes, suspectes };
   }
 
   /** Remplace les lacunes d'une source sur le carré préparé (relance) par celles de ce passage. */
@@ -240,7 +265,7 @@ class Preparation {
     if (signal.aborted) { this.etape('bdtopo', 'saute', 'arrêté'); return; }
     this.etape('bdtopo', 'encours');
     try {
-      const { entites, lacunes } = await this.wfsParTuiles(COUCHE_BDTOPO_ROUTES, tuiles, signal);
+      const { entites, lacunes, suspectes } = await this.wfsParTuiles(COUCHE_BDTOPO_ROUTES, tuiles, signal, reseau);
       this.noterLacunes(reseau, 'IGN BD TOPO', carre, lacunes);
       if (lacunes.length === tuiles.length) throw new Error(lacunes[0].motif);
       // Tuiles reçues appliquées même si d'autres ont échoué.
@@ -248,9 +273,10 @@ class Preparation {
       const pertes = [
         b.ambigus && `${b.ambigus} point(s) ambigus (pont ou route dessous) écartés`,
         b.avecRestriction - b.rapprochees > 0 && `${b.avecRestriction - b.rapprochees} restriction(s) sans tronçon OSM correspondant`,
+        suspectes && `${suspectes} tuile(s) sans aucun tronçon IGN alors qu'OpenStreetMap y a des routes (réponse suspecte, normale seulement hors de France : relancez « Préparer »)`,
       ].filter(Boolean);
       const base = `${b.avecRestriction} tronçon(s) IGN avec restriction, ${b.aretesModifiees} tronçon(s) et ${b.ouvragesModifies} pont(s) mis à jour${pertes.length ? ` ; ${pertes.join(', ')}` : ''}`;
-      if (lacunes.length) this.etape('bdtopo', 'partiel', `${base} ; ${lacunes.length} tuile(s) sur ${tuiles.length} non obtenue(s), signalées sur les itinéraires qui les traversent (relancez « Préparer la zone »). Motif : ${lacunes[0].motif}`);
+      if (lacunes.length || suspectes) this.etape('bdtopo', 'partiel', !lacunes.length ? base : `${base} ; ${lacunes.length} tuile(s) sur ${tuiles.length} non obtenue(s), signalées sur les itinéraires qui les traversent (relancez « Préparer la zone »). Motif : ${lacunes[0].motif}`);
       else this.etape('bdtopo', 'ok', base);
     } catch (e) {
       if (!signal.aborted) this.noterLacunes(reseau, 'IGN BD TOPO', carre, [{ emprise: carre, motif: (e as Error).message }]);
@@ -286,14 +312,8 @@ class Preparation {
     }
   }
 
-  private async lireRessource(r: RessourceDataGouv, signal: AbortSignal): Promise<TableImport> {
-    const buf = await enCache(`dg:${r.id}`, () => telechargerRessource(r, signal));
-    const nom = nomFichierRessource(r).toLowerCase();
-    if (nom.endsWith('.zip')) return tableDepuisShapefile(buf);
-    const texte = (() => { try { return new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch { return new TextDecoder('windows-1252').decode(buf); } })();
-    if (nom.endsWith('.kml')) return tableDepuisKML(texte);
-    if (nom.endsWith('.geojson') || nom.endsWith('.json')) return tableDepuisGeoJSON(texte);
-    return tableDepuisCSV(texte);
+  private lireRessource(r: RessourceDataGouv, signal: AbortSignal): Promise<TableImport> {
+    return lireRessourceDataGouv(r, signal);
   }
 
   private async etapeDataGouv(reseau: Reseau, ouvrages: Ouvrage[], bbox: BBox, signal: AbortSignal) {
@@ -316,7 +336,7 @@ class Preparation {
       const avertDepts = pointsEnEchec ? ` ; ${pointsEnEchec} point(s) sans réponse de geo.api.gouv.fr : un département en bordure peut manquer (relancez « Préparer »)` : '';
       // Recherche incomplète (requêtes en échec) : utilisée mais pas gardée en cache, et signalée.
       const cleDg = `v${VERSION_CACHE}:dg:${depts.map((d) => d.code).join(',')}`;
-      let rech = (cache.get(cleDg) as { jeux: JeuDataGouv[]; echecs: string[] } | undefined) ?? (await stockage.lireCache<{ jeux: JeuDataGouv[]; echecs: string[] }>(cleDg));
+      let rech = (cache.get(cleDg) as { jeux: JeuDataGouv[]; echecs: string[]; limitees?: string[] } | undefined) ?? (await stockage.lireCache<{ jeux: JeuDataGouv[]; echecs: string[]; limitees?: string[] }>(cleDg));
       if (rech) reutilisees++;
       else {
         rech = await chercherDataGouv(depts, (m) => (this.progression = m), signal);
@@ -324,6 +344,8 @@ class Preparation {
       }
       const { jeux } = rech;
       const avertDg = rech.echecs.length ? ` ; ${rech.echecs.length} recherche(s) data.gouv sans réponse (${rech.echecs[0]}…) : relancez « Préparer »` : '';
+      // Recherches aux résultats nombreux : seules les premières pages (les plus pertinentes) sont examinées, et c'est dit (B-m6).
+      const avertLimite = rech.limitees?.length ? ` ; ${rech.limitees.length} recherche(s) aux résultats nombreux, limitée(s) aux ${20 * PAGES_MAX_DATAGOUV} plus pertinents (${rech.limitees[0]}) : chercher à la main dans Données & zone si un jeu manque` : '';
       // Seuls les jeux qui citent un département de la zone : la recherche par mots-clés ramène aussi ceux d'ailleurs.
       const candidats = jeux.filter((j) => j.mentionneDepartement);
       let troncons = 0, nouveaux = 0, petits = 0, lus = 0;
@@ -383,7 +405,7 @@ class Preparation {
         sansPosition && `${sansPosition} ligne(s) sans position lisible écartée(s)`,
         civilsIllisibles && `${civilsIllisibles} restriction(s) civile(s) d'ouvrage illisible(s), signalée(s) sur les fiches et les itinéraires`,
       ].filter(Boolean);
-      const msg = `${depts.map((d) => d.nom).join(', ')} : ${lus} jeu(x) intégré(s), ${troncons} tronçon(s) restreints, ${nouveaux} pont(s) ajoutés${petits ? `, ${petits} petit(s) ouvrage(s) sous chaussée (avertissement seulement)` : ''}${nonReconnus.length ? ` ; ${nonReconnus.length} jeu(x) à voir à la main` : ''}${pertes.length ? ` ; ${pertes.join(', ')}` : ''}${avertDepts}${avertDg}`;
+      const msg = `${depts.map((d) => d.nom).join(', ')} : ${lus} jeu(x) intégré(s), ${troncons} tronçon(s) restreints, ${nouveaux} pont(s) ajoutés${petits ? `, ${petits} petit(s) ouvrage(s) sous chaussée (avertissement seulement)` : ''}${nonReconnus.length ? ` ; ${nonReconnus.length} jeu(x) à voir à la main` : ''}${pertes.length ? ` ; ${pertes.join(', ')}` : ''}${avertDepts}${avertDg}${avertLimite}`;
       const perte = lignesRejetees || nonRapprochees || ambigus || sansTroncon || sansPosition || civilsIllisibles;
       this.etape('datagouv', nonReconnus.length || pointsEnEchec || avertDg || perte ? 'partiel' : 'ok', msg);
     } catch (e) {
