@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { etat } from '../../lib/etat.svelte';
   import { LIBELLE_TYPE_OUVRAGE, type Ouvrage, type TypeOuvrage } from '../../core/model';
   import { analyserPosition, versMGRS } from '../../core/geo';
@@ -7,7 +8,7 @@
 
   // Composant recréé à chaque changement d'ouvrage ({#key}) : lecture initiale volontaire.
   let { ouvrage: o }: { ouvrage: Ouvrage } = $props();
-  let posTexte = $state(o.lat != null && o.lon != null ? versMGRS(o.lat, o.lon) ?? '' : '');
+  let posTexte = $state(untrack(() => (o.lat != null && o.lon != null ? versMGRS(o.lat, o.lon) ?? '' : '')));
   let posInvalide = $state(false);
 
   function saisirPosition(t: string) {
