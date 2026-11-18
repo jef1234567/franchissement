@@ -31,6 +31,17 @@ Ce que le diagnostic vérifie seul, dans les conditions de FRANCHIR (même navig
 
 Un échec « bloqué avant réponse » ne dit pas si c'est le CORS, le filtrage du réseau ou une panne : cliquer « ouvrir dans un onglet » sur la ligne. Si l'onglet affiche une réponse, c'est le CORS (ou un 504 sans en-tête CORS, comme le 13/11) ; s'il n'affiche rien, c'est le réseau.
 
+## Résultat du diagnostic du 18/11/2026 (Edge 157, poste de Jean-François, Saumur 20 km, 211 s)
+
+9 contrôles OK, 2 échecs, tous deux chez Overpass.
+
+- **Overpass** : Europe OK (0,6 s, données OSM de la veille) ; principal **HTTP 502, serveur saturé** ; private.coffee sans réponse en 60 s. FRANCHIR interroge Europe en premier : sans effet tant qu'Europe répond, mais aucun repli réel ce jour-là.
+- **geo.api.gouv.fr** : 16 points sur 16, Maine-et-Loire seul, mais **45 s** (environ 3 s par point).
+- **data.gouv** : CORS confirmé (API et redirection `/datasets/r/` vers `data.maine-et-loire.fr`). Trouvés : ouvrages d'art, tonnage et gabarit du 49, téléchargés tous les trois (19, 544 et 224 Ko). « transports exceptionnels » et « ponts » ne trouvent rien.
+- **IGN BD TOPO** : 22 750 tronçons en 5 pages et 8,7 s ; annoncé = reçu ; aucun doublon ; ordre [lon, lat]. Pagination du lot B1 validée en réel. Restrictions : hauteur 115, poids total 6, essieu 484, gués 4. Les tronçons sur ouvrage avec restriction ne montraient que l'A85 (essieu 13 t) : la liste d'exemples est désormais variée (hauteur et poids total d'abord, une voie par exemple).
+- **Couches TE (point 2 fait)** : `franchissement_te`, `troncon_te`, `prescritpion_te` (sic), `franchissement_te_lien_prescription`, `troncon_te_lien_prescription`. Sur la zone, 469 tronçons de catégories 72 (412) et 48 (57) ; 11 franchissements ; 9 prescriptions ; 76 s en tout. Les franchissements portent `gestionnaire_du_franchissement` et `type_de_franchissement` (le diagnostic lisait `gestionnaire` : corrigé).
+- **Constat sur FRANCHIR** : `marquerReseauTE` (`src/core/ign.ts`) ne lit que les lignes (`pointsLigne`). Or les franchissements TE sont des **points** (mesure du 13/11) : ils n'annotent probablement aucun pont. Les « ponts annotés » du bilan viennent des tronçons TE. À confirmer par le type de géométrie, que le diagnostic affiche désormais, puis à corriger (lecture des points, un test).
+
 ## Étapes 1 à 7 — Dans FRANCHIR (35 min)
 
 Noter les résultats dans le gabarit en fin de page. Une capture d'écran du bilan suffit souvent.

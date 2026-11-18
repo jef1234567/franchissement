@@ -279,7 +279,12 @@ async function cBDTopo(b) {
   // Ordre des coordonnées : GeoJSON [lon, lat] attendu ; certains serveurs renvoient [lat, lon] en EPSG:4326.
   const ordre = ponts.length ? (Math.abs(ponts[0].x) > 40 ? '[lat, lon]' : '[lon, lat]') : '?';
   const enLatLon = ordre === '[lat, lon]';
-  const exemples = ponts.slice(0, 5).map((q) => {
+  // Exemples variés : hauteur et poids total d'abord (la charge à l'essieu de 13 t est générique), un par voie.
+  const tries = [...ponts].sort((a, b2) => (b2.h || b2.pt ? 1 : 0) - (a.h || a.pt ? 1 : 0));
+  const parVoie = new Set(), choisis = [];
+  for (const q of tries) { if (!parVoie.has(q.nom)) { parVoie.add(q.nom); choisis.push(q); } if (choisis.length === 5) break; }
+  for (const q of tries) { if (choisis.length >= 5) break; if (!choisis.includes(q)) choisis.push(q); }
+  const exemples = choisis.map((q) => {
     const lat = enLatLon ? q.x : q.y, lon = enLatLon ? q.y : q.x;
     const r1 = [q.h && `hauteur ${q.h} m`, q.pt && `poids ${q.pt} t`, q.e && `essieu ${q.e} t`, q.la && `largeur ${q.la} m`, q.lo && `longueur ${q.lo} m`].filter(Boolean).join(', ');
     return `- ${q.nom} : ${r1} — https://www.openstreetmap.org/?mlat=${lat.toFixed(5)}&mlon=${lon.toFixed(5)}#map=18/${lat.toFixed(5)}/${lon.toFixed(5)}`;
@@ -299,15 +304,24 @@ async function cTE(b) {
   if (!couches.length) return l.fin('ALERTE', 'aucune couche TE dans le catalogue (voir contrôle précédent)', performance.now() - t0);
   const lignes = []; let echec = 0, alerte = 0;
   for (const c of couches) {
+    const tc = performance.now();
     const r = await toutesPages(c, b, undefined, undefined);
+    const duree = ` en ${((performance.now() - tc) / 1000).toFixed(1)} s`;
     if (r.erreur) { echec++; lignes.push(`${c} : ${r.erreur}`); continue; }
     const ecart = r.annonce != null && r.annonce !== r.entites.length;
     if (ecart || r.doublons) alerte++;
     let extra = '';
     if (/franchissement/i.test(c)) {
       const gest = new Map();
-      for (const f of r.entites) { const g = f.properties?.gestionnaire ?? '?'; gest.set(g, (gest.get(g) ?? 0) + 1); }
-      extra = ` ; gestionnaires : ${[...gest].map(([k, v]) => `${k} (${v})`).join(', ')}`;
+      const types = new Map(), geoms = new Map();
+      for (const f of r.entites) {
+        const p = f.properties ?? {};
+        const g = p.gestionnaire_du_franchissement ?? p.gestionnaire ?? '?'; gest.set(g, (gest.get(g) ?? 0) + 1);
+        const t = p.type_de_franchissement ?? '?'; types.set(t, (types.get(t) ?? 0) + 1);
+        const gt = f.geometry?.type ?? 'sans géométrie'; geoms.set(gt, (geoms.get(gt) ?? 0) + 1);
+      }
+      const fmtM = (m) => [...m].map(([k, v]) => `${k} (${v})`).join(', ');
+      extra = ` ; géométries : ${fmtM(geoms)} ; types : ${fmtM(types)} ; gestionnaires : ${fmtM(gest)}`;
     }
     if (/troncon/i.test(c)) {
       const cat = new Map();
@@ -315,7 +329,7 @@ async function cTE(b) {
       extra = ` ; catégories : ${[...cat].map(([k, v]) => `${k} (${v})`).join(', ')}`;
     }
     const attrs = r.entites[0] ? Object.keys(r.entites[0].properties ?? {}).slice(0, 12).join(', ') : '';
-    lignes.push(`${c} : ${r.entites.length} entités (annoncées ${r.annonce ?? '?'}${ecart ? ', ÉCART' : ''}, doublons ${r.doublons})${extra}${attrs ? `\n    attributs : ${attrs}` : ''}`);
+    lignes.push(`${c} : ${r.entites.length} entités${duree} (annoncées ${r.annonce ?? '?'}${ecart ? ', ÉCART' : ''}, doublons ${r.doublons})${extra}${attrs ? `\n    attributs : ${attrs}` : ''}`);
   }
   l.fin(echec ? (echec === couches.length ? 'ÉCHEC' : 'ALERTE') : alerte ? 'ALERTE' : 'OK', lignes.join('\n'), performance.now() - t0);
 }
