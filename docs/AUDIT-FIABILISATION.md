@@ -28,13 +28,13 @@ Trois audits en lecture seule (A1 itinéraire, A2 verdicts et écoulement, B sou
 | A2-3 | Important | MLC inconnue sur ouvrage n'ayant que précaution ou risque → normal (vérifié) | Corrigé : mode le plus favorable réellement établi |
 | A2-4 | Important | Masse / hauteur / largeur inconnue face à une limite civile : ni contrôle incomplet ni motif (vérifié) ; idem `dimensionsConvoi` sur l'itinéraire | Corrigé : contrôle incomplet + motif ; alerte sur l'itinéraire |
 | A2-5 | Important | Écoulement en mode auto : véhicules sans MLC retirés, fenêtre sous-estimée sans « incertaine » (vérifié) | Corrigé : max(écoulement, estimation), marquée incertaine |
-| A2-6 | Important (hyp.) | Précaution / risque uniques quelle que soit la propulsion | Décision Jean-François / Génie |
+| A2-6 | Important (hyp.) | Précaution / risque uniques quelle que soit la propulsion | Décidé le 18/11/2026 : valeurs roues / chenilles facultatives (`precautionRoues`…), la valeur commune sert de repli ; `mlc-seance.test.ts` |
 | A2-7 | Mineur | Motif trompeur en double voie non classée | Corrigé le 18/11/2026 (`mineurs.test.ts`) : « classe normale double voie non établie » ; motif « interdit » cite les classes établies |
 | A2-8 | Mineur | Longueur inconnue = 0 m dans l'écoulement (10 m dans `dureeEstimee`) | Corrigé : 10 m partout (`LONGUEUR_INCONNUE_M`) |
 | A2-9 | Mineur | Mode imposé « tout en normal » fait passer des véhicules interdits | Corrigé |
 | A2-10 | Mineur | `dureeEstimee` ignore 24 km/h sur pont flottant | Corrigé |
 | A2-11 | Mineur | Synthèses risque / interdit incomplètes | Corrigé le 18/11/2026 (`mineurs.test.ts`) : véhicules des modes intermédiaires nommés |
-| A2-12 | Mineur (hyp.) | Classe double seule non utilisée en voie unique | Décision Génie |
+| A2-12 | Mineur (hyp.) | Classe double seule non utilisée en voie unique | Décidé le 18/11/2026 : classe double = borne basse de la voie unique (normal en dessous avec motif, indéterminé au-delà, précaution non dérivée) ; principe à confirmer par le Génie |
 | A2-13 | Mineur (hyp.) | Convoi jamais en conflit avec lui-même (demi-tour court) | Corrigé le 18/11/2026 : conflit « même convoi » sur recouvrement réel, sans la marge entre convois (`planification.test.ts`) |
 | — | Limite connue | Attentes non cumulées aux ouvrages successifs ; borne prudente proposée : début(k) = départ + marche jusqu'à k + Σ (écoulement − marche sur l'ouvrage) des précédents | Corrigé : retard cumulé = Σ max(0, durée − (colonne + ouvrage) / vitesse de marche) |
 

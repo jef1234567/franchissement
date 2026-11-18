@@ -227,6 +227,7 @@ export type ChampCible =
   | 'classeUnique' | 'classeUniqueRoues' | 'classeUniqueChenilles'
   | 'classeDouble' | 'classeDoubleRoues' | 'classeDoubleChenilles'
   | 'classePrecaution' | 'classeRisque'
+  | 'classePrecautionRoues' | 'classePrecautionChenilles' | 'classeRisqueRoues' | 'classeRisqueChenilles'
   | 'poidsMax' | 'hauteurMax' | 'largeurMax' | 'essieuMax' | 'fiabilite' | 'reference' | 'notes' | 'rattachement' | 'ouverture';
 
 export const CHAMPS_CIBLES: { cle: ChampCible; libelle: string; alias: string[] }[] = [
@@ -252,6 +253,10 @@ export const CHAMPS_CIBLES: { cle: ChampCible; libelle: string; alias: string[] 
   { cle: 'classeDoubleChenilles', libelle: 'Classe double voie — chenilles', alias: ['classe double chenilles', 'mlc double chenilles'] },
   { cle: 'classePrecaution', libelle: 'Classe précaution', alias: ['classe precaution', 'mlc precaution', 'caution', 'classe caution'] },
   { cle: 'classeRisque', libelle: 'Classe risque', alias: ['classe risque', 'mlc risque', 'risk', 'classe risk'] },
+  { cle: 'classePrecautionRoues', libelle: 'Classe précaution — roues', alias: ['classe precaution roues', 'mlc precaution roues', 'caution wheeled'] },
+  { cle: 'classePrecautionChenilles', libelle: 'Classe précaution — chenilles', alias: ['classe precaution chenilles', 'mlc precaution chenilles', 'caution tracked'] },
+  { cle: 'classeRisqueRoues', libelle: 'Classe risque — roues', alias: ['classe risque roues', 'mlc risque roues', 'risk wheeled'] },
+  { cle: 'classeRisqueChenilles', libelle: 'Classe risque — chenilles', alias: ['classe risque chenilles', 'mlc risque chenilles', 'risk tracked'] },
   { cle: 'poidsMax', libelle: 'Tonnage max. civil (t)', alias: ['tonnage', 'poids max', 'maxweight', 'limitation tonnage', 'ptac max', 'restriction poids'] },
   { cle: 'hauteurMax', libelle: 'Hauteur max. civile (m)', alias: ['maxheight', 'hauteur max', 'restriction hauteur'] },
   { cle: 'largeurMax', libelle: 'Largeur max. civile (m)', alias: ['maxwidth', 'largeur max', 'restriction largeur'] },
@@ -502,6 +507,11 @@ export function convertirOuvrages(
         double: { generique: classe('classeDouble'), roues: classe('classeDoubleRoues'), chenilles: classe('classeDoubleChenilles') },
         precaution: classe('classePrecaution'),
         risque: classe('classeRisque'),
+        ...Object.fromEntries(
+          ([['precautionRoues', 'classePrecautionRoues'], ['precautionChenilles', 'classePrecautionChenilles'], ['risqueRoues', 'classeRisqueRoues'], ['risqueChenilles', 'classeRisqueChenilles']] as const)
+            .map(([k, c]) => [k, classe(c)] as const)
+            .filter(([, v]) => v !== null),
+        ),
       },
       civil: { poidsMaxT: civil('poidsMax', 'masse'), hauteurMaxM: civil('hauteurMax', 'hauteur'), largeurMaxM: civil('largeurMax', 'largeur'), essieuMaxT: civil('essieuMax', 'masse') },
       fiabilite: fiabiliteDepuis(get(l, 'fiabilite'), fiabiliteDefaut),
@@ -556,6 +566,10 @@ const CHAMPS_FUSION: [string, (o: Ouvrage) => unknown, (o: Ouvrage, v: unknown) 
   ['classe double voie chenilles', (o) => o.classes.double.chenilles, (o, v) => (o.classes.double.chenilles = v as number)],
   ['classe précaution', (o) => o.classes.precaution, (o, v) => (o.classes.precaution = v as number)],
   ['classe risque', (o) => o.classes.risque, (o, v) => (o.classes.risque = v as number)],
+  ['classe précaution roues', (o) => o.classes.precautionRoues ?? null, (o, v) => (o.classes.precautionRoues = v as number)],
+  ['classe précaution chenilles', (o) => o.classes.precautionChenilles ?? null, (o, v) => (o.classes.precautionChenilles = v as number)],
+  ['classe risque roues', (o) => o.classes.risqueRoues ?? null, (o, v) => (o.classes.risqueRoues = v as number)],
+  ['classe risque chenilles', (o) => o.classes.risqueChenilles ?? null, (o, v) => (o.classes.risqueChenilles = v as number)],
   ['tonnage civil', (o) => o.civil.poidsMaxT, (o, v) => (o.civil.poidsMaxT = v as number)],
   ['hauteur civile', (o) => o.civil.hauteurMaxM, (o, v) => (o.civil.hauteurMaxM = v as number)],
   ['largeur civile', (o) => o.civil.largeurMaxM, (o, v) => (o.civil.largeurMaxM = v as number)],
@@ -690,7 +704,13 @@ export function reparerOuvrage(x: Record<string, unknown>): Ouvrage {
     longueurM: num(x.longueurM),
     largeurM: num(x.largeurM),
     hauteurLibreM: num(x.hauteurLibreM),
-    classes: { unique: cv(c.unique), double: cv(c.double), precaution: num(c.precaution), risque: num(c.risque) },
+    classes: {
+      unique: cv(c.unique),
+      double: cv(c.double),
+      precaution: num(c.precaution),
+      risque: num(c.risque),
+      ...Object.fromEntries((['precautionRoues', 'precautionChenilles', 'risqueRoues', 'risqueChenilles'] as const).filter((k) => num(c[k]) !== null).map((k) => [k, num(c[k])])),
+    },
     civil: { poidsMaxT: num(civ.poidsMaxT), hauteurMaxM: num(civ.hauteurMaxM), largeurMaxM: num(civ.largeurMaxM), essieuMaxT: num(civ.essieuMaxT) },
     fiabilite: ['estime', 'reconnu', 'valide'].includes(fiab) ? fiab : 'estime',
     provenance: {
@@ -719,6 +739,7 @@ export function reparerVehicule(x: Record<string, unknown>): Vehicule {
     propulsion: x.propulsion === 'chenilles' ? 'chenilles' : 'roues',
     mlcCharge: num(x.mlcCharge),
     mlcVide: num(x.mlcVide),
+    ...(x.mlcEstimee === true ? { mlcEstimee: true } : {}),
     longueurM: num(x.longueurM),
     largeurM: num(x.largeurM),
     hauteurM: num(x.hauteurM),

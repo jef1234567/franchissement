@@ -27,6 +27,8 @@ export interface Vehicule {
   mlcCharge: number | null;
   /** Classe MLC à vide (optionnelle). */
   mlcVide: number | null;
+  /** Classe MLC en charge estimée (masse × coefficient), non officielle : signalée « à vérifier » dans les verdicts. */
+  mlcEstimee?: boolean;
   longueurM: number | null;
   largeurM: number | null;
   hauteurM: number | null;
@@ -90,6 +92,11 @@ export interface Ouvrage {
     precaution: number | null;
     /** Classe de franchissement à risque : uniquement si établie par le Génie. */
     risque: number | null;
+    /** Classes précaution / risque propres aux roues ou aux chenilles (audit A2-6) : priment sur la valeur commune. */
+    precautionRoues?: number | null;
+    precautionChenilles?: number | null;
+    risqueRoues?: number | null;
+    risqueChenilles?: number | null;
   };
   /** Restrictions de circulation civiles signalées (panneaux, OSM). */
   civil: { poidsMaxT: number | null; hauteurMaxM: number | null; largeurMaxM: number | null; essieuMaxT: number | null };

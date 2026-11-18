@@ -83,6 +83,25 @@
       <span class="aide">{o.type === 'permanent' && !etat.projet.referentiel.risqueSurPermanent ? 'Sans effet sur un pont permanent (doctrine : ponts militaires préfabriqués uniquement)' : 'Vide : franchissement à risque non autorisé'}</span>
     </label>
   </div>
+  <details class="petit-txt">
+    <summary>Précaution / risque distincts pour roues et chenilles</summary>
+    <table class="classes">
+      <thead><tr><th></th><th>Roues</th><th>Chenilles</th></tr></thead>
+      <tbody>
+        <tr>
+          <th>Précaution</th>
+          <td><ChampNombre bind:valeur={() => o.classes.precautionRoues ?? null, (v) => (o.classes.precautionRoues = v)} min={0} max={200} etiquette="Classe précaution roues" /></td>
+          <td><ChampNombre bind:valeur={() => o.classes.precautionChenilles ?? null, (v) => (o.classes.precautionChenilles = v)} min={0} max={200} etiquette="Classe précaution chenilles" /></td>
+        </tr>
+        <tr>
+          <th>Risque</th>
+          <td><ChampNombre bind:valeur={() => o.classes.risqueRoues ?? null, (v) => (o.classes.risqueRoues = v)} min={0} max={200} etiquette="Classe risque roues" /></td>
+          <td><ChampNombre bind:valeur={() => o.classes.risqueChenilles ?? null, (v) => (o.classes.risqueChenilles = v)} min={0} max={200} etiquette="Classe risque chenilles" /></td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="muted">Si renseignées, ces valeurs priment sur la classe commune pour le type de véhicule concerné.</p>
+  </details>
   {#if incoherence}<p class="encadre alerte petit-txt">La classe double voie est supérieure à la classe voie unique : vérifiez la saisie.</p>{/if}
 </div>
 
