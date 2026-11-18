@@ -193,7 +193,9 @@ export async function telechargerTuiles(
           try {
             const r = await fetch(urlTuile(source, z, x, y), { signal });
             if (r.ok) {
-              lot.push({ cle, blob: await r.blob() });
+              // Blob lu avant de viser le lot : `lot.push(… await …)` visait l'ancien lot, déjà enregistré par un autre travailleur (tuile perdue).
+              const blob = await r.blob();
+              lot.push({ cle, blob });
               reussi = true;
             } else if (r.status === 404) {
               reussi = true; // hors couverture
