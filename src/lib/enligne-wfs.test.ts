@@ -92,3 +92,58 @@ describe('Mineurs B-m1, B-m3', async () => {
     vi.useRealTimers();
   });
 });
+
+describe('Couches TE paginées sans tri (relecture phase 4)', () => {
+  it('doublon + entité manquante : ErreurTronquee (avant : le compte égalait le nombre annoncé)', async () => {
+    const pages = [[1, 2], [2], []]; // l'entité 3 n'est jamais servie, la 2 l'est deux fois
+    let n = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      const ids = pages[Math.min(n++, pages.length - 1)];
+      return new Response(JSON.stringify({ type: 'FeatureCollection', features: ids.map((i) => ({ id: `troncon_te.${i}`, properties: {}, geometry: null })), numberMatched: 3 }), { status: 200 });
+    }));
+    await expect(telechargerWFS('SECUROUT.TE:troncon_te', bbox, () => {})).rejects.toBeInstanceOf(ErreurTronquee);
+  });
+  it('doublon seul, toutes les entités servies : complet, sans doublon', async () => {
+    const pages = [[1, 2], [2, 3], []];
+    let n = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      const ids = pages[Math.min(n++, pages.length - 1)];
+      return new Response(JSON.stringify({ type: 'FeatureCollection', features: ids.map((i) => ({ id: `troncon_te.${i}`, properties: {}, geometry: null })), numberMatched: 3 }), { status: 200 });
+    }));
+    expect(await telechargerWFS('SECUROUT.TE:troncon_te', bbox, () => {})).toHaveLength(3);
+  });
+});
+
+describe('B-m6 : pagination de la recherche data.gouv', async () => {
+  const { chercherDataGouv } = await import('./enligne');
+  const { API_DATAGOUV, THEMES_DATAGOUV, PAGES_MAX_DATAGOUV } = await import('../core/datagouv');
+  const jeu = (id: string) => ({ id, title: 'Ponts Maine-et-Loire ' + id, description: 'Maine-et-Loire', resources: [] });
+  /** Chaque recherche : `pages` pages de 20 jeux, total annoncé = 20 × pages. */
+  function api(pages: number) {
+    const f = vi.fn(async (url: string) => {
+      const u = new URL(url);
+      const p = Number(u.searchParams.get('page') ?? '1');
+      const q = u.searchParams.get('q') ?? '';
+      const data = Array.from({ length: 20 }, (_, i) => jeu(`${q}-${p}-${i}`));
+      const next_page = p < pages ? `${API_DATAGOUV}/datasets/?q=${encodeURIComponent(q)}&page_size=20&page=${p + 1}` : null;
+      return new Response(JSON.stringify({ data, total: 20 * pages, page: p, next_page }), { status: 200 });
+    });
+    vi.stubGlobal('fetch', f);
+    return f;
+  }
+  it('lit les pages suivantes (avant : 20 premiers résultats seulement)', async () => {
+    api(2);
+    const r = await chercherDataGouv([{ code: '49', nom: 'Maine-et-Loire' }], () => {});
+    expect(r.jeux).toHaveLength(40 * THEMES_DATAGOUV.length);
+    expect(r.limitees).toBeUndefined();
+    expect(r.echecs).toHaveLength(0);
+  });
+  it(`au-delà de ${3} pages : limite signalée, pas d'échec`, async () => {
+    expect(PAGES_MAX_DATAGOUV).toBe(3);
+    const f = api(5);
+    const r = await chercherDataGouv([{ code: '49', nom: 'Maine-et-Loire' }], () => {});
+    expect(r.limitees).toHaveLength(THEMES_DATAGOUV.length);
+    expect(r.limitees![0]).toMatch(/100 résultats, 60 examinés/);
+    expect(f).toHaveBeenCalledTimes(3 * THEMES_DATAGOUV.length);
+  });
+});

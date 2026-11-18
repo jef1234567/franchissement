@@ -327,10 +327,10 @@
     if (etat.horsLigne) { etat.notifier('Mode hors ligne strict activé.', 'err'); return; }
     dgEnCours = true; ctrlDG = new AbortController();
     try {
-      const { jeux, echecs } = await chercherDataGouv(depts, (m) => (etatDG = m), ctrlDG.signal);
+      const { jeux, echecs, limitees } = await chercherDataGouv(depts, (m) => (etatDG = m), ctrlDG.signal);
       jeuxDG = jeux;
       const imp = jeux.filter((j) => j.ressources.some((r) => r.format)).length;
-      etatDG = `${jeux.length} jeu(x) trouvé(s) pour ${depts.length} département(s), dont ${imp} avec un fichier importable.${echecs.length ? ` Requêtes en échec : ${echecs.join(', ')}.` : ''} Vérifiez le contenu de chaque jeu avant intégration : la recherche par mots-clés ramène aussi des jeux hors sujet.`;
+      etatDG = `${jeux.length} jeu(x) trouvé(s) pour ${depts.length} département(s), dont ${imp} avec un fichier importable.${echecs.length ? ` Requêtes en échec : ${echecs.join(', ')}.` : ''}${limitees?.length ? ` Résultats limités aux plus pertinents : ${limitees.join(', ')}.` : ''} Vérifiez le contenu de chaque jeu avant intégration : la recherche par mots-clés ramène aussi des jeux hors sujet.`;
     } catch (e) {
       etatDG = 'Échec : ' + (e as Error).message;
     } finally { dgEnCours = false; }

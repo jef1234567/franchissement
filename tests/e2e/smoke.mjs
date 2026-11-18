@@ -64,7 +64,7 @@ const listeOuvrages = await page.locator('.liste-ouvrages .nom').allInnerTexts()
 console.log('   ouvrages traversés :', listeOuvrages.join(' | '));
 verifier(!listeOuvrages.some((n) => /Varrains/.test(n)), 'le pont de Varrains (classe 16) est évité');
 verifier(listeOuvrages.length >= 1, 'au moins un ouvrage traversé');
-verifier(await page.getByText(/de détour/).isVisible(), 'détour affiché par rapport à l\'itinéraire sans contrainte');
+verifier(await page.getByText(/par rapport à l'itinéraire de comparaison/).isVisible(), 'détour affiché par rapport à l\'itinéraire de comparaison');
 await page.waitForTimeout(400);
 await page.screenshot({ path: path.join(captures, '01-itineraire.png') });
 verifier(await page.getByText('Pourquoi ce trajet ?').isVisible(), 'bloc « Pourquoi ce trajet ? » affiché');

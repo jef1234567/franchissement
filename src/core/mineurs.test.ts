@@ -200,3 +200,18 @@ describe('Giratoires : accolés et paquet récent sans giratoire', () => {
     expect(assemblerReseaux([r, ancien]).reseau.giratoiresLus).toBeUndefined();
   });
 });
+
+/* B-m7 : tuile IGN vide sur une zone routière. */
+import { tuileVideSuspecte } from './ign';
+describe('B-m7 : tuile BD TOPO vide là où OSM a des routes', () => {
+  const els: ElemOSM[] = [];
+  for (let i = 0; i < 30; i++) els.push({ type: 'node', id: i + 1, lat: 47.01 + i * 0.001, lon: 0.01 });
+  for (let i = 0; i < 29; i++) els.push({ type: 'way', id: 100 + i, nodes: [i + 1, i + 2], tags: { highway: 'primary' } });
+  const res = construireReseau({ elements: els }, BB);
+  const tuile = { sud: 47, nord: 47.05, ouest: 0, est: 0.05 };
+  it('0 entité IGN, 29 tronçons OSM : suspecte', () => expect(tuileVideSuspecte(res, tuile, 0)).toBe(29));
+  it('entités reçues, ou peu de routes OSM : rien de suspect', () => {
+    expect(tuileVideSuspecte(res, tuile, 5)).toBeNull();
+    expect(tuileVideSuspecte(res, { sud: 48, nord: 48.05, ouest: 0, est: 0.05 }, 0)).toBeNull();
+  });
+});

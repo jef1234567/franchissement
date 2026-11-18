@@ -58,6 +58,12 @@ await ctx.route(/^https?:/, async (r) => {
     if (u.searchParams.get('REQUEST') === 'GetFeature') n.wfs++;
     // Défaut B2 : une tuile BD TOPO en panne pendant l'ajout ; les autres tuiles doivent être appliquées, la lacune signalée.
     if (panne && !ignEnPanne && /BDTOPO/.test(u.searchParams.get('TYPENAMES') ?? '')) { ignEnPanne = true; return r.fulfill({ status: 502, headers: cors, body: '' }); }
+    // BD TOPO : un tronçon sans restriction par tuile (une tuile vide sur une zone routière est suspecte, audit B-m7).
+    if (/BDTOPO/.test(u.searchParams.get('TYPENAMES') ?? '')) {
+      const [s, o, nn, e] = (u.searchParams.get('BBOX') ?? '').split(',').map(Number);
+      const la = (s + nn) / 2, lo = (o + e) / 2;
+      return json({ type: 'FeatureCollection', numberMatched: 1, features: [{ type: 'Feature', id: `troncon_de_route.${la.toFixed(4)}_${lo.toFixed(4)}`, properties: { cleabs: `TRONROUT${la.toFixed(4)}${lo.toFixed(4)}` }, geometry: { type: 'LineString', coordinates: [[lo, la], [lo + 0.0005, la]] } }] });
+    }
     return json({ type: 'FeatureCollection', features: [] });
   }
   // Essai réel du 13/11/2026 : geo.api.gouv.fr répond parfois 504 sans en-tête CORS (vu par la page comme une erreur réseau).
