@@ -77,6 +77,19 @@ const octets = creerPaquet({
   tuiles: [],
 });
 writeFileSync(new URL('./demo.franchir', import.meta.url), octets);
+// Paquet « grands axes » de la même zone (test de l'assemblage par fusion).
+{
+  const garder = new Set(['motorway', 'trunk', 'primary', 'secondary', 'tertiary']);
+  const ways = el.filter((e) => e.type === 'way' && garder.has(e.tags!.highway.replace('_link', '')));
+  const ids = new Set(ways.flatMap((w) => w.nodes!));
+  const ga = construireReseau({ elements: [...el.filter((e) => e.type === 'node' && ids.has(e.id)), ...ways] } as never, bbox);
+  writeFileSync(new URL('./demo-grands-axes.franchir', import.meta.url), creerPaquet({
+    entete: { format: FORMAT_PAQUET, version: 1, creeLe: new Date().toISOString(), application: 'démo', zone: { nom: 'Département (démo)', centre: [47.27, -0.03], rayonKm: 20, bbox, emprise: 'administrative', grandsAxes: true }, projet: {}, tuiles: [] },
+    reseau: ga,
+    tuiles: [],
+  }));
+  console.log(`demo-grands-axes.franchir : ${ga.aretes.length} tronçons`);
+}
 // Réponse Overpass brute (test de la méthode manuelle d'import).
 writeFileSync(new URL('./demo-overpass.json', import.meta.url), JSON.stringify({ version: 0.6, generator: 'test', elements: el }));
 console.log(`demo.franchir : ${reseau.aretes.length} tronçons, ${ouvrages.length} ouvrages, ${(octets.length / 1024).toFixed(0)} Ko`);

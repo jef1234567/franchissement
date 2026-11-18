@@ -2,7 +2,7 @@
    Modèle de données FRANCHIR
    ========================================================================= */
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export type Propulsion = 'roues' | 'chenilles';
 export type EtatCharge = 'charge' | 'vide';
@@ -11,7 +11,7 @@ export type ModeFranchissement = 'normal' | 'precaution' | 'risque';
 export const MODES: ModeFranchissement[] = ['normal', 'precaution', 'risque'];
 
 export interface Provenance {
-  type: 'osm' | 'geo' | 'csv' | 'reco' | 'manuel' | 'v1' | 'reference';
+  type: 'osm' | 'geo' | 'csv' | 'reco' | 'manuel' | 'v1' | 'reference' | 'ign' | 'datagouv';
   /** Libellé libre : « 28e GG », « OSM », « Reco 2e RMAT »… */
   libelle: string;
   reference?: string;
@@ -27,10 +27,16 @@ export interface Vehicule {
   mlcCharge: number | null;
   /** Classe MLC à vide (optionnelle). */
   mlcVide: number | null;
+  /** Classe MLC en charge estimée (masse × coefficient), non officielle : signalée « à vérifier » dans les verdicts. */
+  mlcEstimee?: boolean;
   longueurM: number | null;
   largeurM: number | null;
   hauteurM: number | null;
   masseT: number | null;
+  /** Nombre d'essieux (null pour un chenillé ou si inconnu). */
+  essieux: number | null;
+  /** Charge maximale sur l'essieu le plus chargé (t). */
+  chargeEssieuT: number | null;
   provenance: Provenance;
   notes: string;
 }
@@ -86,16 +92,47 @@ export interface Ouvrage {
     precaution: number | null;
     /** Classe de franchissement à risque : uniquement si établie par le Génie. */
     risque: number | null;
+    /** Classes précaution / risque propres aux roues ou aux chenilles (audit A2-6) : priment sur la valeur commune. */
+    precautionRoues?: number | null;
+    precautionChenilles?: number | null;
+    risqueRoues?: number | null;
+    risqueChenilles?: number | null;
   };
   /** Restrictions de circulation civiles signalées (panneaux, OSM). */
-  civil: { poidsMaxT: number | null; hauteurMaxM: number | null; largeurMaxM: number | null };
+  civil: { poidsMaxT: number | null; hauteurMaxM: number | null; largeurMaxM: number | null; essieuMaxT: number | null };
   fiabilite: Fiabilite;
   provenance: Provenance;
   /** Historique des valeurs remplacées lors de fusions / éditions. */
   historique: { date: string; champ: string; ancien: unknown; nouveau: unknown; source: string }[];
+  /** Désaccords entre sources : valeur retenue et valeur différente signalée par une autre source. */
+  desaccords: Desaccord[];
   /** Identifiants des arêtes du réseau routier portées par l'ouvrage. */
   osmWayIds: number[];
   notes: string;
+  /** Inventaire importé : la route citée passe SOUS l'ouvrage (« voie franchie ») ; route portée inconnue. */
+  voieFranchie?: boolean;
+  /** Petit ouvrage sous chaussée (buse, dalot, ponceau, petite voûte ou cadre ≤ 5 m) : simple avertissement
+   *  sur l'itinéraire, sans verdict (décision du 13/11/2026 : sinon presque tout itinéraire rural devient « indéterminé »). */
+  petitOuvrage?: boolean;
+}
+
+export interface Desaccord {
+  date: string;
+  champ: string;
+  retenu: unknown;
+  /** Source de la valeur retenue au moment du constat. */
+  sourceRetenue: string;
+  autre: unknown;
+  sourceAutre: string;
+}
+
+/** Écart absolu au-delà duquel deux valeurs numériques sont jugées en désaccord (toute différence significative). */
+export const SEUIL_DESACCORD = 0.005;
+
+export function valeursEnDesaccord(a: unknown, b: unknown): boolean {
+  if (a == null || b == null || a === '' || b === '') return false;
+  if (typeof a === 'number' && typeof b === 'number') return Math.abs(a - b) > SEUIL_DESACCORD;
+  return String(a).trim().toLowerCase() !== String(b).trim().toLowerCase();
 }
 
 export interface ParametresMode {
@@ -124,6 +161,8 @@ export interface Referentiel {
   /** Marges de sécurité gabarit. */
   margeLargeurM: number;
   margeHauteurM: number;
+  /** Véhicule sans classe MLC : « compatible » (supposé franchir, signalé à vérifier) ou « bloquer » (verdict indéterminé). Absent = compatible. */
+  mlcInconnue?: 'compatible' | 'bloquer';
   notes: string;
 }
 
@@ -159,10 +198,11 @@ export function nouvelOuvrage(partiel: Partial<Ouvrage> = {}): Ouvrage {
     largeurM: null,
     hauteurLibreM: null,
     classes: { unique: classeVide(), double: classeVide(), precaution: null, risque: null },
-    civil: { poidsMaxT: null, hauteurMaxM: null, largeurMaxM: null },
+    civil: { poidsMaxT: null, hauteurMaxM: null, largeurMaxM: null, essieuMaxT: null },
     fiabilite: 'estime',
     provenance: { type: 'manuel', libelle: 'Saisie manuelle', date: new Date().toISOString() },
     historique: [],
+    desaccords: [],
     osmWayIds: [],
     notes: '',
     ...partiel,
@@ -180,6 +220,8 @@ export function nouveauVehicule(partiel: Partial<Vehicule> = {}): Vehicule {
     largeurM: null,
     hauteurM: null,
     masseT: null,
+    essieux: null,
+    chargeEssieuT: null,
     provenance: { type: 'manuel', libelle: 'Saisie manuelle', date: new Date().toISOString() },
     notes: '',
     ...partiel,
@@ -189,3 +231,6 @@ export function nouveauVehicule(partiel: Partial<Vehicule> = {}): Vehicule {
 export function estNombre(x: unknown): x is number {
   return typeof x === 'number' && Number.isFinite(x);
 }
+
+/** Marque portée dans les notes d'un ouvrage dont une restriction civile était illisible dans la source (alerte sur l'itinéraire). */
+export const MARQUE_CIVIL_ILLISIBLE = '[Restriction civile illisible]';

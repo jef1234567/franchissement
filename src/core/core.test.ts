@@ -11,7 +11,9 @@ import { creerPaquet, lirePaquet, FORMAT_PAQUET } from './paquet';
 import { overpassSynthetique } from '../test/fixtures';
 
 const ref = referentielParDefaut();
-const V = vehiculesParDefaut();
+// Classes figées (valeurs v1) : ces tests portent sur la logique, pas sur les données du catalogue.
+const CLASSES_FIXES: Record<string, number> = { leclerc: 60, vbci: 26, pplog: 36, vab: 14, gbc: 13 };
+const V = vehiculesParDefaut().map((x) => (x.id in CLASSES_FIXES ? { ...x, mlcCharge: CLASSES_FIXES[x.id], mlcEstimee: undefined } : x));
 const v = (id: string) => V.find((x) => x.id === id)!;
 const el = (id: string, quantite = 1, etat: 'charge' | 'vide' = 'charge'): ElementConvoi => ({ vehicule: v(id), quantite, etat });
 const pont = (u: number | null, d: number | null = null, extra: Partial<Ouvrage> = {}) =>
@@ -69,9 +71,26 @@ describe('Vérification STANAG', () => {
     expect(evaluerVehicule(o, el('leclerc'), 'unique', ref).mode).toBe('normal');
     expect(evaluerVehicule(pont(50), el('leclerc'), 'unique', ref).mode).toBe('precaution');
   });
-  it('véhicule sans classe : jamais compatible (correctif v1)', () => {
+  it('véhicule sans classe, référentiel « bloquer » : jamais compatible (correctif v1)', () => {
     const nv = nouveauVehicule();
-    expect(evaluerVehicule(pont(100), { vehicule: nv, quantite: 1, etat: 'charge' }, 'unique', ref).mode).toBe('inconnu');
+    expect(evaluerVehicule(pont(100), { vehicule: nv, quantite: 1, etat: 'charge' }, 'unique', { ...ref, mlcInconnue: 'bloquer' }).mode).toBe('inconnu');
+  });
+  it('véhicule sans classe, par défaut : compatibilité supposée et signalée', () => {
+    const nv = nouveauVehicule({ nom: 'Serval' });
+    const ev = evaluerVehicule(pont(100), { vehicule: nv, quantite: 1, etat: 'charge' }, 'unique', ref);
+    expect(ev.mode).toBe('normal');
+    expect(ev.mlcSupposee).toBe(true);
+    const verdict = verifierConvoi(pont(100), [{ vehicule: nv, quantite: 1, etat: 'charge' }], 'unique', ref);
+    expect(verdict.mlcSupposees).toEqual(['Serval']);
+    expect(verdict.synthese).toMatch(/supposée.*Serval.*vérifier/);
+  });
+  it('compatibilité supposée : ouvrage sans classe reste indéterminé, gabarit et tonnage civil restent bloquants', () => {
+    const nv = nouveauVehicule({ largeurM: 3, masseT: 30 });
+    const e = { vehicule: nv, quantite: 1, etat: 'charge' as const };
+    expect(evaluerVehicule(pont(null), e, 'unique', ref).mode).toBe('inconnu');
+    expect(evaluerVehicule(pont(100, null, { largeurM: 2.5 }), e, 'unique', ref).mode).toBe('interdit');
+    const civ = evaluerVehicule(pont(100, null, { civil: { ...pont(100).civil, poidsMaxT: 19 } }), e, 'unique', ref);
+    expect(civ.civilPoids).toBe('nok');
   });
   it('classe à vide utilisée si état vide', () => {
     const p = { ...v('pplog'), mlcVide: 18 };
@@ -93,17 +112,18 @@ describe('Vérification STANAG', () => {
 });
 
 describe('Fiches véhicules en sources ouvertes', () => {
-  it('toutes les fiches ont largeur et source ; MLC inchangées', () => {
+  it('toutes les fiches ont largeur et source ; MLC de la séance du 18/11/2026', () => {
     const vs = vehiculesParDefaut();
     expect(vs.filter((x) => x.largeurM == null).map((x) => x.id)).toEqual([]);
-    expect(vs.find((x) => x.id === 'leclerc')!.mlcCharge).toBe(60);
+    expect(vs.find((x) => x.id === 'leclerc')!.mlcCharge).toBe(72);
+    expect(vs.find((x) => x.id === 'scania8m3')!.mlcCharge).toBe(28); // masse inconnue : valeur v1 conservée
   });
   it('complète une base existante sans écraser une saisie', () => {
     const base: Vehicule[] = vehiculesParDefaut().map((x) => ({ ...x, largeurM: null, hauteurM: null, masseT: null, provenance: { type: 'v1' as const, libelle: 'Outil v1' } }));
     base[0].masseT = 57; // saisie utilisateur conservée
     const { vehicules, modifies } = completerVehicules(base);
     expect(vehicules[0].masseT).toBe(57);
-    expect(vehicules[0].largeurM).toBe(3.6);
+    expect(vehicules[0].largeurM).toBe(3.71);
     expect(vehicules.find((x) => x.id === 'erc90')!.longueurM).toBe(7.78);
     expect(modifies.length).toBe(22);
     expect(completerVehicules(vehicules).modifies).toEqual([]); // idempotent
@@ -161,7 +181,7 @@ describe('OSM → réseau → ouvrages → itinéraire', () => {
   const ouvrages = extraireOuvrages(reseau);
   it('valeurs OSM', () => {
     expect(analyserLongueurOSM('4,2 m')).toBe(4.2);
-    expect(analyserLongueurOSM("14'6\"")).toBeCloseTo(4.42, 2);
+    expect(analyserLongueurOSM("14'6\"")).toBe(4.41); // 4,4196 m arrondi au cm inférieur (A1-9, sens prudent)
     expect(analyserLongueurOSM('default')).toBeNull();
     expect(analyserMasseOSM('3500 kg')).toBe(3.5);
     expect(analyserMasseOSM('19 t')).toBe(19);

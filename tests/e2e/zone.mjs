@@ -1,0 +1,250 @@
+// Bout en bout « préparer la zone en un bouton » (Carte, onglet Zone) : Overpass, IGN, geo.api et data.gouv simulés.
+import { chromium } from 'playwright-core';
+import { fileURLToPath } from 'node:url';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+
+const ici = path.dirname(fileURLToPath(import.meta.url));
+const racine = path.resolve(ici, '../..');
+const echecs = [];
+const verifier = (c, m) => { if (!c) { echecs.push(m); console.error('✗', m); } else console.log('✓', m); };
+const overpass = readFileSync(path.join(ici, 'demo-overpass.json'), 'utf8');
+
+// Jeu départemental au format réel des exports CSV Opendatasoft (Geo Shape), posé sur une route du réseau de démonstration.
+const GABARIT = `Geo Point;Geo Shape;valeur limitation;nature contrainte;axe
+47.288, -0.031;"{""coordinates"": [[-0.039, 47.288], [-0.031, 47.288], [-0.023, 47.288]], ""type"": ""LineString""}";3.6;Hauteur;49 D0109
+44.0, 4.0;"{""coordinates"": [[4.0, 44.0], [4.0, 44.01]], ""type"": ""LineString""}";2.5;Largeur;49 D0001
+`;
+const COVOIT = `Geo Point;nom;identifiant
+47.27, -0.03;Aire A;1
+`;
+
+const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64');
+const lireKV = (cle) => page.evaluate((cle) => new Promise((res) => {
+  const req = indexedDB.open('franchir');
+  req.onsuccess = () => { const g = req.result.transaction('kv').objectStore('kv').get(cle); g.onsuccess = () => res(g.result); };
+}), cle);
+const hauteurs = async () => ((await lireKV('reseau'))?.aretes ?? []).filter((e) => e.hmax === 3.6).length;
+const etapeDG = () => page.locator('.etapes > li').filter({ hasText: 'Jeux départementaux' });
+
+const nav = await chromium.launch({ executablePath: process.env.CHROMIUM || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome' });
+const ctx = await nav.newContext({ viewport: { width: 1500, height: 1000 }, locale: 'fr-FR' });
+const n = { overpass: 0, wfs: 0, dg: 0, geo: 0 };
+const hotes = [];
+// Requêtes Overpass simultanées par serveur (maximum observé) ; panne simulée d'une tuile.
+const enVol = {}, maxEnVol = {};
+let panne = false, bboxEnPanne = null, ignEnPanne = false;
+const bboxRequete = (r) => /\[bbox:([^\]]+)\]/.exec(decodeURIComponent((r.request().postData() || '').replace(/^data=/, '').replace(/\+/g, ' ')))?.[1];
+await ctx.route(/^https?:/, async (r) => {
+  const u = new URL(r.request().url());
+  const cors = { 'Access-Control-Allow-Origin': '*' };
+  const json = (b) => r.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: JSON.stringify(b) });
+  if (u.pathname.endsWith('/interpreter')) {
+    const rang = hotes.push(u.host);
+    enVol[u.host] = (enVol[u.host] ?? 0) + 1;
+    maxEnVol[u.host] = Math.max(maxEnVol[u.host] ?? 0, enVol[u.host]);
+    await new Promise((res) => setTimeout(res, 300));
+    enVol[u.host]--;
+    // Première requête : serveur Europe saturé (cas réel du 13/11/2026) → l'outil doit passer au serveur suivant.
+    if (rang === 1) return r.fulfill({ status: 504, headers: cors, body: '' });
+    if (panne) {
+      const bb = bboxRequete(r);
+      bboxEnPanne ??= bb;
+      // Tuile en panne : le serveur Europe répond « aucune route » (réponse vide), les autres sont saturés.
+      // Cette réponse non confirmée ne doit ni être gardée en cache ni prise pour une zone sans route : c'est un trou.
+      if (bb === bboxEnPanne) return u.host === 'ovp.dresel.systems'
+        ? r.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: '{"elements":[]}' })
+        : r.fulfill({ status: 504, headers: cors, body: '' });
+    }
+    n.overpass++;
+    return r.fulfill({ status: 200, headers: cors, contentType: 'application/json', body: overpass });
+  }
+  if (u.host === 'data.geopf.fr' && u.searchParams.get('REQUEST') === 'GetTile') { if (r.request().resourceType() === 'fetch') { n.tuiles = (n.tuiles ?? 0) + 1; } /* téléchargement hors ligne, pas l'affichage du fond */ return r.fulfill({ status: 200, headers: cors, contentType: 'image/png', body: PNG }); }
+  if (u.host === 'data.geopf.fr') {
+    if (u.searchParams.get('REQUEST') === 'GetCapabilities') {
+      return r.fulfill({ status: 200, headers: cors, contentType: 'text/xml', body: '<wfs:WFS_Capabilities><FeatureTypeList><FeatureType><Name>SECUROUT.TE:troncon_te</Name><Title>Réseau</Title></FeatureType></FeatureTypeList></wfs:WFS_Capabilities>' });
+    }
+    if (u.searchParams.get('REQUEST') === 'GetFeature') n.wfs++;
+    // Défaut B2 : une tuile BD TOPO en panne pendant l'ajout ; les autres tuiles doivent être appliquées, la lacune signalée.
+    if (panne && !ignEnPanne && /BDTOPO/.test(u.searchParams.get('TYPENAMES') ?? '')) { ignEnPanne = true; return r.fulfill({ status: 502, headers: cors, body: '' }); }
+    // BD TOPO : un tronçon sans restriction par tuile (une tuile vide sur une zone routière est suspecte, audit B-m7).
+    if (/BDTOPO/.test(u.searchParams.get('TYPENAMES') ?? '')) {
+      const [s, o, nn, e] = (u.searchParams.get('BBOX') ?? '').split(',').map(Number);
+      const la = (s + nn) / 2, lo = (o + e) / 2;
+      return json({ type: 'FeatureCollection', numberMatched: 1, features: [{ type: 'Feature', id: `troncon_de_route.${la.toFixed(4)}_${lo.toFixed(4)}`, properties: { cleabs: `TRONROUT${la.toFixed(4)}${lo.toFixed(4)}` }, geometry: { type: 'LineString', coordinates: [[lo, la], [lo + 0.0005, la]] } }] });
+    }
+    return json({ type: 'FeatureCollection', features: [] });
+  }
+  // Essai réel du 13/11/2026 : geo.api.gouv.fr répond parfois 504 sans en-tête CORS (vu par la page comme une erreur réseau).
+  if (u.host === 'geo.api.gouv.fr' && ++n.geo === 1) return r.fulfill({ status: 504, body: '' });
+  if (u.host === 'geo.api.gouv.fr') return json([{ nom: 'Saumur', code: '49328', departement: { code: '49', nom: 'Maine-et-Loire' } }]);
+  if (u.host === 'www.data.gouv.fr' && u.pathname === '/api/1/datasets/') {
+    const q = u.searchParams.get('q');
+    const org = { name: 'Département de Maine-et-Loire' };
+    if (q === 'gabarit Maine-et-Loire') return json({ data: [
+      { id: 'gab49', title: 'Limitation de gabarit en Maine-et-Loire', organization: org, resources: [{ id: 'csv1', title: 'export.csv', format: 'csv', url: 'https://data.maine-et-loire.fr/gabarit.csv' }] },
+      { id: 'cov49', title: 'Aires de covoiturage en Maine-et-Loire', organization: org, resources: [{ id: 'csv2', title: 'aires.csv', format: 'csv', url: 'https://data.maine-et-loire.fr/aires.csv' }] },
+      { id: 'pdf49', title: 'Ponts du Maine-et-Loire (carte)', organization: org, resources: [{ id: 'p1', title: 'carte.pdf', format: 'pdf', url: 'https://x.example/a.pdf' }] },
+      { id: 'ain', title: 'Limitation de gabarit dans l’Ain', organization: { name: 'CD01' }, resources: [{ id: 'csv3', format: 'csv', url: 'https://x.example/ain.csv' }] },
+    ] });
+    return json({ data: [] });
+  }
+  if (u.host === 'www.data.gouv.fr' && u.pathname.startsWith('/api/1/datasets/r/')) {
+    n.dg++;
+    const id = u.pathname.split('/').pop();
+    const corps = id === 'csv1' ? GABARIT : id === 'csv2' ? COVOIT : null;
+    if (!corps) return r.fulfill({ status: 404, headers: cors, body: '' });
+    return r.fulfill({ status: 200, headers: cors, contentType: 'text/csv', body: corps });
+  }
+  return r.abort();
+});
+
+const page = await ctx.newPage();
+await page.addInitScript(() => {
+  window.__toasts = [];
+  new MutationObserver(() => document.querySelectorAll('.toasts > *').forEach((t) => { if (!window.__toasts.includes(t.textContent)) window.__toasts.push(t.textContent); }))
+    .observe(document, { childList: true, subtree: true });
+});
+const erreurs = [];
+page.on('pageerror', (e) => erreurs.push(e.message));
+await page.goto('file://' + path.join(racine, 'dist/index.html'));
+await page.getByText('FRANCHIR', { exact: true }).waitFor();
+
+verifier(await page.getByRole('tab', { name: /Zone/ }).getAttribute('aria-selected') === 'true', 'sans réseau, la carte s\'ouvre sur l\'onglet Zone');
+await page.getByRole('textbox', { name: 'Aller à' }).fill('47.27, -0.03');
+await page.getByRole('button', { name: 'Centrer la carte' }).click();
+await page.getByRole('radio', { name: '30 km' }).click();
+await page.getByRole('button', { name: 'Préparer la zone' }).click();
+await page.getByText(/Zone « Zone 30 km » préparée/).waitFor({ timeout: 90000 });
+
+verifier(hotes[0] === 'ovp.dresel.systems' && hotes.includes('overpass-api.de'), `serveur Europe essayé d'abord ; saturé, relais par le serveur principal (${[...new Set(hotes)].join(', ')})`);
+verifier(maxEnVol['ovp.dresel.systems'] === 2, `deux tuiles à la fois sur le serveur Europe (${maxEnVol['ovp.dresel.systems']})`);
+verifier((maxEnVol['overpass-api.de'] ?? 0) <= 1, `une seule requête à la fois sur le serveur principal (${maxEnVol['overpass-api.de']})`);
+verifier(!hotes.some((h) => /mail\.ru|openstreetmap\.fr/.test(h)), 'aucun serveur retiré interrogé');
+verifier(n.overpass === 9, `30 km : 9 tuiles Overpass (${n.overpass})`);
+verifier(await page.getByText(/tronçons, \d+ ponts .*9 tuiles/).isVisible(), 'réseau assemblé à partir des 9 tuiles');
+verifier(n.wfs === 18, `IGN interrogé tuile par tuile, BD TOPO et TE (${n.wfs} requêtes)`);
+verifier(await page.getByText(/1 jeu\(x\) intégré\(s\), [1-9]\d* tronçon\(s\) restreints/).isVisible(), 'jeu « gabarit » du 49 reconnu et appliqué automatiquement (CSV Opendatasoft)');
+verifier(await page.getByText('Jeux à voir à la main (2)').isVisible(), 'covoiturage (hors sujet) et PDF signalés, jeu de l’Ain écarté');
+await page.getByText('Jeux à voir à la main (2)').click();
+verifier(await page.getByText(/Aires de covoiturage.*titre sans rapport/).isVisible(), 'motif du refus affiché');
+verifier(await page.getByRole('button', { name: 'Exporter le paquet' }).isVisible(), 'export du paquet proposé après préparation');
+
+// Lot 3 : bilan cliquable.
+const voirDG = etapeDG().getByRole('button', { name: /^Voir sur la carte \(\d+ tronçon/ });
+verifier(await voirDG.isVisible(), 'bilan data.gouv : bouton « Voir sur la carte » avec le nombre de tronçons');
+await voirDG.click();
+verifier(await etapeDG().getByRole('button', { name: /^Masquer/ }).getAttribute('aria-pressed') === 'true', 'second état « Masquer » après le clic');
+await etapeDG().getByRole('button', { name: /^Masquer/ }).click();
+verifier(await page.locator('.etapes > li').filter({ hasText: 'Réseau routier et ponts' }).getByRole('button', { name: /Voir sur la carte \(\d+ ouvrage\(s\) ajouté/ }).isVisible(), 'bilan OSM : ponts ajoutés affichables');
+
+// Lot 3 : retirer puis remettre un jeu data.gouv, sans retéléchargement.
+const h0 = await hauteurs();
+verifier(h0 > 0, `jeu « gabarit » appliqué : ${h0} tronçon(s) limités à 3,6 m`);
+const dgAvant = n.dg;
+const jeu = etapeDG().locator('.jeux li').filter({ hasText: 'Limitation de gabarit en Maine-et-Loire' });
+await jeu.getByRole('button', { name: 'Retirer' }).click();
+await page.getByText(/Jeu « Limitation de gabarit en Maine-et-Loire » retiré/).waitFor({ timeout: 30000 });
+verifier(await hauteurs() === 0, 'jeu retiré : plus aucun tronçon limité à 3,6 m');
+verifier(await etapeDG().getByText(/0 jeu\(x\) intégré\(s\), 1 retiré\(s\) à la main, 0 tronçon\(s\) restreints/).isVisible(), 'bilan data.gouv recalculé sans le jeu');
+await jeu.getByRole('button', { name: 'Remettre' }).click();
+await page.getByText(/Jeu « Limitation de gabarit en Maine-et-Loire » remis/).waitFor({ timeout: 30000 });
+verifier(await hauteurs() === h0, `jeu remis : ${h0} tronçon(s) de nouveau limités`);
+verifier(n.dg === dgAvant, 'retrait et remise sans aucun retéléchargement');
+// Bilan et retrait gardés après rechargement de la page.
+await page.reload();
+await page.getByText('FRANCHIR', { exact: true }).waitFor();
+await page.getByRole('tab', { name: /Zone/ }).click();
+await jeu.getByRole('button', { name: 'Retirer' }).click();
+await page.getByText(/Jeu « Limitation de gabarit en Maine-et-Loire » retiré/).waitFor({ timeout: 30000 });
+verifier(await hauteurs() === 0, 'page rechargée : bilan réaffiché, retrait toujours possible');
+await jeu.getByRole('button', { name: 'Remettre' }).click();
+await page.getByText(/Jeu « Limitation de gabarit en Maine-et-Loire » remis/).waitFor({ timeout: 30000 });
+// Ouvrage modifié après la préparation : retrait refusé, rien ne change.
+await page.evaluate(() => new Promise((res) => {
+  const req = indexedDB.open('franchir');
+  req.onsuccess = () => { const s = req.result.transaction('kv', 'readwrite').objectStore('kv'); const g = s.get('projet'); g.onsuccess = () => { const p = g.result; p.ouvrages[0].notes += ' modifié'; s.put(p, 'projet').onsuccess = res; }; };
+}));
+await page.reload();
+await page.getByText('FRANCHIR', { exact: true }).waitFor();
+await page.getByRole('tab', { name: /Zone/ }).click();
+await jeu.getByRole('button', { name: 'Retirer' }).click();
+await page.getByText(/Retrait impossible : réseau ou ouvrages modifiés depuis la préparation/).waitFor({ timeout: 10000 });
+verifier(await hauteurs() === h0, 'ouvrage modifié depuis la préparation : retrait refusé, réseau inchangé');
+await page.getByRole('radio', { name: '30 km' }).click(); // taille du carré non gardée au rechargement
+
+// Relance : tout vient du cache (reprise sans retéléchargement).
+const avant = { ...n };
+await page.getByRole('button', { name: 'Préparer la zone' }).click();
+await page.getByText(/Zone « Zone 30 km » préparée/).nth(1).waitFor({ timeout: 60000 }).catch(() => {});
+await page.waitForFunction(() => !document.querySelector('button')?.textContent?.includes('Arrêter'));
+verifier(n.overpass === avant.overpass && n.wfs === avant.wfs && n.dg === avant.dg, 'relance sur la même zone : aucun nouveau téléchargement');
+
+// Page rechargée : les téléchargements sont gardés dans le navigateur (30 jours), rien n'est retéléchargé.
+await page.reload();
+await page.getByText('FRANCHIR', { exact: true }).waitFor();
+await page.getByRole('tab', { name: /Zone/ }).click();
+await page.getByRole('radio', { name: '30 km' }).click();
+await page.getByRole('button', { name: 'Préparer la zone' }).click();
+await page.getByText(/préparée en .*repris du cache/).waitFor({ timeout: 60000 });
+verifier(n.overpass === avant.overpass && n.wfs === avant.wfs && n.dg === avant.dg, 'page rechargée : tout repris du cache du navigateur, aucun téléchargement');
+
+// Ajouter un carré voisin, une tuile en panne : réseau partiel gardé, trou signalé.
+panne = true;
+const avantAjout = n.overpass;
+await page.getByRole('textbox', { name: 'Aller à' }).fill('47.27, 0.37');
+await page.getByRole('button', { name: 'Centrer la carte' }).click();
+await page.getByRole('button', { name: 'Ajouter ce carré à la zone' }).click();
+await page.getByText(/agrandie en .*1 tuile\(s\) manquante\(s\), en rouge/).waitFor({ timeout: 180000 }).catch(async (e) => { console.log(await page.locator('body').innerText()); console.log(hotes.length, n, bboxEnPanne, await page.evaluate(() => window.__toasts)); throw e; });
+verifier(n.overpass - avantAjout === 8, `carré ajouté : 8 tuiles reçues sur 9, la 9e vide « non confirmée » traitée en trou (${n.overpass - avantAjout})`);
+verifier(await page.getByText(/assemblé à la zone existante ; 1 tuile\(s\) non reçue\(s\)/).isVisible(), 'étape OSM partielle, réseau assemblé à la zone existante');
+const trous = await page.evaluate(() => new Promise((res) => {
+  const req = indexedDB.open('franchir');
+  req.onsuccess = () => { const g = req.result.transaction('kv').objectStore('kv').get('reseau'); g.onsuccess = () => res(g.result?.trous?.length ?? 0); };
+}));
+verifier(trous === 1, `un trou enregistré dans le réseau (${trous})`);
+const lacunes = await page.evaluate(() => new Promise((res) => {
+  const req = indexedDB.open('franchir');
+  req.onsuccess = () => { const g = req.result.transaction('kv').objectStore('kv').get('reseau'); g.onsuccess = () => res((g.result?.lacunes ?? []).map((l) => l.source)); };
+}));
+verifier(lacunes.length === 1 && lacunes[0] === 'IGN BD TOPO', `tuile BD TOPO en panne : lacune enregistrée (${JSON.stringify(lacunes)})`);
+verifier(await page.getByText(/1 tuile\(s\) sur 9 non obtenue\(s\)/).isVisible(), 'étape BD TOPO partielle, les autres tuiles appliquées');
+// Panne levée, même carré : seule la tuile manquante est téléchargée, le trou disparaît.
+panne = false;
+const avantReprise = n.overpass;
+await page.getByRole('button', { name: 'Ajouter ce carré à la zone' }).click();
+await page.getByText(/agrandie en \d+ min ; \d+ téléchargement/).waitFor({ timeout: 60000 });
+verifier(n.overpass - avantReprise === 1, `reprise : seule la tuile manquante est retéléchargée (${n.overpass - avantReprise})`);
+const trous2 = await page.evaluate(() => new Promise((res) => {
+  const req = indexedDB.open('franchir');
+  req.onsuccess = () => { const g = req.result.transaction('kv').objectStore('kv').get('reseau'); g.onsuccess = () => res(g.result?.trous?.length ?? 0); };
+}));
+verifier(trous2 === 0, `trou comblé après la reprise (${trous2})`);
+const lacunes2 = await page.evaluate(() => new Promise((res) => {
+  const req = indexedDB.open('franchir');
+  req.onsuccess = () => { const g = req.result.transaction('kv').objectStore('kv').get('reseau'); g.onsuccess = () => res(g.result?.lacunes?.length ?? 0); };
+}));
+verifier(lacunes2 === 0, `lacune BD TOPO levée après la reprise (${lacunes2})`);
+
+// Lot 3 : fond de carte en option du bouton, estimation affichée, tuiles déjà stockées non retéléchargées.
+await page.getByLabel('Télécharger aussi le fond de carte (hors ligne)').check();
+await page.getByLabel('zoom max.').selectOption('13');
+const est = await page.getByText(/^Environ \d+ Mo \([\d  ]+ tuiles, zooms 8 à 13\)/).textContent();
+const attendu = Number(/\(([\d  ]+) tuiles/.exec(est)[1].replace(/\D/g, ''));
+verifier(attendu > 0, `estimation affichée avant lancement : ${est.split(';')[0]}`);
+await page.getByRole('button', { name: 'Préparer la zone' }).click();
+await page.locator('.etapes > li').filter({ hasText: 'Fond de carte hors ligne' }).getByText(/Plan IGN, zooms 8 à 13 : [\d  ]+ tuile\(s\) disponibles$/).waitFor({ timeout: 120000 });
+verifier(n.tuiles === attendu, `fond de carte : ${n.tuiles} tuiles téléchargées, ${attendu} estimées`);
+verifier(await page.getByText(new RegExp(`zooms 8 à 13 : ${attendu.toLocaleString('fr-FR').replace(/\s/g, '\\s')} tuile`)).isVisible(), 'bilan du fond : toutes les tuiles estimées disponibles');
+const t1 = n.tuiles;
+await page.getByRole('button', { name: 'Préparer la zone' }).click();
+await page.getByText(/Zone « Zone 30 km » préparée/).last().waitFor({ timeout: 60000 });
+await page.waitForFunction(() => !document.body.textContent.includes('Arrêter'));
+verifier(n.tuiles === t1, `relance : tuiles déjà stockées non retéléchargées (${n.tuiles - t1})`);
+
+// Restrictions visibles sur la carte.
+await page.getByLabel('Restrictions et gués').check();
+verifier(erreurs.length === 0, 'aucune erreur JavaScript ' + erreurs.join(' | '));
+await nav.close();
+if (echecs.length) { console.error(echecs.length + ' échec(s)'); process.exit(1); }
+console.log('Préparation de zone : tout est conforme.');

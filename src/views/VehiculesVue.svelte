@@ -33,7 +33,7 @@
   <header class="ligne" style="align-items:flex-end">
     <div style="flex:1">
       <h2>Véhicules</h2>
-      <p class="muted">Caractéristiques de référence. Une classe MLC vide rend le véhicule <strong>non franchissant</strong> (jamais déclaré compatible). Hauteur, largeur et masse permettent les contrôles de gabarit et de restrictions civiles.</p>
+      <p class="muted">Caractéristiques de référence. Aucune classe MLC n'est publiée pour les véhicules français : les classes marquées « estimée » sont calculées depuis la masse (× 1,13 chenilles, × 1,30 roues) et signalées à vérifier dans chaque verdict. Un véhicule sans classe MLC est <strong>supposé compatible</strong> sur les ouvrages classés, avec un avertissement « à vérifier » (réglable dans le Référentiel : il peut au contraire être bloqué). Hauteur, largeur et masse permettent les contrôles de gabarit et de restrictions civiles.</p>
     </div>
     <input type="search" placeholder="Rechercher…" bind:value={recherche} style="width:220px" aria-label="Rechercher un véhicule" />
     <button class="btn" onclick={completer} title="Remplit les dimensions et masses vides à partir des fiches en sources ouvertes, sans écraser vos saisies"><Icone nom="telecharger" taille={16} /> Compléter (sources ouvertes)</button>
@@ -45,7 +45,7 @@
     <table class="tableau">
       <thead>
         <tr>
-          <th>Véhicule</th><th>Propulsion</th><th>MLC chargé</th><th>MLC à vide</th><th>Longueur (m)</th><th>Largeur (m)</th><th>Hauteur (m)</th><th>Masse (t)</th><th>Source</th><th></th>
+          <th>Véhicule</th><th>Propulsion</th><th>MLC chargé</th><th>MLC à vide</th><th>Longueur (m)</th><th>Largeur (m)</th><th>Hauteur (m)</th><th>Masse (t)</th><th>Essieux</th><th title="Charge sur l'essieu le plus chargé">Charge/essieu (t)</th><th>Source</th><th></th>
         </tr>
       </thead>
       <tbody>
@@ -53,12 +53,14 @@
           <tr>
             <td><input type="text" bind:value={v.nom} aria-label="Nom" style="min-width:140px;font-weight:600" /></td>
             <td><select bind:value={v.propulsion} aria-label="Propulsion"><option value="roues">Roues</option><option value="chenilles">Chenilles</option></select></td>
-            <td class:manque={v.mlcCharge == null}><ChampNombre bind:valeur={v.mlcCharge} min={0} max={200} largeur="72px" etiquette="MLC chargé" /></td>
+            <td class:manque={v.mlcCharge == null}><ChampNombre bind:valeur={v.mlcCharge} min={0} max={200} largeur="72px" etiquette="MLC chargé" onchange={() => { delete v.mlcEstimee; }} />{#if v.mlcEstimee}<span class="petit-txt muted" title="Classe estimée (masse × coefficient), non officielle : à vérifier"> estimée</span>{/if}</td>
             <td><ChampNombre bind:valeur={v.mlcVide} min={0} max={200} largeur="72px" etiquette="MLC à vide" /></td>
             <td class:manque={v.longueurM == null}><ChampNombre bind:valeur={v.longueurM} min={0} max={40} largeur="78px" etiquette="Longueur" /></td>
             <td><ChampNombre bind:valeur={v.largeurM} min={0} max={10} largeur="72px" etiquette="Largeur" /></td>
             <td><ChampNombre bind:valeur={v.hauteurM} min={0} max={10} largeur="72px" etiquette="Hauteur" /></td>
             <td><ChampNombre bind:valeur={v.masseT} min={0} max={200} largeur="72px" etiquette="Masse" /></td>
+            <td><ChampNombre bind:valeur={v.essieux} min={1} max={12} largeur="56px" etiquette="Essieux" /></td>
+            <td><ChampNombre bind:valeur={v.chargeEssieuT} min={0} max={50} largeur="64px" etiquette="Charge à l'essieu" /></td>
             <td><input type="text" bind:value={v.provenance.libelle} aria-label="Source" style="min-width:150px" title={v.notes || v.provenance.libelle} /></td>
             <td><button class="btn icone fantome" title="Supprimer" aria-label="Supprimer {v.nom}" onclick={() => supprimer(v.id)}><Icone nom="corbeille" taille={16} /></button></td>
           </tr>

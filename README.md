@@ -12,7 +12,8 @@ Deux questions :
 
 ## Livrable
 
-`dist/index.html` : **un seul fichier HTML autonome** (≈ 450 Ko), aucune ressource externe.
+`dist/index.html` : **un seul fichier HTML autonome** (≈ 800 Ko, 260 Ko compressé), aucune ressource externe.
+Poids réparti entre Leaflet (≈ 150 Ko), proj4 pour Lambert et shapefiles (≈ 130 Ko), styles (≈ 50 Ko), moteur Svelte et code de l'application.
 Il s'ouvre par double-clic (Edge, Firefox, Chrome) sur un poste Intradef ou isolé.
 
 ## Mode d'emploi
@@ -26,7 +27,7 @@ Il s'ouvre par double-clic (Edge, Firefox, Chrome) sur un poste Intradef ou isol
 | 5. Valider le référentiel STANAG (valeurs, nom du valideur) | *Référentiel* | isolé |
 | 6. Calculer itinéraires et écoulements, imprimer / exporter (GeoJSON, KML, CSV) | *Carte*, *Écoulement* | isolé |
 
-Raccourcis : `Alt+1…7` (écrans), `Ctrl+Z` / `Ctrl+Y` (annuler / rétablir).
+Raccourcis : `Alt+1…8` (écrans), `Ctrl+Z` / `Ctrl+Y` (annuler / rétablir).
 
 ## Capacités
 
@@ -78,7 +79,8 @@ Raccourcis : `Alt+1…7` (écrans), `Ctrl+Z` / `Ctrl+Y` (annuler / rétablir).
   - risque : uniquement sur ponts militaires préfabriqués fixes ou flottants, classe établie par le Génie, véhicule seul, 5 km/h, inspection après chaque passage.
 
   Elles restent à faire confirmer par le Génie (texte OTAN ou doctrine française), puis à valider dans l'écran *Référentiel*.
-- **Véhicules** : dimensions et masses renseignées depuis des sources ouvertes (ministère des Armées, fiches constructeurs, encyclopédies), en retenant les valeurs hautes par prudence ; la source et les écarts figurent sur chaque fiche. Hauteur et masse restent inconnues pour le Scania benne 8 m³ et l'EGAME. **Les classes MLC restent celles de la v1**, non publiées en source ouverte : à confirmer auprès de la STAT / SIMMT. Un bouton « Compléter (sources ouvertes) » met à jour un projet existant sans écraser les saisies.
+- **Véhicules** (relevé de novembre 2026, `src/core/vehicules-ouverts.ts`) : 39 véhicules, dont 17 ajoutés (Serval, Griffon EPC et MEPAC, CAESAR Mk II, porte-char TRM 700-100 + SRPB, VBHP, SPRAT, EFA, PFM, VLTP-NP, Boxer, Leopard 2A6, M1A2, Stryker…), avec nombre d'essieux. **Aucune classe MLC n'est déduite** : les nouveaux véhicules restent sans classe (donc jamais déclarés compatibles) tant qu'elle n'est pas saisie, sauf le M1A2 (MLC 73, US Army). La charge par essieu n'est publiée pour aucun véhicule.
+- **Véhicules (v1)** : dimensions et masses renseignées depuis des sources ouvertes (ministère des Armées, fiches constructeurs, encyclopédies), en retenant les valeurs hautes par prudence ; la source et les écarts figurent sur chaque fiche. Hauteur et masse restent inconnues pour le Scania benne 8 m³ et l'EGAME. **Les classes MLC restent celles de la v1**, non publiées en source ouverte : à confirmer auprès de la STAT / SIMMT. Un bouton « Compléter (sources ouvertes) » met à jour un projet existant sans écraser les saisies.
 - **OpenStreetMap** ne contient aucune classe MLC : les ponts importés sont « estimés » tant qu'ils n'ont pas été renseignés.
 
 ## Développement

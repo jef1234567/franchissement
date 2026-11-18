@@ -1,5 +1,5 @@
 /* =========================================================================
-   Stockage local (IndexedDB) — projet, réseau, zone, tuiles
+   Stockage local (IndexedDB) — projet, réseau, zone, tuiles, cache des téléchargements
    Repli en mémoire si IndexedDB est indisponible (navigation privée,
    stratégie de sécurité du poste) : l'utilisateur est alors averti.
    ========================================================================= */
@@ -11,6 +11,7 @@ type Magasin = 'kv' | 'tuiles';
 let base: Promise<IDBDatabase> | null = null;
 let memoire: Map<string, unknown> | null = null;
 const memoireTuiles = new Map<string, Blob>();
+const memoireCache = new Map<string, EntreeCache>();
 
 function ouvrir(): Promise<IDBDatabase> {
   if (!base) {
@@ -101,9 +102,71 @@ export async function viderTuiles(): Promise<void> {
 }
 
 export async function toutEffacer(): Promise<void> {
-  if (memoire) { memoire.clear(); memoireTuiles.clear(); return; }
+  if (memoire) { memoire.clear(); memoireTuiles.clear(); memoireCache.clear(); return; }
   await tx('kv', 'readwrite', (s) => s.clear());
   await tx('tuiles', 'readwrite', (s) => s.clear());
+}
+
+/* ---------------- Cache des téléchargements de la préparation de zone ----------------
+   Réponses Overpass, IGN, geo.api et data.gouv gardées 30 jours (comme l'outil terrain) :
+   une préparation relancée, même après fermeture de la page, ne retélécharge que ce qui manque.
+   Rangées dans le magasin « kv » sous le préfixe « cache: » : pas de montée de version de la base
+   (une montée bloquerait les onglets ouverts sur une version antérieure de l'outil). */
+
+const PREFIXE = 'cache:';
+const PLAGE = () => IDBKeyRange.bound(PREFIXE, PREFIXE + '\uffff');
+
+export const DUREE_CACHE_MS = 30 * 24 * 3600 * 1000;
+interface EntreeCache { date: number; valeur: unknown }
+
+/** Valeur en cache si elle a moins de 30 jours, sinon undefined. Une erreur de lecture vaut une absence. */
+export async function lireCache<T>(cle: string): Promise<T | undefined> {
+  try {
+    const e = memoire ? memoireCache.get(cle) : await tx<EntreeCache | undefined>('kv', 'readonly', (s) => s.get(PREFIXE + cle) as IDBRequest<EntreeCache | undefined>);
+    if (!e || !(Date.now() - e.date < DUREE_CACHE_MS)) return undefined;
+    return e.valeur as T;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Range une valeur en cache. Un échec (quota) n'interrompt pas la préparation : la donnée reste utilisée. */
+export async function ecrireCache(cle: string, valeur: unknown): Promise<boolean> {
+  const e: EntreeCache = { date: Date.now(), valeur };
+  if (memoire) { memoireCache.set(cle, e); return true; }
+  try { await tx('kv', 'readwrite', (s) => s.put(e, PREFIXE + cle)); return true; } catch { return false; }
+}
+
+/** Supprime les entrées de plus de 30 jours ; renvoie le nombre d'entrées restantes. */
+export async function purgerCache(): Promise<number> {
+  const limite = Date.now() - DUREE_CACHE_MS;
+  if (memoire) {
+    for (const [k, e] of memoireCache) if (e.date <= limite) memoireCache.delete(k);
+    return memoireCache.size;
+  }
+  try {
+    const db = await ouvrir();
+    return await new Promise<number>((resolve, reject) => {
+      const t = db.transaction('kv', 'readwrite');
+      let restantes = 0;
+      const req = t.objectStore('kv').openCursor(PLAGE());
+      req.onsuccess = () => {
+        const c = req.result;
+        if (!c) return;
+        if ((c.value as EntreeCache).date <= limite) c.delete(); else restantes++;
+        c.continue();
+      };
+      t.oncomplete = () => resolve(restantes);
+      t.onerror = () => reject(t.error);
+    });
+  } catch {
+    return 0;
+  }
+}
+
+export async function viderCache(): Promise<void> {
+  if (memoire) { memoireCache.clear(); return; }
+  await tx('kv', 'readwrite', (s) => s.delete(PLAGE()));
 }
 
 export async function estimationQuota(): Promise<{ utilise: number; quota: number } | null> {

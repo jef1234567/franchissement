@@ -8,7 +8,12 @@
     "build": "vite build",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
-    "e2e": "node tests/e2e/smoke.mjs"
+    "e2e": "node tests/e2e/smoke.mjs",
+    "e2e:convois": "node tests/e2e/convois.mjs",
+    "e2e:ign": "node tests/e2e/ign.mjs",
+    "e2e:assemblage": "node tests/e2e/assemblage.mjs",
+    "e2e:datagouv": "node tests/e2e/datagouv.mjs",
+    "e2e:zone": "node tests/e2e/zone.mjs"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5.1.1",

@@ -1,5 +1,7 @@
 import { analyserPosition, haversine, longueurPolyligne, milieuPolyligne } from './geo';
 import {
+  valeursEnDesaccord,
+  MARQUE_CIVIL_ILLISIBLE,
   estNombre,
   nouvelOuvrage,
   nouveauVehicule,
@@ -12,9 +14,9 @@ import {
   type Unite,
   type Vehicule,
 } from './model';
-import { referentielParDefaut } from './reference';
+import { completerVehicules, referentielParDefaut } from './reference';
 import { areteLaPlusProche, type Reseau } from './reseau';
-import { versWGS84, type CodeSCR } from './projections';
+import { devinerSCR, versWGS84, type CodeSCR } from './projections';
 
 /* =========================================================================
    Table générique issue d'un fichier (CSV, GeoJSON, KML)
@@ -23,8 +25,11 @@ import { versWGS84, type CodeSCR } from './projections';
 export interface TableImport {
   colonnes: string[];
   lignes: Record<string, string>[];
-  /** Géométrie éventuelle par ligne (GeoJSON / KML). */
+  /** Géométrie éventuelle par ligne (GeoJSON / KML, ou colonne géométrique d'un CSV Opendatasoft). */
   geometries: ([number, number][] | null)[];
+  /** Parties distinctes d'une géométrie multiple (MultiLineString) : `geometries` les met bout à bout,
+   *  ce qui crée un faux segment entre deux parties ; les restrictions linéaires utilisent donc celles-ci. */
+  parties?: ([number, number][][] | null)[];
   format: 'csv' | 'geojson' | 'kml';
 }
 
@@ -78,7 +83,43 @@ export function tableDepuisCSV(texte: string): TableImport {
   if (brut.length < 2) throw new Error('Fichier vide ou sans ligne de données.');
   const colonnes = dedoublonnerColonnes(brut[0]);
   const lignes = brut.slice(1).map((l) => Object.fromEntries(colonnes.map((c, i) => [c, l[i] ?? ''])));
-  return { colonnes, lignes, geometries: lignes.map(() => null), format: 'csv' };
+  return { colonnes, lignes, ...geometriesCSV(colonnes, lignes), format: 'csv' };
+}
+
+/** Géométrie GeoJSON écrite dans une cellule (« Geo Shape » des exports Opendatasoft), sinon null. */
+function geomCellule(v: string | undefined): GeomGeoJSON | null {
+  const t = (v ?? '').trim();
+  if (!t.startsWith('{')) return null;
+  try {
+    const g = JSON.parse(t) as GeomGeoJSON;
+    return g && typeof g.type === 'string' && (g.coordinates !== undefined || g.geometries) ? g : null;
+  } catch { return null; }
+}
+
+/** Point « lat, lon » (« Geo Point » / « geo_point_2d » des exports Opendatasoft), sinon null. */
+function pointCellule(v: string | undefined): [number, number] | null {
+  const m = /^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/.exec(v ?? '');
+  if (!m) return null;
+  const [lat, lon] = [parseFloat(m[1]), parseFloat(m[2])];
+  return Math.abs(lat) <= 90 && Math.abs(lon) <= 180 ? [lat, lon] : null;
+}
+
+/** Colonne géométrique d'un CSV : GeoJSON dans une cellule (prioritaire), sinon point « lat, lon » dans une colonne nommée geo point. */
+function geometriesCSV(colonnes: string[], lignes: Record<string, string>[]): Pick<TableImport, 'geometries' | 'parties'> {
+  const vide = { geometries: lignes.map(() => null) };
+  const echantillon = lignes.slice(0, 20);
+  const majorite = (f: (v: string) => unknown, c: string) => {
+    const nonVides = echantillon.filter((l) => (l[c] ?? '').trim() !== '');
+    return nonVides.length > 0 && nonVides.filter((l) => f(l[c])).length >= nonVides.length / 2;
+  };
+  const colShape = colonnes.find((c) => majorite(geomCellule, c));
+  if (colShape) {
+    const geoms = lignes.map((l) => geomCellule(l[colShape]));
+    return { geometries: geoms.map(pointsGeometrie), parties: geoms.map(partiesGeometrie) };
+  }
+  const colPoint = colonnes.find((c) => /geo.?point|point.?2d|coordonnees|coordinates/.test(motsCles(c).join(' ')) && majorite(pointCellule, c));
+  if (colPoint) return { geometries: lignes.map((l) => { const p = pointCellule(l[colPoint]); return p ? [p] : null; }) };
+  return vide;
 }
 
 function dedoublonnerColonnes(cols: string[]): string[] {
@@ -111,6 +152,12 @@ function pointsGeometrie(g: GeomGeoJSON | null | undefined): [number, number][] 
   }
 }
 
+/** Parties d'une géométrie multiple linéaire (MultiLineString), sinon null. */
+function partiesGeometrie(g: GeomGeoJSON | null | undefined): [number, number][][] | null {
+  if (!g || g.type !== 'MultiLineString') return null;
+  return (g.coordinates as Pos[][]).map((l) => l.map((p): [number, number] => [p[1], p[0]]));
+}
+
 export function tableDepuisGeoJSON(texte: string | object): TableImport {
   type Entite = { type?: string; properties?: Record<string, unknown>; geometry?: GeomGeoJSON };
   const j = (typeof texte === 'string' ? JSON.parse(texte) : texte) as Entite & { features?: Entite[] };
@@ -125,7 +172,12 @@ export function tableDepuisGeoJSON(texte: string | object): TableImport {
     }
     return l;
   });
-  return { colonnes: [...colonnes], lignes, geometries: features.map((f) => pointsGeometrie(f.geometry)), format: 'geojson' };
+  return {
+    colonnes: [...colonnes], lignes,
+    geometries: features.map((f) => pointsGeometrie(f.geometry)),
+    parties: features.map((f) => partiesGeometrie(f.geometry)),
+    format: 'geojson',
+  };
 }
 
 /* ---------- KML (navigateur : DOMParser) ---------- */
@@ -175,7 +227,8 @@ export type ChampCible =
   | 'classeUnique' | 'classeUniqueRoues' | 'classeUniqueChenilles'
   | 'classeDouble' | 'classeDoubleRoues' | 'classeDoubleChenilles'
   | 'classePrecaution' | 'classeRisque'
-  | 'poidsMax' | 'hauteurMax' | 'largeurMax' | 'fiabilite' | 'reference' | 'notes';
+  | 'classePrecautionRoues' | 'classePrecautionChenilles' | 'classeRisqueRoues' | 'classeRisqueChenilles'
+  | 'poidsMax' | 'hauteurMax' | 'largeurMax' | 'essieuMax' | 'fiabilite' | 'reference' | 'notes' | 'rattachement' | 'ouverture';
 
 export const CHAMPS_CIBLES: { cle: ChampCible; libelle: string; alias: string[] }[] = [
   { cle: 'nom', libelle: 'Nom', alias: ['nom', 'name', 'pont', 'ouvrage', 'nom ouvrage', 'toponyme', 'libelle'] },
@@ -189,7 +242,9 @@ export const CHAMPS_CIBLES: { cle: ChampCible; libelle: string; alias: string[] 
   { cle: 'mgrs', libelle: 'Position MGRS', alias: ['mgrs', 'position mgrs', 'coordonnees mgrs', 'mgrs position'] },
   { cle: 'longueur', libelle: 'Longueur (m)', alias: ['longueur', 'length', 'long ouvrage', 'portee'] },
   { cle: 'largeur', libelle: 'Largeur utile (m)', alias: ['largeur', 'width', 'largeur utile', 'largeur chaussee'] },
-  { cle: 'hauteurLibre', libelle: 'Hauteur libre (m)', alias: ['hauteur', 'hauteur libre', 'tirant air', 'gabarit', 'height'] },
+  // « hauteur » ou « gabarit » seuls ne sont pas proposés : dans les inventaires départementaux (ex. Maine-et-Loire),
+  // « hauteur » est celle de l'ouverture sous une voûte ou une buse, sans rapport avec le passage sur l'ouvrage.
+  { cle: 'hauteurLibre', libelle: 'Hauteur libre (m)', alias: ['hauteur libre', 'tirant air', 'gabarit en hauteur'] },
   { cle: 'classeUnique', libelle: 'Classe voie unique', alias: ['classe', 'mlc', 'classe unique', 'classe voie unique', 'mlc unique', 'classe 1 voie', 'mlc 1 voie', 'classe sens unique'] },
   { cle: 'classeUniqueRoues', libelle: 'Classe voie unique — roues', alias: ['classe unique roues', 'mlc unique roues', 'classe roues', 'mlc roues', 'mlc wheeled', 'wheeled'] },
   { cle: 'classeUniqueChenilles', libelle: 'Classe voie unique — chenilles', alias: ['classe unique chenilles', 'mlc unique chenilles', 'classe chenilles', 'mlc chenilles', 'mlc tracked', 'tracked'] },
@@ -198,12 +253,38 @@ export const CHAMPS_CIBLES: { cle: ChampCible; libelle: string; alias: string[] 
   { cle: 'classeDoubleChenilles', libelle: 'Classe double voie — chenilles', alias: ['classe double chenilles', 'mlc double chenilles'] },
   { cle: 'classePrecaution', libelle: 'Classe précaution', alias: ['classe precaution', 'mlc precaution', 'caution', 'classe caution'] },
   { cle: 'classeRisque', libelle: 'Classe risque', alias: ['classe risque', 'mlc risque', 'risk', 'classe risk'] },
+  { cle: 'classePrecautionRoues', libelle: 'Classe précaution — roues', alias: ['classe precaution roues', 'mlc precaution roues', 'caution wheeled'] },
+  { cle: 'classePrecautionChenilles', libelle: 'Classe précaution — chenilles', alias: ['classe precaution chenilles', 'mlc precaution chenilles', 'caution tracked'] },
+  { cle: 'classeRisqueRoues', libelle: 'Classe risque — roues', alias: ['classe risque roues', 'mlc risque roues', 'risk wheeled'] },
+  { cle: 'classeRisqueChenilles', libelle: 'Classe risque — chenilles', alias: ['classe risque chenilles', 'mlc risque chenilles', 'risk tracked'] },
   { cle: 'poidsMax', libelle: 'Tonnage max. civil (t)', alias: ['tonnage', 'poids max', 'maxweight', 'limitation tonnage', 'ptac max', 'restriction poids'] },
   { cle: 'hauteurMax', libelle: 'Hauteur max. civile (m)', alias: ['maxheight', 'hauteur max', 'restriction hauteur'] },
   { cle: 'largeurMax', libelle: 'Largeur max. civile (m)', alias: ['maxwidth', 'largeur max', 'restriction largeur'] },
+  { cle: 'essieuMax', libelle: "Charge max. à l'essieu (t)", alias: ['maxaxleload', 'charge essieu', 'charge a l essieu', 'poids essieu', 'restriction essieu'] },
   { cle: 'fiabilite', libelle: 'Fiabilité', alias: ['fiabilite', 'statut', 'etat validation', 'validation'] },
   { cle: 'notes', libelle: 'Notes', alias: ['notes', 'remarques', 'commentaire', 'commentaires', 'observations', 'description'] },
+  { cle: 'rattachement', libelle: 'Voie portée / franchie', alias: ['voie rattachement', 'rattachement', 'position voie'] },
+  { cle: 'ouverture', libelle: 'Ouverture (m) — petits ouvrages', alias: ['ouverture', 'ouverture m'] },
 ];
+
+/** Côté maximal d'une voûte ou d'un cadre traité comme petit ouvrage sous chaussée. */
+export const OUVERTURE_PETIT_OUVRAGE_M = 5;
+
+/**
+ * Petit ouvrage sous chaussée, d'après la nature et l'ouverture : buse, dalot, ponceau, aqueduc quelle que soit la taille ;
+ * voûte, cadre (PICF…) seulement si l'ouverture est connue et ≤ 5 m. Ouverture inconnue → ouvrage ordinaire (prudent).
+ */
+export function petitOuvrageSousChaussee(nature: string | undefined, ouvertureM: number | null): boolean {
+  const t = motsCles(nature ?? '').join(' ');
+  if (/\b(buses?|dalots?|ponceaux?|ponceau|aqueducs?)\b/.test(t)) return true;
+  if (/\b(voutes?|cadres?|picf)\b/.test(t)) return ouvertureM != null && ouvertureM > 0 && ouvertureM <= OUVERTURE_PETIT_OUVRAGE_M;
+  return false;
+}
+
+/** « Voie franchie » (la route de la colonne Route passe SOUS l'ouvrage) → true ; « Voie portée » ou vide → false. */
+export function voieFranchie(txt: string | undefined): boolean {
+  return /franchi|dessous|inferieur/.test(motsCles(txt ?? '').join(' '));
+}
 
 const MOTS_VIDES = new Set(['m', 't', 'en', 'de', 'du', 'la', 'le', 'des', 'l', 'd', 'mlc']);
 
@@ -241,6 +322,37 @@ export function proposerCorrespondance(colonnes: string[]): Correspondance {
   return res;
 }
 
+/**
+ * Géométrie lue dans les colonnes quand le fichier n'en porte pas (CSV à colonnes lat / lon ou X / Y) : audit B-I4,
+ * un tel jeu était jeté comme « aucune entité dans la zone ». X / Y : Lambert 93 ou Lambert II étendu reconnus
+ * par l'ordre de grandeur, jamais un UTM (zone indéterminable). Seules les lignes sans géométrie sont complétées.
+ */
+export function geometriesDepuisColonnes(t: TableImport): { table: TableImport; methode: string | null } {
+  if (t.geometries.every(Boolean)) return { table: t, methode: null };
+  const corr = proposerCorrespondance(t.colonnes);
+  const geoms = [...t.geometries];
+  let methode: string | null = null;
+  if (corr.lat && corr.lon) {
+    t.lignes.forEach((l, i) => {
+      if (geoms[i]) return;
+      const la = nombreFR(l[corr.lat!]), lo = nombreFR(l[corr.lon!]);
+      if (la != null && lo != null && Math.abs(la) <= 90 && Math.abs(lo) <= 180 && (la !== 0 || lo !== 0)) { geoms[i] = [[la, lo]]; methode = 'colonnes latitude / longitude'; }
+    });
+  }
+  if (corr.x && corr.y && geoms.some((g) => !g)) {
+    const xs = t.lignes.map((l) => nombreFR(l[corr.x!]) ?? NaN), ys = t.lignes.map((l) => nombreFR(l[corr.y!]) ?? NaN);
+    const scr = devinerSCR(xs, ys);
+    if (scr === 'l93' || scr === 'l2e' || scr === 'wgs84') {
+      t.lignes.forEach((_, i) => {
+        if (geoms[i] || !Number.isFinite(xs[i]) || !Number.isFinite(ys[i])) return;
+        const p = scr === 'wgs84' ? [ys[i], xs[i]] as [number, number] : versWGS84(scr, xs[i], ys[i]);
+        if (p && Math.abs(p[0]) <= 90 && Math.abs(p[1]) <= 180) { geoms[i] = [p]; methode = `colonnes X / Y (${scr === 'l93' ? 'Lambert 93' : scr === 'l2e' ? 'Lambert II étendu' : 'degrés'})`; }
+      });
+    }
+  }
+  return { table: { ...t, geometries: geoms }, methode };
+}
+
 /* =========================================================================
    Conversion table → ouvrages (avec validation ligne à ligne)
    ========================================================================= */
@@ -253,6 +365,39 @@ export function nombreFR(txt: string | undefined): number | null {
   if (!m) return null;
   const v = parseFloat(m[0]);
   return Number.isFinite(v) ? v : null;
+}
+
+export type GenreMesure = 'masse' | 'hauteur' | 'largeur' | 'longueur';
+
+/** Bornes de vraisemblance : au-delà, l'unité est probablement fausse (cm, kg) : valeur rejetée, jamais corrigée. */
+export const BORNES_MESURE: Record<GenreMesure, number> = { masse: 200, hauteur: 10, largeur: 10, longueur: 50 };
+
+/**
+ * Valeur de restriction lue strictement (audit B-I6) : nombre entier ou décimal (virgule ou point, milliers séparés
+ * par une espace), unité connue ou absente ; « 4m20 », « 4 m 20 » ; plusieurs valeurs (« 7,5 / 3,5 ») → la plus petite.
+ * Tout autre texte, ou une valeur hors bornes, est « illisible » : rejetée, jamais lue par son début.
+ */
+export function mesureStricte(txt: string | undefined, genre: GenreMesure): { valeur: number | null; illisible: boolean } {
+  const brut = (txt ?? '').trim();
+  if (!brut) return { valeur: null, illisible: false };
+  const KO = { valeur: null, illisible: true };
+  let min: number | null = null;
+  for (const partie of brut.split(/\s*(?:\/|;|\||\bet\b|\bou\b)\s*/i).filter(Boolean)) {
+    const s = partie.toLowerCase().replace(/\u00a0/g, ' ').replace(/^(\d{1,3}(?: \d{3})+)(?=[.,]|\D|$)/, (m) => m.replace(/ /g, '')).replace(',', '.').trim();
+    let v: number | null = null;
+    if (genre === 'masse') {
+      const m = /^(\d+(?:\.\d+)?)\s*(t|tonnes?|kg)?$/.exec(s);
+      if (m) v = m[2] === 'kg' ? parseFloat(m[1]) / 1000 : parseFloat(m[1]);
+    } else {
+      const mc = /^(\d+)\s*m\s*(\d{1,2})$/.exec(s);
+      const m = /^(\d+(?:\.\d+)?)\s*(m|cm)?$/.exec(s);
+      if (mc) v = parseInt(mc[1], 10) + parseInt(mc[2], 10) / (mc[2].length === 1 ? 10 : 100);
+      else if (m) v = m[2] === 'cm' ? parseFloat(m[1]) / 100 : parseFloat(m[1]);
+    }
+    if (v == null || !(v > 0) || v > BORNES_MESURE[genre]) return KO;
+    min = min == null ? v : Math.min(min, v);
+  }
+  return { valeur: min, illisible: false };
 }
 
 function typeDepuis(txt: string | undefined): Ouvrage['type'] {
@@ -328,25 +473,54 @@ export function convertirOuvrages(
       }
       return v;
     };
+    // Restrictions civiles lues strictement (audit B-I6) : illisible ou invraisemblable → ignorée et signalée.
+    const illisibles: string[] = [];
+    const civil = (c: ChampCible, genre: GenreMesure) => {
+      const m = mesureStricte(get(l, c), genre);
+      if (m.illisible) illisibles.push(`${CHAMPS_CIBLES.find((x) => x.cle === c)!.libelle} « ${get(l, c)} »`);
+      if (m.illisible) avertissements.push({ ligne: n, motif: `${CHAMPS_CIBLES.find((x) => x.cle === c)!.libelle} « ${get(l, c)} » illisible ou invraisemblable : ignoré(e), à vérifier.` });
+      return m.valeur;
+    };
+    // Voie franchie : la route citée passe sous l'ouvrage. Elle n'est pas la route portée, et la hauteur
+    // éventuelle est celle du passage dessous : ni l'une ni l'autre ne s'appliquent aux véhicules sur l'ouvrage.
+    const illisiblesNote = () => illisibles.length ? `${MARQUE_CIVIL_ILLISIBLE} ${illisibles.join(', ')} : à vérifier.` : '';
+    const franchie = voieFranchie(get(l, 'rattachement'));
+    const petit = !franchie && petitOuvrageSousChaussee(get(l, 'type'), nombreFR(get(l, 'ouverture')));
+    const routeLue = (get(l, 'route') ?? '').trim();
+    const hauteurLue = nombreFR(get(l, 'hauteurLibre'));
+    const notesLues = (get(l, 'notes') ?? '').trim();
+    const noteFranchie = franchie
+      ? [`Ouvrage au-dessus de ${routeLue || 'la route citée'} (voie franchie) ; route portée inconnue.`, hauteurLue != null ? `Hauteur indiquée pour le passage dessous : ${hauteurLue} m.` : '']
+          .filter(Boolean).join(' ')
+      : '';
     const o = nouvelOuvrage({
       nom: nom || 'Ouvrage importé',
-      route: (get(l, 'route') ?? '').trim(),
+      route: franchie ? '' : routeLue,
       type: typeDepuis(get(l, 'type')),
       lat, lon,
       geom: geom && geom.length > 1 ? geom : null,
       longueurM: nombreFR(get(l, 'longueur')) ?? (geom && geom.length > 1 ? Math.round(longueurPolyligne(geom) * 10) / 10 : null),
       largeurM: nombreFR(get(l, 'largeur')),
-      hauteurLibreM: nombreFR(get(l, 'hauteurLibre')),
+      hauteurLibreM: franchie ? null : hauteurLue,
       classes: {
         unique: { generique: classe('classeUnique'), roues: classe('classeUniqueRoues'), chenilles: classe('classeUniqueChenilles') },
         double: { generique: classe('classeDouble'), roues: classe('classeDoubleRoues'), chenilles: classe('classeDoubleChenilles') },
         precaution: classe('classePrecaution'),
         risque: classe('classeRisque'),
+        ...Object.fromEntries(
+          ([['precautionRoues', 'classePrecautionRoues'], ['precautionChenilles', 'classePrecautionChenilles'], ['risqueRoues', 'classeRisqueRoues'], ['risqueChenilles', 'classeRisqueChenilles']] as const)
+            .map(([k, c]) => [k, classe(c)] as const)
+            .filter(([, v]) => v !== null),
+        ),
       },
-      civil: { poidsMaxT: nombreFR(get(l, 'poidsMax')), hauteurMaxM: nombreFR(get(l, 'hauteurMax')), largeurMaxM: nombreFR(get(l, 'largeurMax')) },
+      civil: { poidsMaxT: civil('poidsMax', 'masse'), hauteurMaxM: civil('hauteurMax', 'hauteur'), largeurMaxM: civil('largeurMax', 'largeur'), essieuMaxT: civil('essieuMax', 'masse') },
       fiabilite: fiabiliteDepuis(get(l, 'fiabilite'), fiabiliteDefaut),
-      provenance: { ...provenance, reference: (get(l, 'reference') ?? '').trim() || provenance.reference },
-      notes: (get(l, 'notes') ?? '').trim(),
+      notes: [notesLues, noteFranchie, illisiblesNote()].filter(Boolean).join(' '),
+      // Sans colonne identifiant, chaque ligne garde une référence propre (sinon, au second import du même fichier,
+      // toutes les lignes se rapprochaient du même ouvrage par la référence commune).
+      provenance: { ...provenance, reference: (get(l, 'reference') ?? '').trim() || (provenance.reference ? `${provenance.reference}#ligne ${n}` : undefined) },
+      ...(franchie ? { voieFranchie: true } : {}),
+      ...(petit ? { petitOuvrage: true } : {}),
     });
     const u = o.classes.unique.generique, d = o.classes.double.generique;
     if (estNombre(u) && estNombre(d) && d > u) avertissements.push({ ligne: n, motif: `« ${o.nom} » : classe double voie (${d}) supérieure à la classe voie unique (${u}) — à vérifier.` });
@@ -392,10 +566,25 @@ const CHAMPS_FUSION: [string, (o: Ouvrage) => unknown, (o: Ouvrage, v: unknown) 
   ['classe double voie chenilles', (o) => o.classes.double.chenilles, (o, v) => (o.classes.double.chenilles = v as number)],
   ['classe précaution', (o) => o.classes.precaution, (o, v) => (o.classes.precaution = v as number)],
   ['classe risque', (o) => o.classes.risque, (o, v) => (o.classes.risque = v as number)],
+  ['classe précaution roues', (o) => o.classes.precautionRoues ?? null, (o, v) => (o.classes.precautionRoues = v as number)],
+  ['classe précaution chenilles', (o) => o.classes.precautionChenilles ?? null, (o, v) => (o.classes.precautionChenilles = v as number)],
+  ['classe risque roues', (o) => o.classes.risqueRoues ?? null, (o, v) => (o.classes.risqueRoues = v as number)],
+  ['classe risque chenilles', (o) => o.classes.risqueChenilles ?? null, (o, v) => (o.classes.risqueChenilles = v as number)],
   ['tonnage civil', (o) => o.civil.poidsMaxT, (o, v) => (o.civil.poidsMaxT = v as number)],
   ['hauteur civile', (o) => o.civil.hauteurMaxM, (o, v) => (o.civil.hauteurMaxM = v as number)],
   ['largeur civile', (o) => o.civil.largeurMaxM, (o, v) => (o.civil.largeurMaxM = v as number)],
+  ["charge civile à l'essieu", (o) => o.civil.essieuMaxT, (o, v) => (o.civil.essieuMaxT = v as number)],
 ];
+
+const CHAMPS_CIVILS = new Set(['tonnage civil', 'hauteur civile', 'largeur civile', "charge civile à l'essieu"]);
+
+/** Enregistre un désaccord (sans doublon) entre la valeur retenue et une autre source. */
+export function noterDesaccord(o: Ouvrage, champ: string, retenu: unknown, sourceRetenue: string, autre: unknown, sourceAutre: string, date = new Date().toISOString()) {
+  if (!valeursEnDesaccord(retenu, autre)) return;
+  o.desaccords ??= [];
+  if (o.desaccords.some((d) => d.champ === champ && d.autre === autre && d.sourceAutre === sourceAutre && d.retenu === retenu)) return;
+  o.desaccords.push({ date, champ, retenu, sourceRetenue, autre, sourceAutre });
+}
 
 function nomsCompatibles(a: string, b: string) {
   const ka = motsCles(a).filter((m) => !['pont', 'de', 'du', 'la', 'le', 'des', 'sur', 'ouvrage', 'sans', 'nom'].includes(m));
@@ -416,6 +605,8 @@ export function planifierFusion(existants: Ouvrage[], entrants: Ouvrage[], seuil
       let best = Infinity;
       for (const x of existants) {
         if (!estNombre(x.lat) || !estNombre(x.lon)) continue;
+        // Un petit ouvrage (buse, dalot…) ne se fond jamais par proximité dans un vrai pont, ni l'inverse.
+        if (!!x.petitOuvrage !== !!e.petitOuvrage) continue;
         const d = haversine(e.lat, e.lon, x.lat, x.lon);
         // Tolérance : l'ouvrage peut être long, on compare aussi au demi-longueur.
         const tol = Math.max(seuilM, (x.longueurM ?? 0) / 2);
@@ -444,8 +635,11 @@ export function appliquerFusion(existants: Ouvrage[], plan: OperationFusion[], r
     if (op.action === 'creer' || !op.cible) {
       const o = structuredClone(op.entrant);
       if (reseau && estNombre(o.lat) && estNombre(o.lon) && !o.osmWayIds.length) {
-        const a = areteLaPlusProche(reseau, [o.lat, o.lon], { pontsSeuls: true, rayonM: 60 }) ??
-          areteLaPlusProche(reseau, [o.lat, o.lon], { rayonM: 25 });
+        // Voie franchie : seulement un pont (la route à moins de 25 m est souvent celle du dessous).
+        // Petit ouvrage : la route qui passe dessus (jamais un pont voisin).
+        const a = o.petitOuvrage ? areteLaPlusProche(reseau, [o.lat, o.lon], { rayonM: 25 })
+          : areteLaPlusProche(reseau, [o.lat, o.lon], { pontsSeuls: true, rayonM: 60 }) ??
+            (o.voieFranchie ? null : areteLaPlusProche(reseau, [o.lat, o.lon], { rayonM: 25 }));
         if (a) o.osmWayIds = [reseau.aretes[a.arete].way];
       }
       res.push(o);
@@ -459,15 +653,19 @@ export function appliquerFusion(existants: Ouvrage[], plan: OperationFusion[], r
       const a = lire(cible), b = lire(op.entrant);
       if (b == null || b === '') continue;
       const nomGenerique = champ === 'nom' && /^(Ouvrage sans nom|Ouvrage importé|Pont [A-Z]+\s?\d)/.test(String(a));
-      if (a == null || a === '' || nomGenerique || (op.prioritaire && a !== b)) {
+      // Restrictions civiles : jamais relevées par une fusion, sauf donnée validée par le Génie.
+      const civilPlusLaxiste = CHAMPS_CIVILS.has(champ) && typeof a === 'number' && typeof b === 'number' && b > a && op.entrant.fiabilite !== 'valide';
+      if (a == null || a === '' || nomGenerique || (op.prioritaire && a !== b && !civilPlusLaxiste)) {
         if (a !== b) cible.historique.push({ date: maintenant, champ, ancien: a, nouveau: b, source: libelle });
+        if (champ !== 'nom') noterDesaccord(cible, champ, b, libelle, a, cible.provenance.libelle, maintenant);
         ecrire(cible, b);
-      }
+      } else if (champ !== 'nom') noterDesaccord(cible, champ, a, cible.provenance.libelle, b, libelle, maintenant);
     }
     if (op.prioritaire) {
       cible.fiabilite = op.entrant.fiabilite;
       cible.provenance = { ...op.entrant.provenance };
     }
+    if (op.entrant.voieFranchie) cible.voieFranchie = true;
     if (op.entrant.notes) cible.notes = [cible.notes, `[${libelle}] ${op.entrant.notes}`].filter(Boolean).join('\n');
   }
   return res;
@@ -506,19 +704,28 @@ export function reparerOuvrage(x: Record<string, unknown>): Ouvrage {
     longueurM: num(x.longueurM),
     largeurM: num(x.largeurM),
     hauteurLibreM: num(x.hauteurLibreM),
-    classes: { unique: cv(c.unique), double: cv(c.double), precaution: num(c.precaution), risque: num(c.risque) },
-    civil: { poidsMaxT: num(civ.poidsMaxT), hauteurMaxM: num(civ.hauteurMaxM), largeurMaxM: num(civ.largeurMaxM) },
+    classes: {
+      unique: cv(c.unique),
+      double: cv(c.double),
+      precaution: num(c.precaution),
+      risque: num(c.risque),
+      ...Object.fromEntries((['precautionRoues', 'precautionChenilles', 'risqueRoues', 'risqueChenilles'] as const).filter((k) => num(c[k]) !== null).map((k) => [k, num(c[k])])),
+    },
+    civil: { poidsMaxT: num(civ.poidsMaxT), hauteurMaxM: num(civ.hauteurMaxM), largeurMaxM: num(civ.largeurMaxM), essieuMaxT: num(civ.essieuMaxT) },
     fiabilite: ['estime', 'reconnu', 'valide'].includes(fiab) ? fiab : 'estime',
     provenance: {
-      type: (['osm', 'geo', 'csv', 'reco', 'manuel', 'v1', 'reference'].includes(str(prov.type)) ? str(prov.type) : 'manuel') as Provenance['type'],
+      type: (['osm', 'geo', 'csv', 'reco', 'manuel', 'v1', 'reference', 'ign', 'datagouv'].includes(str(prov.type)) ? str(prov.type) : 'manuel') as Provenance['type'],
       libelle: str(prov.libelle, 'Inconnue') || 'Inconnue',
       reference: prov.reference ? str(prov.reference) : undefined,
       date: prov.date ? str(prov.date) : undefined,
       auteur: prov.auteur ? str(prov.auteur) : undefined,
     },
     historique: Array.isArray(x.historique) ? (x.historique as Ouvrage['historique']) : [],
+    desaccords: Array.isArray(x.desaccords) ? (x.desaccords as Ouvrage['desaccords']) : [],
     osmWayIds: Array.isArray(x.osmWayIds) ? (x.osmWayIds as unknown[]).map(Number).filter(Number.isFinite) : [],
     notes: str(x.notes),
+    ...(x.voieFranchie === true ? { voieFranchie: true } : {}),
+    ...(x.petitOuvrage === true ? { petitOuvrage: true } : {}),
   };
 }
 
@@ -532,10 +739,13 @@ export function reparerVehicule(x: Record<string, unknown>): Vehicule {
     propulsion: x.propulsion === 'chenilles' ? 'chenilles' : 'roues',
     mlcCharge: num(x.mlcCharge),
     mlcVide: num(x.mlcVide),
+    ...(x.mlcEstimee === true ? { mlcEstimee: true } : {}),
     longueurM: num(x.longueurM),
     largeurM: num(x.largeurM),
     hauteurM: num(x.hauteurM),
     masseT: num(x.masseT),
+    essieux: num(x.essieux),
+    chargeEssieuT: num(x.chargeEssieuT),
     provenance: { type: (str(prov.type) || 'manuel') as Provenance['type'], libelle: str(prov.libelle, 'Inconnue') || 'Inconnue', date: prov.date ? str(prov.date) : undefined },
     notes: str(x.notes),
   };
@@ -577,6 +787,7 @@ export function reparerReferentiel(x: unknown): Referentiel {
     deriverPrecaution: typeof r.deriverPrecaution === 'boolean' ? r.deriverPrecaution : d.deriverPrecaution,
     margeLargeurM: num(r.margeLargeurM) ?? d.margeLargeurM,
     margeHauteurM: num(r.margeHauteurM) ?? d.margeHauteurM,
+    mlcInconnue: r.mlcInconnue === 'bloquer' ? 'bloquer' : 'compatible',
     notes: str(r.notes, d.notes),
   };
 }
@@ -599,6 +810,11 @@ export function lireProjet(json: unknown): ResultatLectureProjet {
     if (Array.isArray(j.unites)) projet.unites = (j.unites as Record<string, unknown>[]).map(reparerUnite);
     if (Array.isArray(j.ouvrages)) projet.ouvrages = (j.ouvrages as Record<string, unknown>[]).map(reparerOuvrage);
     if (j.referentiel) projet.referentiel = reparerReferentiel(j.referentiel);
+    if (j.schema < 3 && projet.vehicules) {
+      const { vehicules, modifies } = completerVehicules(projet.vehicules, true);
+      projet.vehicules = vehicules;
+      if (modifies.length) avertissements.push(`Véhicules mis à jour par le relevé en sources ouvertes (valeurs hautes) : ${modifies.join(', ')}.`);
+    }
     return { projet, origine: 'v2', avertissements };
   }
   if (Array.isArray(j.ponts) || Array.isArray(j.vehicules)) return { ...migrerV1(j), origine: 'v1' };
@@ -701,9 +917,16 @@ export function integrerOuvragesOSM(existants: Ouvrage[], osm: Ouvrage[]): { ouv
     if (cible.largeurM == null) cible.largeurM = n.largeurM;
     if (!cible.route) cible.route = n.route;
     if (/^(Ouvrage sans nom|Nouvel ouvrage)$/.test(cible.nom) && !/^Ouvrage sans nom$/.test(n.nom)) cible.nom = n.nom;
-    if (cible.civil.poidsMaxT == null) cible.civil.poidsMaxT = n.civil.poidsMaxT;
-    if (cible.civil.hauteurMaxM == null) cible.civil.hauteurMaxM = n.civil.hauteurMaxM;
-    if (cible.civil.largeurMaxM == null) cible.civil.largeurMaxM = n.civil.largeurMaxM;
+    const src = n.provenance.libelle;
+    noterDesaccord(cible, 'tonnage civil', cible.civil.poidsMaxT, cible.provenance.libelle, n.civil.poidsMaxT, src);
+    noterDesaccord(cible, 'hauteur civile', cible.civil.hauteurMaxM, cible.provenance.libelle, n.civil.hauteurMaxM, src);
+    noterDesaccord(cible, 'largeur civile', cible.civil.largeurMaxM, cible.provenance.libelle, n.civil.largeurMaxM, src);
+    noterDesaccord(cible, "charge civile à l'essieu", cible.civil.essieuMaxT, cible.provenance.libelle, n.civil.essieuMaxT, src);
+    // Restrictions civiles : la valeur la plus contraignante est retenue.
+    for (const k of ['poidsMaxT', 'hauteurMaxM', 'largeurMaxM', 'essieuMaxT'] as const) {
+      const b = n.civil[k];
+      if (b != null && (cible.civil[k] == null || b < (cible.civil[k] as number))) cible.civil[k] = b;
+    }
     if (JSON.stringify(cible) !== avant) completes++;
   }
   return { ouvrages: res, ajoutes, completes };

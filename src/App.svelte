@@ -1,11 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { etat, type Vue } from './lib/etat.svelte';
+  import { libelleZone } from './core/paquet';
   import Icone from './components/Icone.svelte';
   import Toasts from './components/Toasts.svelte';
   import CarteVue from './views/CarteVue.svelte';
   import OuvragesVue from './views/OuvragesVue.svelte';
   import EcoulementVue from './views/EcoulementVue.svelte';
+  import ConvoisVue from './views/ConvoisVue.svelte';
   import UnitesVue from './views/UnitesVue.svelte';
   import VehiculesVue from './views/VehiculesVue.svelte';
   import DonneesVue from './views/DonneesVue.svelte';
@@ -13,17 +15,26 @@
 
   const NAV: { vue: Vue; libelle: string; icone: string; raccourci: string }[] = [
     { vue: 'carte', libelle: 'Carte & itinéraire', icone: 'route', raccourci: '1' },
-    { vue: 'ecoulement', libelle: 'Écoulement', icone: 'chrono', raccourci: '2' },
-    { vue: 'ouvrages', libelle: 'Ouvrages', icone: 'pont', raccourci: '3' },
-    { vue: 'unites', libelle: 'Unités', icone: 'unites', raccourci: '4' },
-    { vue: 'vehicules', libelle: 'Véhicules', icone: 'camion', raccourci: '5' },
-    { vue: 'donnees', libelle: 'Données & zone', icone: 'donnees', raccourci: '6' },
-    { vue: 'referentiel', libelle: 'Référentiel STANAG', icone: 'livre', raccourci: '7' },
+    { vue: 'convois', libelle: 'Convois', icone: 'camion', raccourci: '2' },
+    { vue: 'ecoulement', libelle: 'Écoulement', icone: 'chrono', raccourci: '3' },
+    { vue: 'ouvrages', libelle: 'Ouvrages', icone: 'pont', raccourci: '4' },
+    { vue: 'unites', libelle: 'Unités', icone: 'unites', raccourci: '5' },
+    { vue: 'vehicules', libelle: 'Véhicules', icone: 'camion', raccourci: '6' },
+    { vue: 'donnees', libelle: 'Données & zone', icone: 'donnees', raccourci: '7' },
+    { vue: 'referentiel', libelle: 'Référentiel STANAG', icone: 'livre', raccourci: '8' },
   ];
 
   onMount(() => {
     etat.initialiser();
   });
+
+  // Navigation latérale rabattable (icônes seules), mémorisée dans ce navigateur.
+  const lireReglage = (k: string) => { try { return localStorage.getItem(k) === '1'; } catch { return false; } };
+  let navRepliee = $state(lireReglage('franchir:nav-repliee'));
+  function basculerNav() {
+    navRepliee = !navRepliee;
+    try { localStorage.setItem('franchir:nav-repliee', navRepliee ? '1' : '0'); } catch { /* stockage indisponible : réglage de session */ }
+  }
 
   // Sauvegarde automatique à chaque modification du projet.
   $effect(() => {
@@ -55,7 +66,7 @@
 
 <svelte:window onkeydown={clavier} />
 
-<div class="app">
+<div class="app" class:nav-repliee={navRepliee}>
   <header class="entete pas-imprimer">
     <div class="marque">
       <svg viewBox="0 0 32 32" width="30" height="30" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#0B2545" /><path d="M4 21h24M7 21v-4a9 6 0 0 1 18 0v4" stroke="#C9A227" stroke-width="2.5" fill="none" /></svg>
@@ -66,9 +77,14 @@
     </div>
     <div class="zone-info">
       {#if etat.zone}
-        <span class="etiquette" title="Zone de travail chargée">Zone : {etat.zone.nom} · {etat.zone.rayonKm} km</span>
+        <span class="etiquette" title="Zone de travail chargée">Zone : {libelleZone(etat.zone)}</span>
       {:else}
         <button class="etiquette lien-zone" onclick={() => etat.allerA('donnees')}>Aucune zone chargée</button>
+      {/if}
+      {#if (etat.projet.referentiel.mlcInconnue ?? 'compatible') === 'compatible' && etat.projet.vehicules.some((v) => v.mlcCharge == null)}
+        <button class="etiquette alerte-mlc" onclick={() => etat.allerA('vehicules')} title="Ces véhicules sont déclarés compatibles sans classe MLC connue : chaque franchissement doit être vérifié (Génie). Réglable dans le Référentiel.">
+          <Icone nom="alerte" taille={13} /> {etat.projet.vehicules.filter((v) => v.mlcCharge == null).length} véhicule(s) sans classe MLC supposés compatibles — à vérifier
+        </button>
       {/if}
       {#if !etat.projet.referentiel.valide}
         <button class="etiquette avert" onclick={() => etat.allerA('referentiel')} title="Les valeurs STANAG doivent être validées">
@@ -111,6 +127,9 @@
     <p class="pied muted">
       Aide à la décision — ne remplace ni la reconnaissance ni l'avis du Génie.
     </p>
+    <button class="replier" onclick={basculerNav} title={navRepliee ? 'Déplier le menu' : 'Replier le menu'} aria-label={navRepliee ? 'Déplier le menu' : 'Replier le menu'} aria-expanded={!navRepliee}>
+      <Icone nom={navRepliee ? 'droite' : 'gauche'} taille={18} /><span>Replier le menu</span>
+    </button>
   </nav>
 
   <main class="contenu">
@@ -128,6 +147,7 @@
       <!-- La carte reste montée pour conserver son état (zoom, itinéraire). -->
       <div class="vue" class:cachee={etat.vue !== 'carte'}><CarteVue visible={etat.vue === 'carte'} /></div>
       {#if etat.vue === 'ouvrages'}<div class="vue"><OuvragesVue /></div>{/if}
+      {#if etat.vue === 'convois'}<div class="vue defile"><ConvoisVue /></div>{/if}
       {#if etat.vue === 'ecoulement'}<div class="vue defile"><EcoulementVue /></div>{/if}
       {#if etat.vue === 'unites'}<div class="vue"><UnitesVue /></div>{/if}
       {#if etat.vue === 'vehicules'}<div class="vue defile"><VehiculesVue /></div>{/if}
@@ -165,6 +185,7 @@
   .zone-info .etiquette { background: rgba(255, 255, 255, 0.12); color: #e7eef8; padding: 3px 9px; font-size: 12px; display: inline-flex; gap: 5px; align-items: center; border: none; }
   .zone-info .lien-zone { cursor: pointer; }
   .zone-info .avert { background: #fbe3b0; color: #5d3b00; cursor: pointer; }
+  .zone-info .alerte-mlc { background: #f6c9c4; color: #6b130b; cursor: pointer; font-weight: 600; }
   .zone-info .valide { background: #cfeedd; color: #0d5132; }
   .actions { display: flex; align-items: center; gap: 2px; }
   .actions .btn { color: #fff; }
@@ -197,6 +218,10 @@
   .vue.cachee { display: none; }
   .chargement { padding: 40px; color: var(--muted); }
   .bandeau-v1 { display: flex; align-items: center; gap: 10px; padding: 8px 16px; background: var(--m-precaution-bg); border-bottom: 1px solid var(--border); font-size: 13px; }
+  .nav .replier { color: var(--muted); font-weight: 500; font-size: 13px; }
+  .app.nav-repliee { grid-template-columns: 58px minmax(0, 1fr); }
+  .app.nav-repliee .nav button span, .app.nav-repliee .pied { display: none; }
+  .app.nav-repliee .nav button { justify-content: center; padding: 9px 0; }
   @media (max-width: 900px) {
     .app { grid-template-columns: 58px minmax(0, 1fr); }
     .nav button span, .pied, .marque span { display: none; }

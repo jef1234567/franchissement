@@ -11,6 +11,7 @@
   const dev = $derived(developper(etat.projet, iti.convoi));
   const syn = $derived(synthese(dev.elements, etat.projet.referentiel.modes.normal.espacementM));
   const ref = $derived(etat.projet.referentiel);
+  const mlcSupposees = $derived([...new Set(res.ouvrages.flatMap((t) => t.verdict.mlcSupposees ?? []))]);
 </script>
 
 <!-- Compte rendu imprimable (visible uniquement à l'impression). -->
@@ -29,15 +30,33 @@
       <tr><th>Distance</th><td>{(res.distanceM / 1000).toFixed(1)} km</td></tr>
       <tr><th>Durée de marche</th><td>{formatDuree(res.dureeS)} (vitesse max. {iti.options.vitesseConvoiKmh} km/h)</td></tr>
       <tr><th>Classe d'itinéraire</th><td>{res.classeItineraire ?? '—'}{res.maillonFaible ? ` — maillon faible : ${res.maillonFaible.nom}` : ''}</td></tr>
+      {#if res.reseauTE}<tr><th>Réseau transports exceptionnels (IGN)</th><td>{(res.reseauTE.surM / 1000).toFixed(1)} km sur {(res.distanceM / 1000).toFixed(1)} km{res.reseauTE.categorieMin != null ? ` ; catégorie la plus basse traversée : ${res.reseauTE.categorieMin} t` : ''} <span class="muted">(information civile, prescriptions locales à consulter ; pas une classe MLC)</span></td></tr>{/if}
       <tr><th>Écoulement cumulé aux ouvrages</th><td>{iti.ecoulementTotalS != null ? formatDuree(iti.ecoulementTotalS) : '—'}</td></tr>
-      <tr><th>Contraintes</th><td>{iti.options.voies === 'unique' ? 'Voie unique' : 'Double voie'} ; franchissement toléré : {iti.options.modeMax} ; restrictions civiles {iti.options.restrictionsCiviles ? 'respectées' : 'ignorées'}</td></tr>
+      <tr><th>Contraintes</th><td>{iti.options.voies === 'unique' ? 'Voie unique' : 'Double voie'} ; franchissement toléré : {iti.options.modeMax} ; restrictions civiles {iti.options.restrictionsCiviles ? 'respectées' : 'ignorées'} ; gués {iti.options.gues === 'autoriser' ? 'autorisés' : 'évités'}</td></tr>
     </tbody>
   </table>
+  {#if mlcSupposees.length}
+    <p class="alerte-mlc"><strong>⚠ Compatibilité supposée, à vérifier :</strong> {mlcSupposees.join(', ')} — classe MLC non renseignée, déclarée compatible sur les ouvrages classés. Chaque franchissement doit être confirmé par le Génie.</p>
+  {/if}
+  {#if res.alertes.length}
+    <h2>Alertes</h2>
+    <ul>{#each res.alertes as a, i (i)}<li>PK {(a.pk / 1000).toFixed(1)} — {a.texte}</li>{/each}</ul>
+  {/if}
+  {#if res.demiTour}
+    <h2>Zones de demi-tour (tous les {Math.round(res.demiTour.pasM / 1000)} km environ)</h2>
+    <p class="muted">Giratoires repérés sur OSM ; diamètre mesuré à l'axe, indicatif ; praticabilité à reconnaître. Demi-tour interdit en pleine voie.</p>
+    {#if res.demiTour.zones.length}
+      <table>
+        <thead><tr><th>PK (km)</th><th>Zone</th><th>MGRS</th><th>Diamètre (axe)</th><th>Écart au trajet</th></tr></thead>
+        <tbody>{#each res.demiTour.zones as z, i (i)}<tr><td>{(z.pk / 1000).toFixed(1)}</td><td>{z.nom}{z.source === 'geometrie' ? ' (forme)' : ''}</td><td>{versMGRS(z.lat, z.lon)}</td><td>≈ {z.diametreM} m</td><td>{z.ecartM ? `${z.ecartM} m` : 'sur le trajet'}</td></tr>{/each}</tbody>
+      </table>
+    {:else}<p>Aucune zone repérée.</p>{/if}
+  {/if}
   <h2>Ouvrages traversés</h2>
   <table>
     <thead><tr><th>PK (km)</th><th>Ouvrage</th><th>MGRS</th><th>Classe</th><th>Fiabilité</th><th>Mode</th><th>Observations</th></tr></thead>
     <tbody>
-      {#each res.ouvrages as t (t.ouvrage.id)}
+      {#each res.ouvrages as t, i (t.ouvrage.id + "@" + i)}
         <tr>
           <td>{(t.pk / 1000).toFixed(1)}</td>
           <td>{t.ouvrage.nom}</td>
@@ -55,6 +74,7 @@
 
 <style>
   .rapport { display: none; }
+  .alerte-mlc { border: 2px solid #000; padding: 2mm 3mm; margin: 2mm 0; }
   @media print {
     .rapport { display: block; position: fixed; inset: 0; background: #fff; color: #000; padding: 12mm; font-size: 10.5pt; z-index: 99999; overflow: visible; }
     .rapport h1 { font-size: 16pt; margin-bottom: 2mm; }

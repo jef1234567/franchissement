@@ -11,6 +11,7 @@
   let filtreFiabilite = $state<'' | Ouvrage['fiabilite']>('');
   let sansClasse = $state(false);
   let avecRestriction = $state(false);
+  let enDesaccord = $state(false);
   let tri = $state<{ cle: Cle; sens: 1 | -1 }>({ cle: 'nom', sens: 1 });
   let limite = $state(200);
 
@@ -28,7 +29,8 @@
     let l = etat.projet.ouvrages.filter((o) => {
       if (filtreFiabilite && o.fiabilite !== filtreFiabilite) return false;
       if (sansClasse && valeur(o, 'unique') != null) return false;
-      if (avecRestriction && o.civil.poidsMaxT == null && o.civil.hauteurMaxM == null && o.civil.largeurMaxM == null) return false;
+      if (avecRestriction && o.civil.poidsMaxT == null && o.civil.hauteurMaxM == null && o.civil.largeurMaxM == null && o.civil.essieuMaxT == null) return false;
+      if (enDesaccord && !o.desaccords?.length) return false;
       if (!q) return true;
       return (o.nom + ' ' + o.route + ' ' + o.notes + ' ' + o.provenance.libelle + ' ' + (o.provenance.reference ?? ''))
         .toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').includes(q);
@@ -84,6 +86,7 @@
       </select>
       <label class="case"><input type="checkbox" bind:checked={sansClasse} /> Sans classe</label>
       <label class="case"><input type="checkbox" bind:checked={avecRestriction} /> Avec restriction civile</label>
+      <label class="case"><input type="checkbox" bind:checked={enDesaccord} /> Sources en désaccord</label>
       <span class="muted petit-txt">{liste.length} affiché(s)</span>
     </div>
     <div class="tableau-wrap grille">
@@ -103,7 +106,7 @@
             <tr class:selection={o.id === etat.ouvrageSelectionne} onclick={() => (etat.ouvrageSelectionne = o.id)} style="cursor:pointer">
               <td>
                 <button class="lien-ligne" onclick={() => (etat.ouvrageSelectionne = o.id)}>{o.nom}</button>
-                {#if o.civil.poidsMaxT != null || o.civil.hauteurMaxM != null}<span class="restr" title="Restriction civile signalée">R</span>{/if}
+                {#if o.civil.poidsMaxT != null || o.civil.hauteurMaxM != null}<span class="restr" title="Restriction civile signalée">R</span>{/if}{#if o.desaccords?.length}<span class="restr desac" title="Sources en désaccord : à reconnaître">≠</span>{/if}
               </td>
               <td>{o.route}</td>
               <td class="num">{o.longueurM ?? '—'}</td>
@@ -148,6 +151,7 @@
   .grille { flex: 1; min-height: 0; }
   .lien-ligne { all: unset; cursor: pointer; font-weight: 550; }
   .lien-ligne:focus-visible { outline: 2px solid var(--focus); }
+  .restr.desac { background: var(--m-precaution-bg); color: var(--m-precaution); }
   .restr { display: inline-grid; place-items: center; width: 16px; height: 16px; font-size: 10px; font-weight: 700; border-radius: 3px; background: #efe3fb; color: #6a2fb3; margin-left: 6px; }
   .vide { padding: 30px; text-align: center; color: var(--muted); }
   .plus { padding: 10px; text-align: center; }

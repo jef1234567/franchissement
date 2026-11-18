@@ -1,4 +1,5 @@
 import type { Propulsion, Referentiel, Unite, Vehicule } from './model';
+import { RELEVE_SOURCES, type FicheSource } from './vehicules-ouverts';
 
 /* =========================================================================
    Référentiel de franchissement (STANAG 2021)
@@ -39,6 +40,7 @@ export function referentielParDefaut(): Referentiel {
     risqueSurPermanent: false,
     margeLargeurM: 0.3,
     margeHauteurM: 0.1,
+    mlcInconnue: 'compatible',
     notes: '',
   };
 }
@@ -81,13 +83,15 @@ const V1: [string, string, Propulsion, number, number][] = [
    - largeur : hors rétroviseurs ; hauteur hors tout ;
    - masse : valeur haute (masse au combat ou PTAC) pour le contrôle des
      restrictions civiles de tonnage.
-   Les classes MLC restent celles de l'outil v1 (non publiées en source ouverte).
+   Classes MLC : voir mlcReference (séance du 18/11/2026).
    ========================================================================= */
 export interface FicheOuverte {
   longueurM: number;
   largeurM: number | null;
   hauteurM: number | null;
   masseT: number | null;
+  essieux?: number | null;
+  chargeEssieuT?: number | null;
   source: string;
   notes: string;
 }
@@ -117,48 +121,127 @@ export const FICHES_OUVERTES: Record<string, FicheOuverte> = {
   vt4: { longueurM: 5.3, largeurM: 2.16, hauteurM: 2.06, masseT: 3.5, source: 'Fiche LPM VT4 (ministère)', notes: 'Largeur avec rétroviseurs (1,86 m sans). Masse = PTAC.' },
 };
 
+/* Relevé de novembre 2026 : corrige les fiches existantes (valeurs hautes) et ajoute les essieux. */
+const RELEVE = new Map(RELEVE_SOURCES.map((r) => [r.id, r]));
+for (const [id, f] of Object.entries(FICHES_OUVERTES)) {
+  const r = RELEVE.get(id);
+  if (!r) continue;
+  if (r.longueurM != null) f.longueurM = Math.max(f.longueurM, r.longueurM);
+  if (r.largeurM != null) f.largeurM = Math.max(f.largeurM ?? 0, r.largeurM);
+  if (r.hauteurM != null) f.hauteurM = Math.max(f.hauteurM ?? 0, r.hauteurM);
+  if (r.masseChargeT != null) f.masseT = Math.max(f.masseT ?? 0, r.masseChargeT);
+  f.essieux = r.essieux;
+  f.chargeEssieuT = r.chargeEssieuMaxT;
+  f.source = r.sources.map((s) => s.split(' — ')[0]).join(' ; ') || f.source;
+  if (r.notes) f.notes = r.notes;
+}
+
+function libelleMLC(r: FicheSource) {
+  return r.mlc != null ? `MLC ${r.mlc} : ${r.mlcSource ?? 'source citée'}` : 'MLC non publiée : à renseigner (STAT / SIMMT)';
+}
+
+/** Classe MLC retenue pour un véhicule de référence (séance du 18/11/2026), ou null si aucune. */
+export function mlcReference(id: string): { mlc: number; estimee: boolean; libelle: string } | null {
+  const r = RELEVE.get(id);
+  if (!r || r.mlc == null) return null;
+  return { mlc: r.mlc, estimee: r.mlcEstimee, libelle: libelleMLC(r) };
+}
+
+/** Véhicules absents de l'outil v1, ajoutés par le relevé en sources ouvertes (MLC vide sauf publication explicite). */
+export function vehiculesReleve(): Vehicule[] {
+  return RELEVE_SOURCES.filter((r) => r.nouveau).map((r) => ({
+    id: r.id,
+    nom: r.nom,
+    propulsion: r.propulsion,
+    mlcCharge: r.mlc,
+    mlcVide: null,
+    ...(r.mlcEstimee ? { mlcEstimee: true } : {}),
+    longueurM: r.longueurM,
+    largeurM: r.largeurM,
+    hauteurM: r.hauteurM,
+    masseT: r.masseChargeT,
+    essieux: r.essieux,
+    chargeEssieuT: r.chargeEssieuMaxT,
+    provenance: { type: 'reference', libelle: `Sources ouvertes : ${r.sources.map((s) => s.split(' — ')[0]).join(' ; ')} — ${libelleMLC(r)}` },
+    notes: r.notes,
+  }));
+}
+
 export function vehiculesParDefaut(): Vehicule[] {
+  return [...vehiculesV1(), ...vehiculesReleve()];
+}
+
+function vehiculesV1(): Vehicule[] {
   return V1.map(([id, nom, propulsion, mlc, longueur]) => {
     const f = FICHES_OUVERTES[id];
+    const m = mlcReference(id);
     return {
       id,
       nom,
       propulsion,
-      mlcCharge: mlc,
+      mlcCharge: m?.mlc ?? mlc,
       mlcVide: null,
+      ...(m?.estimee ? { mlcEstimee: true } : {}),
       longueurM: f?.longueurM ?? longueur,
       largeurM: f?.largeurM ?? null,
       hauteurM: f?.hauteurM ?? null,
       masseT: f?.masseT ?? null,
-      provenance: { type: 'reference', libelle: f ? `Sources ouvertes : ${f.source} — MLC : outil v1` : 'Outil v1 (non sourcé)' },
+      essieux: f?.essieux ?? null,
+      chargeEssieuT: f?.chargeEssieuT ?? null,
+      provenance: { type: 'reference', libelle: f ? `Sources ouvertes : ${f.source} — ${m ? m.libelle : 'MLC : outil v1'}` : 'Outil v1 (non sourcé)' },
       notes: f?.notes ?? '',
     };
   });
 }
 
 /** Complète une base véhicules existante avec les fiches en sources ouvertes (champs vides uniquement, sauf longueur v1). */
-export function completerVehicules(vehicules: Vehicule[]): { vehicules: Vehicule[]; modifies: string[] } {
+/**
+ * @param relever  migration vers le schéma 3 : pour les véhicules de référence (provenance « reference »),
+ *                 les valeurs hautes du relevé de novembre 2026 remplacent les valeurs plus basses.
+ */
+export function completerVehicules(vehicules: Vehicule[], relever = false): { vehicules: Vehicule[]; modifies: string[] } {
   const modifies: string[] = [];
   const res = vehicules.map((v) => {
     const f = FICHES_OUVERTES[v.id];
-    if (!f) return v;
+    const m = mlcReference(v.id);
+    if (!f && !m) return v;
     const n = { ...v, provenance: { ...v.provenance } };
     let change = false;
-    const remplir = (cle: 'largeurM' | 'hauteurM' | 'masseT', val: number | null) => {
-      if (n[cle] == null && val != null) { n[cle] = val; change = true; }
-    };
-    remplir('largeurM', f.largeurM);
-    remplir('hauteurM', f.hauteurM);
-    remplir('masseT', f.masseT);
-    // Longueur : remplacée seulement si elle venait de l'outil v1 (non sourcée).
-    if ((n.longueurM == null || v.provenance.type === 'v1') && n.longueurM !== f.longueurM) { n.longueurM = f.longueurM; change = true; }
+    // Classe MLC (séance du 18/11/2026) : remplace une classe vide ou restée à la valeur de l'outil v1 (non sourcée),
+    // jamais une classe saisie par l'utilisateur.
+    const v1 = V1.find((x) => x[0] === v.id)?.[3];
+    if (m && (n.mlcCharge == null || n.mlcCharge === v1) && (n.mlcCharge !== m.mlc || !!n.mlcEstimee !== m.estimee)) {
+      n.mlcCharge = m.mlc;
+      if (m.estimee) n.mlcEstimee = true;
+      else delete n.mlcEstimee;
+      n.provenance.libelle = n.provenance.libelle.replace(/MLC : outil v1|MLC non publiée : à renseigner \(STAT \/ SIMMT\)/, m.libelle);
+      change = true;
+    }
+    if (f) {
+      // Valeurs de référence (non saisies) : la valeur haute du relevé l'emporte ; une saisie de l'utilisateur n'est que complétée.
+      const reference = relever && v.provenance.type === 'reference';
+      const remplir = (cle: 'largeurM' | 'hauteurM' | 'masseT', val: number | null) => {
+        if (val == null) return;
+        if (n[cle] == null || (reference && val > (n[cle] as number))) { n[cle] = val; change = true; }
+      };
+      remplir('largeurM', f.largeurM);
+      remplir('hauteurM', f.hauteurM);
+      remplir('masseT', f.masseT);
+      if (n.essieux == null && f.essieux != null) { n.essieux = f.essieux; change = true; }
+      if (n.chargeEssieuT == null && f.chargeEssieuT != null) { n.chargeEssieuT = f.chargeEssieuT; change = true; }
+      // Longueur : remplacée seulement si elle venait de l'outil v1 (non sourcée).
+      if ((n.longueurM == null || v.provenance.type === 'v1') && n.longueurM !== f.longueurM) { n.longueurM = f.longueurM; change = true; }
+    }
     if (change) {
-      if (v.provenance.type === 'v1') n.provenance = { type: 'reference', libelle: `Sources ouvertes : ${f.source} — MLC : outil v1` };
-      if (f.notes && !n.notes.includes(f.notes)) n.notes = [n.notes, f.notes].filter(Boolean).join(' ');
+      if (f && v.provenance.type === 'v1') n.provenance = { type: 'reference', libelle: `Sources ouvertes : ${f.source} — ${m ? m.libelle : 'MLC : outil v1'}` };
+      if (f?.notes && !n.notes.includes(f.notes)) n.notes = [n.notes, f.notes].filter(Boolean).join(' ');
       modifies.push(v.nom);
     }
     return n;
   });
+  // Ajout des véhicules du relevé absents du projet (identifiant inconnu).
+  const ids = new Set(res.map((v) => v.id));
+  for (const nv of vehiculesReleve()) if (!ids.has(nv.id)) { res.push(nv); modifies.push(nv.nom + ' (ajouté)'); }
   return { vehicules: res, modifies };
 }
 

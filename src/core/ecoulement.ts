@@ -76,6 +76,9 @@ export function parametresEffectifs(ref: Referentiel, surcharges?: OptionsEcoule
   return r;
 }
 
+/** Longueur comptée pour un véhicule de longueur inconnue (m), écoulement et estimation de repli. */
+export const LONGUEUR_INCONNUE_M = 10;
+
 function vitesseMs(p: ParametresMode) {
   return (p.vitesseKmh * 1000) / 3600;
 }
@@ -117,20 +120,18 @@ export function calculerEcoulement(o: Ouvrage, rames: Rame[], ref: Referentiel, 
     const unitaires: Unitaire[] = [];
     for (const el of rame.elements) {
       let mode: ModeFranchissement;
-      if (opt.mode === 'auto') {
-        const ev = evaluerVehicule(o, el, opt.voies, ref);
-        if (ev.mode === 'inconnu' || ev.mode === 'interdit') {
-          exclus.push({ rame: rame.nom, vehicule: el.vehicule.nom, quantite: el.quantite, mode: ev.mode });
-          continue;
-        }
-        mode = ev.mode;
-      } else {
-        mode = opt.mode;
+      const ev = evaluerVehicule(o, el, opt.voies, ref);
+      // Un véhicule interdit n'est jamais compté comme franchissant, même en mode imposé (audit A2-9).
+      if (ev.mode === 'interdit' || (opt.mode === 'auto' && ev.mode === 'inconnu')) {
+        exclus.push({ rame: rame.nom, vehicule: el.vehicule.nom, quantite: el.quantite, mode: ev.mode });
+        continue;
       }
+      mode = opt.mode === 'auto' ? (ev.mode as ModeFranchissement) : opt.mode;
       let L = el.vehicule.longueurM;
       if (!estNombre(L)) {
         longueurManquante = true;
-        L = 0;
+        // Longueur inconnue : 10 m comptés, comme dans l'estimation de repli (audit A2-8 : 0 m sous-estimait l'écoulement).
+        L = LONGUEUR_INCONNUE_M;
       }
       for (let k = 0; k < el.quantite; k++) unitaires.push({ nom: el.vehicule.nom, longueur: L, mode });
     }

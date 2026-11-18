@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { etat } from '../../lib/etat.svelte';
   import { LIBELLE_TYPE_OUVRAGE, type Ouvrage, type TypeOuvrage } from '../../core/model';
   import { analyserPosition, versMGRS } from '../../core/geo';
@@ -7,7 +8,7 @@
 
   // Composant recréé à chaque changement d'ouvrage ({#key}) : lecture initiale volontaire.
   let { ouvrage: o }: { ouvrage: Ouvrage } = $props();
-  let posTexte = $state(o.lat != null && o.lon != null ? versMGRS(o.lat, o.lon) ?? '' : '');
+  let posTexte = $state(untrack(() => (o.lat != null && o.lon != null ? versMGRS(o.lat, o.lon) ?? '' : '')));
   let posInvalide = $state(false);
 
   function saisirPosition(t: string) {
@@ -83,6 +84,25 @@
       <span class="aide">{o.type === 'permanent' && !etat.projet.referentiel.risqueSurPermanent ? 'Sans effet sur un pont permanent (doctrine : ponts militaires préfabriqués uniquement)' : 'Vide : franchissement à risque non autorisé'}</span>
     </label>
   </div>
+  <details class="petit-txt">
+    <summary>Précaution / risque distincts pour roues et chenilles</summary>
+    <table class="classes">
+      <thead><tr><th></th><th>Roues</th><th>Chenilles</th></tr></thead>
+      <tbody>
+        <tr>
+          <th>Précaution</th>
+          <td><ChampNombre bind:valeur={() => o.classes.precautionRoues ?? null, (v) => (o.classes.precautionRoues = v)} min={0} max={200} etiquette="Classe précaution roues" /></td>
+          <td><ChampNombre bind:valeur={() => o.classes.precautionChenilles ?? null, (v) => (o.classes.precautionChenilles = v)} min={0} max={200} etiquette="Classe précaution chenilles" /></td>
+        </tr>
+        <tr>
+          <th>Risque</th>
+          <td><ChampNombre bind:valeur={() => o.classes.risqueRoues ?? null, (v) => (o.classes.risqueRoues = v)} min={0} max={200} etiquette="Classe risque roues" /></td>
+          <td><ChampNombre bind:valeur={() => o.classes.risqueChenilles ?? null, (v) => (o.classes.risqueChenilles = v)} min={0} max={200} etiquette="Classe risque chenilles" /></td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="muted">Si renseignées, ces valeurs priment sur la classe commune pour le type de véhicule concerné.</p>
+  </details>
   {#if incoherence}<p class="encadre alerte petit-txt">La classe double voie est supérieure à la classe voie unique : vérifiez la saisie.</p>{/if}
 </div>
 
@@ -98,6 +118,7 @@
     <label class="champ">Tonnage (t)<ChampNombre bind:valeur={o.civil.poidsMaxT} min={0} max={1000} /></label>
     <label class="champ">Hauteur (m)<ChampNombre bind:valeur={o.civil.hauteurMaxM} min={0} max={100} /></label>
     <label class="champ">Largeur (m)<ChampNombre bind:valeur={o.civil.largeurMaxM} min={0} max={100} /></label>
+    <label class="champ">Charge à l'essieu (t)<ChampNombre bind:valeur={o.civil.essieuMaxT} min={0} max={100} /></label>
   </div>
 </div>
 
@@ -119,6 +140,19 @@
   {:else}<p class="encadre alerte petit-txt">Non rattaché au réseau routier : cet ouvrage n'est pas pris en compte dans le calcul d'itinéraire.</p>{/if}
 </div>
 
+{#if o.desaccords?.length}
+  <div class="section pile">
+    <h4 class="desaccord-titre">Sources en désaccord ({o.desaccords.length})</h4>
+    <ul class="historique">
+      {#each o.desaccords as d, i (i)}
+        <li>{d.champ} : <strong>{String(d.retenu ?? '—')}</strong> <span class="muted">retenu ({d.sourceRetenue})</span> ≠ <strong>{String(d.autre ?? '—')}</strong> <span class="muted">({d.sourceAutre})</span>
+          <button class="btn petit fantome" title="Le désaccord a été vérifié : ne plus le signaler" onclick={() => o.desaccords.splice(i, 1)}>Traité</button></li>
+      {/each}
+    </ul>
+    <p class="petit-txt muted">À lever par une reconnaissance. La valeur retenue est celle de la source la plus fiable au moment de l'import.</p>
+  </div>
+{/if}
+
 {#if o.historique.length}
   <div class="section pile">
     <h4>Historique ({o.historique.length})</h4>
@@ -138,5 +172,6 @@
   .segmente button { border: none; background: var(--surface); padding: 5px 12px; cursor: pointer; font-weight: 550; font-size: 13px; }
   .segmente button + button { border-left: 1px solid var(--border-fort); }
   .segmente button.actif { background: var(--primary); color: var(--primary-txt); }
+  .desaccord-titre { color: var(--m-precaution); }
   .historique { margin: 0; padding-left: 16px; font-size: 12.5px; display: flex; flex-direction: column; gap: 3px; }
 </style>

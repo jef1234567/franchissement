@@ -9,7 +9,7 @@ import * as stockage from './stockage';
    État global de l'application (Svelte 5 runes) + persistance locale
    ========================================================================= */
 
-export type Vue = 'carte' | 'ouvrages' | 'ecoulement' | 'unites' | 'vehicules' | 'donnees' | 'referentiel';
+export type Vue = 'carte' | 'convois' | 'ouvrages' | 'ecoulement' | 'unites' | 'vehicules' | 'donnees' | 'referentiel';
 
 export function projetParDefaut(): Projet {
   return {

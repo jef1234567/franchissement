@@ -1,22 +1,52 @@
 import { requeteOverpassReseau } from '../core/reseau';
 import type { BBox } from '../core/geo';
 import { iterTuiles, cleTuile, urlTuile, type SourceTuiles } from '../core/tuiles';
+import { PAGE_WFS, cleEntite, couchesTE, lirePageWFS, triCouche, urlCapabilitesIGN, urlGetFeature, type EntiteGeo } from '../core/ign';
+import {
+  departementReponse, integrerReponseRecherche, paginationRecherche, PAGES_MAX_DATAGOUV, pointsGrille, requetesDepartement, THEMES_DATAGOUV, trierJeux, urlCommunePoint, urlRechercheDataGouv,
+  type Departement, type JeuDataGouv, type RessourceDataGouv,
+} from '../core/datagouv';
 
 /* =========================================================================
    Accès en ligne (phase de préparation sur poste connecté uniquement)
    ========================================================================= */
 
-export const MIROIRS_OVERPASS = [
-  'https://overpass-api.de/api/interpreter',
-  'https://overpass.private.coffee/api/interpreter',
-  'https://overpass.kumi.systems/api/interpreter',
-  'https://overpass.openstreetmap.fr/api/interpreter',
-  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+/** Serveurs Overpass, dans l'ordre d'essai (mesures de l'outil terrain, 10/11/2026 : Europe 6 s, principal 36 s).
+ *  « Europe » (extrait Geofabrik mis à jour chaque nuit) ne sert que pour une zone en Europe.
+ *  Retirés : maps.mail.ru (VK, Russie : chaque requête montrerait la zone étudiée), overpass.openstreetmap.fr (refuse
+ *  les requêtes d'une page web, CORS), overpass.kumi.systems (devenu private.coffee). */
+export const SERVEURS_OVERPASS: { nom: string; url: string; zone?: (b: BBox) => boolean }[] = [
+  { nom: 'Europe', url: 'https://ovp.dresel.systems/api/interpreter', zone: (b) => b.sud > 34 && b.nord < 72 && b.ouest > -25 && b.est < 45 },
+  { nom: 'principal', url: 'https://overpass-api.de/api/interpreter' },
+  { nom: 'private.coffee', url: 'https://overpass.private.coffee/api/interpreter' },
 ];
+export const MIROIRS_OVERPASS = SERVEURS_OVERPASS.map((s) => s.url);
+/** Délai d'attente par requête (s), selon le tour ; pause après un refus du serveur (429 / 406) ; pause entre deux tours (× n° du tour). */
+const DELAIS_OVERPASS = [45, 75, 100];
+const PAUSE_REFUS_MS = 30_000, PAUSE_TOUR_MS = 10_000;
+
+function attendre(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((res, rej) => {
+    const t = setTimeout(res, ms);
+    signal?.addEventListener('abort', () => { clearTimeout(t); rej(new Error('Téléchargement annulé.')); }, { once: true });
+  });
+}
+
+const texteHTTP = (st: number) => st === 429 ? 'trop de demandes (HTTP 429)' : st === 504 ? 'serveur saturé (HTTP 504)'
+  : st === 406 || st === 400 ? `demande refusée (HTTP ${st})` : st === 403 ? 'accès refusé (HTTP 403, réseau filtré ?)' : st >= 500 ? `panne du serveur (HTTP ${st})` : `HTTP ${st}`;
+
+/** File d'attente des serveurs Overpass autres que « Europe » : une seule requête à la fois depuis ce poste
+ *  (le serveur principal n'accorde que deux créneaux par adresse et refuse au-delà). */
+let fileOverpass: Promise<unknown> = Promise.resolve();
+function uneALaFois<T>(f: () => Promise<T>): Promise<T> {
+  const r = fileOverpass.then(f, f);
+  fileOverpass = r.catch(() => undefined);
+  return r;
+}
 
 /** Lien direct de la requête (méthode manuelle : ouverture dans un onglet puis enregistrement du fichier). */
-export function urlOverpassManuelle(bbox: BBox, inclureSecondaires: boolean): string {
-  return MIROIRS_OVERPASS[0] + '?data=' + encodeURIComponent(requeteOverpassReseau(bbox, inclureSecondaires));
+export function urlOverpassManuelle(bbox: BBox, inclureSecondaires: boolean, grandsAxes = false): string {
+  return 'https://overpass-api.de/api/interpreter?data=' + encodeURIComponent(requeteOverpassReseau(bbox, inclureSecondaires, grandsAxes));
 }
 
 /** Erreur réseau « muette » (Failed to fetch) : requête bloquée avant d'atteindre le serveur. */
@@ -32,52 +62,96 @@ export interface ResultatGeocodage {
   libelle: string;
   lat: number;
   lon: number;
+  /** Emprise de l'objet trouvé (département, commune…), si fournie par Nominatim. */
+  bbox?: BBox;
+  /** Type d'objet Nominatim (ex. « administrative »). */
+  type?: string;
+}
+
+/** boundingbox Nominatim : [sud, nord, ouest, est] en chaînes. */
+export function bboxNominatim(b: string[] | undefined): BBox | undefined {
+  if (!b || b.length !== 4) return undefined;
+  const [sud, nord, ouest, est] = b.map(parseFloat);
+  if (![sud, nord, ouest, est].every(Number.isFinite) || sud >= nord || ouest >= est) return undefined;
+  return { sud, nord, ouest, est };
 }
 
 export async function geocoder(lieu: string, signal?: AbortSignal): Promise<ResultatGeocodage[]> {
   const url = 'https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&countrycodes=fr&accept-language=fr&q=' + encodeURIComponent(lieu);
   const r = await fetch(url, { headers: { Accept: 'application/json' }, signal });
   if (!r.ok) throw new Error('Géocodage : réponse HTTP ' + r.status);
-  const j = (await r.json()) as { display_name: string; lat: string; lon: string }[];
-  return j.map((x) => ({ libelle: x.display_name, lat: parseFloat(x.lat), lon: parseFloat(x.lon) }));
+  const j = (await r.json()) as { display_name: string; lat: string; lon: string; type?: string; boundingbox?: string[] }[];
+  return j.map((x) => ({ libelle: x.display_name, lat: parseFloat(x.lat), lon: parseFloat(x.lon), type: x.type, bbox: bboxNominatim(x.boundingbox) }));
 }
 
+/**
+ * Réseau routier d'une emprise. Serveurs dans l'ordre, trois tours avec délai croissant (45, 75, 100 s par requête),
+ * pause de 30 s quand un serveur refuse (429 / 406), pause croissante entre les tours. Une réponse tronquée (remark) est un échec.
+ * Réponse vide du serveur Europe (extrait régional) : vérifiée auprès du serveur suivant ; gardée seulement si personne ne contredit.
+ */
 export async function telechargerReseauOSM(
   bbox: BBox,
   inclureSecondaires: boolean,
   suivi: (msg: string) => void,
   signal?: AbortSignal,
+  grandsAxes = false,
+  modeste = false,
 ): Promise<unknown> {
-  const q = requeteOverpassReseau(bbox, inclureSecondaires);
-  const erreurs: string[] = [];
-  let bloques = 0;
+  const q = requeteOverpassReseau(bbox, inclureSecondaires, grandsAxes, modeste);
+  const serveurs = SERVEURS_OVERPASS.filter((s) => !s.zone || s.zone(bbox));
+  const derniers: string[] = [];
+  let bloques = 0, envois = 0, videEurope: unknown = null;
   violationsCSP = [];
-  for (const url of MIROIRS_OVERPASS) {
-    const hote = new URL(url).host;
-    suivi(`Interrogation de ${hote}…`);
-    // POST puis, en cas d'échec réseau, GET (certains proxys filtrent l'un ou l'autre).
-    for (const methode of ['POST', 'GET'] as const) {
+  for (let tour = 0; tour < DELAIS_OVERPASS.length; tour++) {
+    for (const srv of serveurs) {
+      if (srv.nom === 'Europe' && videEurope) continue;
+      const libelle = `Serveur ${srv.nom}${tour ? ` (essai ${tour + 1})` : ''}`;
+      let refus = false, delaiEcoule = false;
+      const essai = async (): Promise<{ elements?: unknown[]; remark?: string }> => {
+        const t0 = Date.now();
+        const minuteur = setInterval(() => suivi(`${libelle} : ${Math.round((Date.now() - t0) / 1000)} s…`), 1000);
+        suivi(`${libelle}…`);
+        const delai = AbortSignal.timeout(DELAIS_OVERPASS[tour] * 1000);
+        const sig = signal ? AbortSignal.any([signal, delai]) : delai;
+        envois++;
+        try {
+          const r = await fetch(srv.url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal: sig });
+          if (!r.ok) { refus = r.status === 429 || r.status === 406; throw new Error(texteHTTP(r.status)); }
+          suivi(`Serveur ${srv.nom} : réception des données…`);
+          return (await r.json()) as { elements?: unknown[]; remark?: string };
+        } catch (e) {
+          delaiEcoule = delai.aborted;
+          throw e;
+        } finally {
+          clearInterval(minuteur);
+        }
+      };
       try {
-        const r = methode === 'POST'
-          ? await fetch(url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal })
-          : await fetch(url + '?data=' + encodeURIComponent(q), { signal });
-        if (!r.ok) throw new Error('HTTP ' + r.status + (r.status === 429 ? ' (quota dépassé)' : r.status === 504 ? ' (serveur saturé)' : ''));
-        suivi('Réception des données…');
-        const j = await r.json();
-        if (j.remark && /runtime error|timed out|out of memory/i.test(j.remark)) throw new Error(j.remark);
+        // Serveur Europe : plusieurs tuiles à la fois (deux au plus, voir la préparation) ; les autres, une seule requête à la fois.
+        const j = srv.nom === 'Europe' ? await essai() : await uneALaFois(essai);
+        // Toute remarque du serveur signale une réponse incomplète (délai, mémoire, requête interrompue) : jamais gardée (audit B-m1).
+        if (j.remark && j.remark.trim()) throw new Error('réponse tronquée : ' + j.remark);
+        if (srv.nom === 'Europe' && !j.elements?.length) { videEurope = j; continue; }
         return j;
       } catch (e) {
         if (signal?.aborted) throw new Error('Téléchargement annulé.');
         const muet = e instanceof TypeError;
-        if (!muet || methode === 'GET') {
-          if (muet) bloques++;
-          erreurs.push(`${hote} : ${muet ? 'requête bloquée' : (e as Error).message}`);
-          break;
-        }
+        if (muet) bloques++;
+        const msg = delaiEcoule ? `pas de réponse en ${DELAIS_OVERPASS[tour]} s` : muet ? 'requête bloquée' : (e as Error).message;
+        derniers.push(`${srv.nom} : ${msg}`);
       }
+      if (refus) { suivi(`Pause de ${PAUSE_REFUS_MS / 1000} s demandée par le serveur ${srv.nom}…`); await attendre(PAUSE_REFUS_MS, signal); }
+    }
+    if (bloques === envois) break; // tout est bloqué avant Internet : inutile d'insister
+    if (tour < DELAIS_OVERPASS.length - 1) {
+      const ms = PAUSE_TOUR_MS * (tour + 1);
+      suivi(`Tous les serveurs ont échoué, nouvel essai dans ${ms / 1000} s…`);
+      await attendre(ms, signal);
     }
   }
-  if (bloques === MIROIRS_OVERPASS.length) {
+  // Zone sans route d'après le seul serveur Europe, aucun autre serveur pour confirmer : marquée (la préparation en fait un trou).
+  if (videEurope) return { ...(videEurope as object), nonConfirme: true };
+  if (bloques === envois) {
     const csp = violationsCSP.length > 0;
     throw new ErreurAccesBloque(
       csp
@@ -85,7 +159,7 @@ export async function telechargerReseauOSM(
         : "Aucun serveur Overpass joignable depuis ce navigateur : requêtes bloquées avant d'atteindre Internet (fichier ouvert dans une visionneuse, pare-feu ou proxy, ou pas de connexion).",
     );
   }
-  throw new Error('Échec sur tous les serveurs Overpass. ' + erreurs.join(' ; '));
+  throw new Error(`OpenStreetMap indisponible après ${DELAIS_OVERPASS.length} essais (serveurs publics saturés : réessayer dans quelques minutes). Derniers échecs : ${derniers.slice(-serveurs.length).join(' ; ')}`);
 }
 
 /** Télécharge les tuiles d'une emprise (concurrence limitée, reprise sur erreur, annulable). */
@@ -119,7 +193,9 @@ export async function telechargerTuiles(
           try {
             const r = await fetch(urlTuile(source, z, x, y), { signal });
             if (r.ok) {
-              lot.push({ cle, blob: await r.blob() });
+              // Blob lu avant de viser le lot : `lot.push(… await …)` visait l'ancien lot, déjà enregistré par un autre travailleur (tuile perdue).
+              const blob = await r.blob();
+              lot.push({ cle, blob });
               reussi = true;
             } else if (r.status === 404) {
               reussi = true; // hors couverture
@@ -142,4 +218,185 @@ export async function telechargerTuiles(
   await vider();
   progression(fait, total, erreurs);
   return { ok, erreurs };
+}
+
+/* ---------------- IGN Géoplateforme (WFS) ---------------- */
+
+/** Réponse incomplète (pages manquantes, plafond atteint) : jamais gardée ni présentée comme complète. */
+export class ErreurTronquee extends Error {}
+
+/** Essais au plus après un refus « trop de demandes » (HTTP 429). */
+const ESSAIS_429 = 3;
+
+/**
+ * Télécharge toutes les entités d'une couche WFS IGN sur une emprise.
+ * Pagination par le nombre d'entités réellement reçues (le serveur peut servir moins que COUNT), jusqu'à une page vide
+ * ou au nombre annoncé (numberMatched) ; tri stable sur l'identifiant BD TOPO. Moins d'entités que le nombre annoncé,
+ * ou plafond atteint : ErreurTronquee (la préparation en fait une lacune signalée, rien n'est gardé en cache).
+ */
+export async function telechargerWFS(
+  couche: string,
+  bbox: BBox,
+  suivi: (msg: string) => void,
+  signal?: AbortSignal,
+  maxEntites = 200_000,
+): Promise<EntiteGeo[]> {
+  const toutes: EntiteGeo[] = [];
+  // Entités déjà reçues : une couche paginée sans tri (TE) peut renvoyer une entité deux fois et en omettre une autre ;
+  // le compte se fait sur les entités distinctes (relecture du lot : doublon + manque égalaient le nombre annoncé).
+  const vues = new Set<string>();
+  let debut = 0, annonce: number | null = null, refus = 0;
+  let tri = triCouche(couche);
+  for (;;) {
+    if (toutes.length >= maxEntites) throw new ErreurTronquee(`IGN : plus de ${maxEntites.toLocaleString('fr-FR')} entités pour ${couche}, plafond atteint : réduisez la zone.`);
+    suivi(`${couche} : ${toutes.length.toLocaleString('fr-FR')} entités reçues${annonce != null ? ` sur ${annonce.toLocaleString('fr-FR')}` : ''}…`);
+    let r: Response;
+    try {
+      r = await fetch(urlGetFeature(couche, bbox, debut, PAGE_WFS, tri), { signal });
+    } catch {
+      if (signal?.aborted) throw new Error('Téléchargement annulé.');
+      throw new ErreurAccesBloque("Service IGN (data.geopf.fr) injoignable depuis ce navigateur : requête bloquée avant d'atteindre Internet ou refusée (CORS).");
+    }
+    if (r.status === 429) {
+      if (++refus >= ESSAIS_429) throw new Error(`IGN : trop de demandes (HTTP 429) pour ${couche}, ${ESSAIS_429} essais.`);
+      await attendre(5500 * refus, signal);
+      continue;
+    }
+    if (!r.ok) {
+      if (r.status === 400 && tri && debut === 0) { tri = undefined; continue; } // tri refusé : sans tri
+      throw new Error(`IGN : réponse HTTP ${r.status} pour ${couche}.`);
+    }
+    let page: { features: EntiteGeo[]; annonce: number | null };
+    try {
+      page = lirePageWFS(await r.text());
+    } catch (e) {
+      // Tri refusé par le service (attribut inconnu) : nouvel essai sans tri, une seule fois, dès la première page.
+      if (tri && debut === 0) { tri = undefined; continue; }
+      throw new Error(`IGN : ${(e as Error).message} (${couche}).`);
+    }
+    if (page.annonce != null) annonce = Math.max(annonce ?? 0, page.annonce);
+    for (const f of page.features) {
+      const k = cleEntite(f);
+      if (vues.has(k)) continue;
+      vues.add(k);
+      toutes.push(f);
+    }
+    debut += page.features.length;
+    refus = 0; // trois refus consécutifs au plus
+    if (!page.features.length || (annonce != null && toutes.length >= annonce)) break;
+  }
+  if (annonce != null && toutes.length < annonce) throw new ErreurTronquee(`IGN : ${toutes.length.toLocaleString('fr-FR')} entités reçues sur ${annonce.toLocaleString('fr-FR')} annoncées pour ${couche} (réponse tronquée).`);
+  return toutes;
+}
+
+export async function listerCouchesTE(signal?: AbortSignal): Promise<{ nom: string; titre: string }[]> {
+  let r: Response;
+  try {
+    r = await fetch(urlCapabilitesIGN(), { signal });
+  } catch {
+    throw new ErreurAccesBloque('Catalogue IGN injoignable depuis ce navigateur.');
+  }
+  if (!r.ok) throw new Error('Catalogue IGN : réponse HTTP ' + r.status);
+  return couchesTE(await r.text());
+}
+
+/* ---------------- data.gouv.fr (jeux départementaux) ---------------- */
+
+/** Départements couverts par une ou plusieurs emprises (grille de points interrogée sur geo.api.gouv.fr).
+ *  Un point en échec (le service répond parfois 504, que le navigateur présente comme une erreur CORS)
+ *  est réessayé deux fois ; s'il échoue encore, il est compté dans `pointsEnEchec` et la recherche continue.
+ *  Le service n'est déclaré injoignable que si aucun point n'a répondu (essai réel du 13/11/2026). */
+export async function departementsDesEmprisesDetail(emprises: BBox[], suivi: (msg: string) => void, signal?: AbortSignal): Promise<{ departements: Departement[]; pointsEnEchec: number }> {
+  const trouves = new Map<string, Departement>();
+  const points = emprises.flatMap((b) => pointsGrille(b, 4));
+  let echecs = 0, reponses = 0;
+  for (let i = 0; i < points.length; i++) {
+    suivi(`Recherche des départements de la zone : point ${i + 1} / ${points.length}…`);
+    let r: Response | null = null;
+    for (let essai = 0; essai < 3 && !r; essai++) {
+      if (essai) { suivi(`Recherche des départements : point ${i + 1}, nouvel essai (${essai + 1} / 3)…`); await attendre(essai * 1500, signal); }
+      try {
+        const x = await fetch(urlCommunePoint(points[i][0], points[i][1]), { signal });
+        if (x.ok) r = x;
+      } catch {
+        if (signal?.aborted) throw new Error('Recherche annulée.');
+      }
+    }
+    if (!r) { echecs++; continue; }
+    reponses++;
+    const d = departementReponse(await r.json());
+    if (d) trouves.set(d.code, d);
+  }
+  if (!reponses) throw new ErreurAccesBloque('Service geo.api.gouv.fr injoignable depuis ce navigateur : saisissez les départements à la main.');
+  return { departements: [...trouves.values()].sort((a, b) => a.code.localeCompare(b.code)), pointsEnEchec: echecs };
+}
+
+/** Comme ci-dessus, sans le décompte des points en échec. */
+export async function departementsDesEmprises(emprises: BBox[], suivi: (msg: string) => void, signal?: AbortSignal): Promise<Departement[]> {
+  return (await departementsDesEmprisesDetail(emprises, suivi, signal)).departements;
+}
+
+/** Interroge l'API de recherche data.gouv pour chaque département et chaque thème. Les pages suivantes sont lues jusqu'à
+ *  PAGES_MAX_DATAGOUV ; au-delà, la recherche est signalée dans `limitees` (audit B-m6 : avant, 20 résultats sans le dire). */
+export async function chercherDataGouv(depts: Departement[], suivi: (msg: string) => void, signal?: AbortSignal): Promise<{ jeux: JeuDataGouv[]; echecs: string[]; limitees?: string[] }> {
+  const acc = new Map<string, JeuDataGouv>();
+  const echecs: string[] = [];
+  const limitees: string[] = [];
+  const total = depts.length * THEMES_DATAGOUV.length;
+  let fait = 0, bloquees = 0, refus = 0;
+  for (const d of depts) {
+    const requetes = requetesDepartement(d);
+    for (let k = 0; k < requetes.length; k++) {
+      fait++;
+      suivi(`data.gouv : requête ${fait} / ${total} (« ${requetes[k]} »), ${acc.size} jeu(x) trouvé(s)…`);
+      // Une erreur réseau peut être une surcharge passagère (504 sans en-tête CORS) : deux nouveaux essais.
+      let r: Response | null = null;
+      for (let essai = 0; essai < 3 && !r; essai++) {
+        if (essai) await attendre(essai * 1500, signal);
+        try {
+          r = await fetch(urlRechercheDataGouv(requetes[k]), { headers: { Accept: 'application/json' }, signal });
+        } catch {
+          if (signal?.aborted) throw new Error('Recherche annulée.');
+        }
+      }
+      if (!r) { echecs.push(`${requetes[k]} (sans réponse)`); bloquees++; continue; }
+      // Trop de demandes : pause et nouvel essai, trois fois au plus pour une même requête (audit B-m3).
+      if (r.status === 429 && ++refus < 3) { await attendre(3000 * refus, signal); k--; fait--; continue; }
+      refus = 0;
+      if (!r.ok) { echecs.push(`${requetes[k]} (HTTP ${r.status})`); continue; }
+      let json: unknown = await r.json();
+      integrerReponseRecherche(acc, json, d, THEMES_DATAGOUV[k]);
+      // Pages suivantes : une page en échec = recherche incomplète (comptée en échec, donc jamais gardée en cache).
+      for (let page = 2; ; page++) {
+        const { suivante, total: nbResultats } = paginationRecherche(json);
+        if (!suivante) break;
+        if (page > PAGES_MAX_DATAGOUV) { limitees.push(`${requetes[k]} (${nbResultats ?? 'plus de ' + 20 * PAGES_MAX_DATAGOUV} résultats, ${20 * PAGES_MAX_DATAGOUV} examinés)`); break; }
+        suivi(`data.gouv : requête ${fait} / ${total} (« ${requetes[k]} »), page ${page}…`);
+        let rp: Response | null = null;
+        try { rp = await fetch(suivante, { headers: { Accept: 'application/json' }, signal }); } catch { if (signal?.aborted) throw new Error('Recherche annulée.'); }
+        if (!rp || !rp.ok) { echecs.push(`${requetes[k]} (page ${page} ${rp ? `HTTP ${rp.status}` : 'sans réponse'})`); break; }
+        json = await rp.json();
+        integrerReponseRecherche(acc, json, d, THEMES_DATAGOUV[k]);
+      }
+    }
+  }
+  if (bloquees && bloquees === total) throw new ErreurAccesBloque("API data.gouv.fr injoignable depuis ce navigateur : requête bloquée avant d'atteindre Internet ou refusée (CORS).");
+  return { jeux: trierJeux([...acc.values()]), echecs, ...(limitees.length ? { limitees } : {}) };
+}
+
+/** Télécharge une ressource (URL stable data.gouv, puis URL directe en repli). */
+export async function telechargerRessource(res: RessourceDataGouv, signal?: AbortSignal): Promise<ArrayBuffer> {
+  let derniere = '';
+  for (const url of [res.urlStable, res.url]) {
+    try {
+      const r = await fetch(url, { signal });
+      if (r.ok) return await r.arrayBuffer();
+      derniere = `réponse HTTP ${r.status}`;
+    } catch {
+      if (signal?.aborted) throw new Error('Téléchargement annulé.');
+      derniere = 'bloqué';
+    }
+  }
+  if (derniere === 'bloqué') throw new ErreurAccesBloque("Fichier non téléchargeable depuis ce navigateur (le serveur du producteur refuse probablement l'accès direct, CORS). Ouvrez le lien, enregistrez le fichier, puis « Choisir un fichier ».");
+  throw new Error('Téléchargement impossible : ' + derniere + '.');
 }

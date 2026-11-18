@@ -1,0 +1,78 @@
+import type { BBox } from './geo';
+
+/* =========================================================================
+   Trous du réseau : tuiles de la préparation dont le téléchargement OSM a
+   échoué (audit du 13/11/2026, lot 2). Le réseau partiel est gardé, les trous
+   sont tracés en rouge sur la carte et un itinéraire qui en traverse un est
+   refusé : on n'y connaît ni les routes ni les ponts.
+   ========================================================================= */
+
+/** Tolérance (degrés, ≈ 0,1 m) : un tronçon posé exactement sur le bord commun avec une tuile reçue ne compte pas.
+ *  Volontairement minuscule : un tracé qui mord le trou, même de quelques mètres, est refusé (sens prudent). */
+const MARGE = 1e-6;
+
+const contient = (b: BBox, c: BBox) => c.sud >= b.sud - 1e-9 && c.nord <= b.nord + 1e-9 && c.ouest >= b.ouest - 1e-9 && c.est <= b.est + 1e-9;
+const recoupe = (a: BBox, b: BBox) => a.sud < b.nord && b.sud < a.nord && a.ouest < b.est && b.ouest < a.est;
+
+/** Emprises réellement téléchargées d'un réseau (jamais le rectangle englobant d'un assemblage). */
+export const emprisesDe = (r: { bbox: BBox; emprises?: BBox[] }) => r.emprises?.length ? r.emprises : [r.bbox];
+
+/** Trous d'un assemblage : un trou d'un réseau est comblé par un autre réseau dont une emprise téléchargée le contient
+ *  et qui n'a pas de trou à cet endroit. Un trou à cheval sur deux emprises reste un trou (sens prudent). */
+export function trousAssembles(reseaux: { bbox: BBox; trous?: BBox[]; emprises?: BBox[] }[]): BBox[] {
+  const res: BBox[] = [];
+  reseaux.forEach((r, i) => {
+    for (const t of r.trous ?? []) {
+      const comble = reseaux.some((x, j) => j !== i && emprisesDe(x).some((e) => contient(e, t)) && !(x.trous ?? []).some((u) => recoupe(u, t)));
+      if (!comble && !res.some((u) => contient(u, t))) res.push(t);
+    }
+  });
+  return res;
+}
+
+/** Le segment p–q (lat, lon) entre-t-il dans le rectangle (rétréci de la marge) ? Découpage de Liang–Barsky. */
+export function segmentDansRectangle(p: [number, number], q: [number, number], b: BBox): boolean {
+  const s = b.sud + MARGE, n = b.nord - MARGE, o = b.ouest + MARGE, e = b.est - MARGE;
+  if (s >= n || o >= e) return false;
+  const dx = q[1] - p[1], dy = q[0] - p[0];
+  let t0 = 0, t1 = 1;
+  for (const [pp, qq] of [[-dx, p[1] - o], [dx, e - p[1]], [-dy, p[0] - s], [dy, n - p[0]]] as const) {
+    if (pp === 0) { if (qq < 0) return false; continue; }
+    const r = qq / pp;
+    if (pp < 0) { if (r > t1) return false; if (r > t0) t0 = r; }
+    else { if (r < t0) return false; if (r < t1) t1 = r; }
+  }
+  return t0 < t1;
+}
+
+/** Premier trou traversé par une polyligne, ou null. */
+export function trouTraverse(coords: [number, number][], trous: BBox[] | undefined): BBox | null {
+  if (!trous?.length) return null;
+  for (const t of trous) {
+    if (coords.length === 1 && segmentDansRectangle(coords[0], coords[0], t)) return t;
+    for (let k = 1; k < coords.length; k++) if (segmentDansRectangle(coords[k - 1], coords[k], t)) return t;
+  }
+  return null;
+}
+
+/** Indice du premier segment de la polyligne qui entre dans le rectangle (0 pour un point isolé), ou -1. */
+export function premierSegmentDans(coords: [number, number][], b: BBox): number {
+  if (coords.length === 1) return segmentDansRectangle(coords[0], coords[0], b) ? 0 : -1;
+  for (let k = 1; k < coords.length; k++) if (segmentDansRectangle(coords[k - 1], coords[k], b)) return k - 1;
+  return -1;
+}
+
+/** Lacunes (compléments IGN / TE non obtenus) traversées par la polyligne : source, motif et PK d'entrée (m), dans l'ordre du trajet. */
+export function lacunesTraversees(coords: [number, number][], lacunes: { source: string; emprise: BBox; motif: string }[] | undefined, distance: (a: [number, number], b: [number, number]) => number): { source: string; motif: string; pkM: number }[] {
+  if (!lacunes?.length) return [];
+  const cumul = [0];
+  for (let k = 1; k < coords.length; k++) cumul.push(cumul[k - 1] + distance(coords[k - 1], coords[k]));
+  const res = new Map<string, { source: string; motif: string; pkM: number }>();
+  for (const l of lacunes) {
+    const k = premierSegmentDans(coords, l.emprise);
+    if (k < 0) continue;
+    const prec = res.get(l.source);
+    if (!prec || cumul[k] < prec.pkM) res.set(l.source, { source: l.source, motif: l.motif, pkM: cumul[k] });
+  }
+  return [...res.values()].sort((a, b) => a.pkM - b.pkM);
+}

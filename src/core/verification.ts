@@ -88,17 +88,37 @@ export function classeOuvrage(o: Ouvrage, voies: Voies, propulsion: Propulsion):
 
 export interface ClassesApplicables {
   normal: number | null;
+  /** true si la classe normale voie unique est la classe double voie, prise comme borne basse (audit A2-12). */
+  normalDeduiteDouble: boolean;
   precaution: number | null;
   /** true si la classe précaution est dérivée du coefficient du référentiel (et non établie). */
   precautionDerivee: boolean;
   risque: number | null;
 }
 
+/** Classe précaution ou risque établie : valeur propre à la propulsion si renseignée, sinon valeur commune (audit A2-6). */
+function classeEtablie(o: Ouvrage, mode: 'precaution' | 'risque', propulsion: Propulsion): number | null {
+  const c = o.classes;
+  const specifique = mode === 'precaution'
+    ? (propulsion === 'roues' ? c.precautionRoues : c.precautionChenilles)
+    : (propulsion === 'roues' ? c.risqueRoues : c.risqueChenilles);
+  if (estNombre(specifique)) return specifique;
+  const commune = c[mode];
+  return estNombre(commune) ? commune : null;
+}
+
 export function classesApplicables(o: Ouvrage, voies: Voies, propulsion: Propulsion, ref: Referentiel): ClassesApplicables {
-  const normal = classeOuvrage(o, voies, propulsion);
+  let normal = classeOuvrage(o, voies, propulsion);
+  let normalDeduiteDouble = false;
+  // Audit A2-12 (décision du 18/11/2026) : sans classe voie unique, la classe double voie en est une borne basse
+  // (un ouvrage qui porte deux véhicules de front en porte au moins un). Elle ne sert pas à dériver la précaution.
+  if (normal === null && voies === 'unique') {
+    normal = classeOuvrage(o, 'double', propulsion);
+    normalDeduiteDouble = normal !== null;
+  }
   // Précaution / risque : un seul véhicule dans l'axe → référence voie unique.
   const baseUnique = classeOuvrage(o, 'unique', propulsion);
-  let precaution: number | null = estNombre(o.classes.precaution) ? o.classes.precaution : null;
+  let precaution = classeEtablie(o, 'precaution', propulsion);
   let precautionDerivee = false;
   if (precaution === null && ref.deriverPrecaution && estNombre(baseUnique) && ref.coefPrecaution > 0) {
     precaution = Math.floor(baseUnique * ref.coefPrecaution);
@@ -106,8 +126,8 @@ export function classesApplicables(o: Ouvrage, voies: Voies, propulsion: Propuls
   }
   // Doctrine : risque uniquement sur ponts militaires préfabriqués (fixes ou flottants).
   const risqueAutorise = (o.type ?? 'permanent') !== 'permanent' || ref.risqueSurPermanent;
-  const risque = risqueAutorise && estNombre(o.classes.risque) ? o.classes.risque : null;
-  return { normal, precaution, precautionDerivee, risque };
+  const risque = risqueAutorise ? classeEtablie(o, 'risque', propulsion) : null;
+  return { normal, normalDeduiteDouble, precaution, precautionDerivee, risque };
 }
 
 /* =========================================================================
@@ -139,6 +159,9 @@ export interface EvaluationVehicule {
   civilPoids: EtatControle;
   civilHauteur: EtatControle;
   civilLargeur: EtatControle;
+  civilEssieu: EtatControle;
+  /** Classe MLC du véhicule inconnue : compatibilité supposée (référentiel « compatible »), à vérifier. */
+  mlcSupposee: boolean;
   motifs: string[];
 }
 
@@ -149,11 +172,28 @@ function controleGabarit(dimVeh: number | null, dimOuvrage: number | null, marge
   return 'ok';
 }
 
+/** Charge à l'essieu connue, sinon moyenne masse / nombre d'essieux (borne basse de l'essieu le plus chargé). */
+export function chargeEssieuVehicule(v: Vehicule): number | null {
+  if (estNombre(v.chargeEssieuT)) return v.chargeEssieuT;
+  if (estNombre(v.masseT) && estNombre(v.essieux) && v.essieux > 0) return v.masseT / v.essieux;
+  return null;
+}
+
+/** Une moyenne au-dessus de la limite est un dépassement certain ; en dessous, le contrôle reste non concluant. */
+function controleEssieu(v: Vehicule, max: number | null): EtatControle {
+  if (!estNombre(max)) return 'ok';
+  if (estNombre(v.chargeEssieuT)) return v.chargeEssieuT > max ? 'nok' : 'ok';
+  const moy = chargeEssieuVehicule(v);
+  return moy != null && moy > max ? 'nok' : 'nc';
+}
+
 function controleCivil(valVeh: number | null, max: number | null): EtatControle {
   if (!estNombre(max)) return 'ok';
   if (!estNombre(valVeh)) return 'nc';
   return valVeh > max ? 'nok' : 'ok';
 }
+
+const libelleVoies = (v: Voies) => (v === 'unique' ? 'voie unique' : 'double voie');
 
 export function evaluerVehicule(
   o: Ouvrage,
@@ -166,27 +206,46 @@ export function evaluerVehicule(
   const classes = classesApplicables(o, voies, v.propulsion, ref);
   const motifs: string[] = [];
   let mode: ModeRequis;
+  const supposer = cv === null && (ref.mlcInconnue ?? 'compatible') === 'compatible';
+  const classeOuvrageConnue = classes.normal !== null || classes.precaution !== null || classes.risque !== null;
 
-  if (cv === null) {
+  if (supposer && classeOuvrageConnue) {
+    // Compatibilité supposée dans le mode le plus favorable que l'ouvrage établit réellement (audit A2-2, A2-3) : une
+    // double voie sans classe double, ou un ouvrage n'ayant qu'une classe de précaution ou de risque, n'est pas « normal ».
+    mode = classes.normal !== null ? 'normal' : classes.precaution !== null ? 'precaution' : 'risque';
+    motifs.push(`Classe MLC ${el.etat === 'vide' ? 'à vide' : 'en charge'} du véhicule non renseignée : compatibilité SUPPOSÉE${mode === 'normal' ? '' : ` en mode ${mode === 'precaution' ? 'précaution' : 'risque'} (seule classe établie de l'ouvrage)`}, à vérifier.`);
+  } else if (cv === null) {
     mode = 'inconnu';
     motifs.push(`Classe MLC ${el.etat === 'vide' ? 'à vide' : 'en charge'} du véhicule non renseignée.`);
   } else if (classes.normal !== null && cv <= classes.normal) {
     mode = 'normal';
+    if (classes.normalDeduiteDouble) motifs.push(`Classe voie unique non renseignée : classe double voie ${classes.normal} retenue comme borne basse (à confirmer par le Génie).`);
   } else if (classes.precaution !== null && cv <= classes.precaution) {
     mode = 'precaution';
+    // Audit A2-7 : sans classe normale établie (souvent une double voie non classée), le motif ne prétend plus que la
+    // classe du véhicule la dépasse : il dit que le passage normal n'est pas établi.
     motifs.push(
-      `Classe ${cv} > classe normale ${classes.normal ?? '—'} ; ≤ classe précaution ${classes.precaution}` +
+      (classes.normal === null
+        ? `Classe normale ${libelleVoies(voies)} non établie : passage normal impossible à confirmer ; classe ${cv} ≤ classe précaution ${classes.precaution}`
+        : `Classe ${cv} > classe normale ${classes.normal} ; ≤ classe précaution ${classes.precaution}`) +
         (classes.precautionDerivee ? ' (dérivée du référentiel — à confirmer par le Génie).' : '.'),
     );
   } else if (classes.risque !== null && cv <= classes.risque) {
     mode = 'risque';
-    motifs.push(`Classe ${cv} ≤ classe risque ${classes.risque} établie : décision du commandement sur avis Génie.`);
+    motifs.push(`${classes.normal === null && classes.precaution === null ? `Classes normale ${libelleVoies(voies)} et précaution non établies ; c` : 'C'}lasse ${cv} ≤ classe risque ${classes.risque} établie : décision du commandement sur avis Génie.`);
   } else if (classes.normal === null && classes.precaution === null && classes.risque === null) {
     mode = 'inconnu';
     motifs.push(`Classe de l'ouvrage (${voies === 'unique' ? 'voie unique' : 'double voie'}) non renseignée.`);
+  } else if (classes.normalDeduiteDouble && classes.precaution === null && classes.risque === null) {
+    // La borne basse ne permet pas d'interdire (audit A2-12) : la vraie classe voie unique peut être supérieure.
+    mode = 'inconnu';
+    motifs.push(`Classe ${cv} > classe double voie ${classes.normal}, seule connue (borne basse de la voie unique) : classe voie unique à établir.`);
   } else {
     mode = 'interdit';
-    motifs.push(`Classe ${cv} supérieure à toutes les classes applicables de l'ouvrage.`);
+    motifs.push(`Classe ${cv} supérieure à toutes les classes établies de l'ouvrage (normale ${libelleVoies(voies)} ${classes.normal ?? 'non établie'}, précaution ${classes.precaution ?? 'non établie'}, risque ${classes.risque ?? 'non établie'}).`);
+  }
+  if (cv !== null && v.mlcEstimee && !(el.etat === 'vide' && estNombre(v.mlcVide))) {
+    motifs.push(`Classe MLC ${cv} du véhicule estimée (masse × coefficient), non officielle : à vérifier.`);
   }
 
   const largeur = controleGabarit(v.largeurM, o.largeurM, ref.margeLargeurM);
@@ -205,6 +264,13 @@ export function evaluerVehicule(
   if (civilPoids === 'nok') motifs.push(`Restriction civile : masse ${v.masseT} t > ${o.civil.poidsMaxT} t signalés.`);
   if (civilHauteur === 'nok') motifs.push(`Restriction civile : hauteur ${v.hauteurM} m > ${o.civil.hauteurMaxM} m signalés.`);
   if (civilLargeur === 'nok') motifs.push(`Restriction civile : largeur ${v.largeurM} m > ${o.civil.largeurMaxM} m signalés.`);
+  // Donnée du véhicule manquante face à une limite signalée : contrôle impossible, signalé (audit A2-4).
+  if (civilPoids === 'nc') motifs.push(`Limite de ${o.civil.poidsMaxT} t signalée : masse du véhicule inconnue, à vérifier.`);
+  if (civilHauteur === 'nc') motifs.push(`Limite de hauteur de ${o.civil.hauteurMaxM} m signalée : hauteur du véhicule inconnue, à vérifier.`);
+  if (civilLargeur === 'nc') motifs.push(`Limite de largeur de ${o.civil.largeurMaxM} m signalée : largeur du véhicule inconnue, à vérifier.`);
+  const civilEssieu = controleEssieu(v, o.civil.essieuMaxT ?? null);
+  if (civilEssieu === 'nok') motifs.push(`Restriction civile : charge à l'essieu ${chargeEssieuVehicule(v)?.toFixed(1)} t${v.chargeEssieuT == null ? ' (moyenne masse / essieux, borne basse)' : ''} > ${o.civil.essieuMaxT} t signalés.`);
+  else if (civilEssieu === 'nc') motifs.push(`Limite de ${o.civil.essieuMaxT} t par essieu : charge à l'essieu du véhicule inconnue, à vérifier.`);
 
   return {
     vehicule: v,
@@ -218,6 +284,8 @@ export function evaluerVehicule(
     civilPoids,
     civilHauteur,
     civilLargeur,
+    civilEssieu,
+    mlcSupposee: supposer && classeOuvrageConnue,
     motifs,
   };
 }
@@ -236,6 +304,8 @@ export interface VerdictConvoi {
   alerteCivile: boolean;
   /** Au moins un contrôle non vérifiable faute de donnée. */
   controlesIncomplets: boolean;
+  /** Véhicules déclarés compatibles sans classe MLC connue (à vérifier). */
+  mlcSupposees: string[];
   synthese: string;
 }
 
@@ -246,8 +316,9 @@ export function pireMode(modes: ModeRequis[]): ModeRequis {
 export function verifierConvoi(o: Ouvrage, elements: ElementConvoi[], voies: Voies, ref: Referentiel): VerdictConvoi {
   const evaluations = elements.map((e) => evaluerVehicule(o, e, voies, ref));
   const mode = evaluations.length ? pireMode(evaluations.map((e) => e.mode)) : 'inconnu';
-  const alerteCivile = evaluations.some((e) => e.civilPoids === 'nok' || e.civilHauteur === 'nok' || e.civilLargeur === 'nok');
-  const controlesIncomplets = evaluations.some((e) => e.largeur === 'nc' || e.hauteur === 'nc');
+  const alerteCivile = evaluations.some((e) => e.civilPoids === 'nok' || e.civilHauteur === 'nok' || e.civilLargeur === 'nok' || e.civilEssieu === 'nok');
+  const controlesIncomplets = evaluations.some((e) => e.largeur === 'nc' || e.hauteur === 'nc' || e.civilEssieu === 'nc' || e.civilPoids === 'nc' || e.civilHauteur === 'nc' || e.civilLargeur === 'nc');
+  const mlcSupposees = [...new Set(evaluations.filter((e) => e.mlcSupposee).map((e) => e.vehicule.nom))];
   const noms = (m: ModeRequis) =>
     evaluations
       .filter((e) => e.mode === m)
@@ -271,5 +342,15 @@ export function verifierConvoi(o: Ouvrage, elements: ElementConvoi[], voies: Voi
     default:
       synthese = `Franchissement interdit pour : ${noms('interdit')}.`;
   }
-  return { ouvrage: o, voies, evaluations, mode, alerteCivile, controlesIncomplets, synthese };
+  // Audit A2-11 : les synthèses risque / indéterminé / interdit nomment aussi les véhicules des modes intermédiaires.
+  const complements: [ModeRequis, string][] = [['inconnu', 'Indéterminé pour'], ['risque', 'À risque pour'], ['precaution', 'Avec précaution pour']];
+  for (const [m, lib] of complements) if (RANG_MODE[m] < RANG_MODE[mode] && noms(m)) synthese += ` ${lib} : ${noms(m)}.`;
+  if (alerteCivile) {
+    const civ = evaluations.filter((e) => e.civilPoids === 'nok' || e.civilHauteur === 'nok' || e.civilLargeur === 'nok' || e.civilEssieu === 'nok').map((e) => e.vehicule.nom);
+    synthese = synthese.replace("Franchissement normal possible pour l'ensemble du convoi", 'Classe compatible pour l\'ensemble du convoi') +
+      ` ⚠ Restriction civile de l'ouvrage dépassée par : ${[...new Set(civ)].join(', ')} (passage refusé quand les restrictions civiles sont respectées).`;
+  }
+  if (controlesIncomplets) synthese += ' Contrôle incomplet : donnée du véhicule manquante, à vérifier.';
+  if (mlcSupposees.length && mode !== 'interdit') synthese += ` ⚠ Compatibilité supposée (classe MLC non renseignée) : ${mlcSupposees.join(', ')} — à vérifier.`;
+  return { ouvrage: o, voies, evaluations, mode, alerteCivile, controlesIncomplets, mlcSupposees, synthese };
 }
