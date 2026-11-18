@@ -204,7 +204,7 @@ export function assemblerReseaux(reseaux: Reseau[]): { reseau: Reseau; bilan: Bi
   // Lacunes des compléments (IGN, TE) : toutes gardées (sens prudent), une seule fois par source et emprise.
   const lacunes = reseaux.flatMap((r) => r.lacunes ?? []).filter((l, i, t) => t.findIndex((m) => m.source === l.source && JSON.stringify(m.emprise) === JSON.stringify(l.emprise)) === i);
   return {
-    reseau: { version: 1, bbox: unionBBox(reseaux.map((r) => r.bbox)), creeLe: new Date().toISOString(), source: sources.join(' + '), noeuds, aretes, emprises, ...(trous.length ? { trous } : {}), ...(lacunes.length ? { lacunes } : {}) },
+    reseau: { version: 1, bbox: unionBBox(reseaux.map((r) => r.bbox)), creeLe: new Date().toISOString(), source: sources.join(' + '), noeuds, aretes, emprises, ...(reseaux.every((r) => r.giratoiresLus) ? { giratoiresLus: true as const } : {}), ...(trous.length ? { trous } : {}), ...(lacunes.length ? { lacunes } : {}) },
     bilan: { reseaux: reseaux.length, aretesAvant, aretes: aretes.length, noeuds: noeuds.length / 2, waysCommunes, waysDivergentes, sensContradictoires },
   };
 }

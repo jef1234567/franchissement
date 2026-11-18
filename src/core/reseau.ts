@@ -73,6 +73,9 @@ export interface Reseau {
   /** Compléments (IGN BD TOPO, réseau TE) non obtenus sur une emprise : le réseau y est connu, mais ses restrictions
    *  peut-être pas. Signalés au rapport d'itinéraire, exportés avec le paquet. */
   lacunes?: Lacune[];
+  /** Réseau construit en lisant la balise OSM des giratoires (depuis le 18/11/2026) : leur absence signifie alors qu'il
+   *  n'y en a pas, et non un paquet antérieur (relecture du lot fiabilisation). */
+  giratoiresLus?: true;
   /** Valeurs de restriction OSM illisibles lors de la construction (non persistant, pour le bilan). */
   illisibles?: number;
 }
@@ -340,7 +343,7 @@ export function construireReseau(json: { elements?: ElemOSM[] }, bbox: BBox, sou
       debut = k;
     }
   }
-  return { version: 1, bbox, creeLe: new Date().toISOString(), source, noeuds, aretes, ...(compteur.illisibles ? { illisibles: compteur.illisibles } : {}) };
+  return { version: 1, bbox, creeLe: new Date().toISOString(), source, noeuds, aretes, giratoiresLus: true, ...(compteur.illisibles ? { illisibles: compteur.illisibles } : {}) };
 }
 
 function round6(x: number) {

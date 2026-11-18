@@ -167,3 +167,36 @@ describe('Itinéraire : accès à autorisation et buse signalés', () => {
     expect(it.ouvrages).toHaveLength(0);
   });
 });
+
+/* Giratoires (relecture phase 4). */
+import { giratoires } from './demi-tour';
+describe('Giratoires : accolés et paquet récent sans giratoire', () => {
+  const n = (id: number, lat: number, lon: number): ElemOSM => ({ type: 'node', id, lat, lon });
+  const w = (id: number, nodes: number[], tags: Record<string, string>): ElemOSM => ({ type: 'way', id, nodes, tags });
+  const d = 0.0002;
+  // Deux anneaux qui se touchent au nœud 3 (giratoires « en haltère »).
+  const els = [
+    n(1, 47, 0), n(2, 47 + d, d), n(3, 47, 2 * d), n(4, 47 - d, d),
+    n(5, 47 + d, 3 * d), n(6, 47, 4 * d), n(7, 47 - d, 3 * d),
+    w(1, [1, 2, 3, 4, 1], { highway: 'primary', junction: 'roundabout' }),
+    w(2, [3, 5, 6, 7, 3], { highway: 'primary', junction: 'roundabout' }),
+  ];
+  it('deux anneaux accolés restent deux giratoires', () => {
+    const { liste } = giratoires(construireReseau({ elements: els }, BB));
+    expect(liste).toHaveLength(2);
+    for (const g of liste) expect(g.perimetre).toBeLessThan(150); // ≈ 107 m chacun (215 m fusionnés)
+  });
+  it('réseau récent sans aucun giratoire : pas d\'alerte « paquet antérieur »', () => {
+    const r = construireReseau({ elements: [n(1, 47, 0), n(2, 47, 0.01), w(1, [1, 2], { highway: 'primary' })] }, BB);
+    expect(giratoires(r).sansBalise).toBe(false);
+    const ancien = { ...r };
+    delete ancien.giratoiresLus;
+    expect(giratoires(ancien).sansBalise).toBe(true);
+  });
+  it('assemblage : marque gardée seulement si tous les paquets l\'ont', () => {
+    const r = construireReseau({ elements: [n(1, 47, 0), n(2, 47, 0.01), w(1, [1, 2], { highway: 'primary' })] }, BB);
+    expect(assemblerReseaux([r, r]).reseau.giratoiresLus).toBe(true);
+    const ancien = { ...r }; delete ancien.giratoiresLus;
+    expect(assemblerReseaux([r, ancien]).reseau.giratoiresLus).toBeUndefined();
+  });
+});
