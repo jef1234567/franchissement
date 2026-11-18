@@ -48,6 +48,7 @@ Noter les résultats dans le gabarit en fin de page. Une capture d'écran du bil
 
 1. **Préparer la zone, 20 puis 50 km.** Carte → onglet Zone → « Aller à » Saumur → 20 km → « Préparer la zone ». Noter le bilan des 4 étapes (OSM, IGN, TE, data.gouv), la durée, les étapes en orange. Recommencer en 50 km (9 tuiles Overpass) : durée, refus éventuels.
 2. **Couches TE.** Le diagnostic donne les noms. Dans FRANCHIR, vérifier que l'étape TE du bilan annonce des tronçons classés et des ponts annotés.
+   **Franchissements TE (points)** : sur Saumur 20 km, le diagnostic en compte 11. Ouvrir la fiche de 2 ou 3 ponts proches de ces points : chacun doit porter la note « [IGN TE] Sur le réseau « SECUROUT.TE:franchissement_te » ». Ce contrôle demande un FRANCHIR qui inclut la PR #3 (franchissements en points). Sur une version antérieure, aucune note n'est attendue : le noter dans le compte rendu.
 3. **Restrictions IGN sur le bon tronçon.** Ouvrir 2 ou 3 liens « Exemples à contrôler » du rapport de diagnostic. Dans FRANCHIR, cliquer le même endroit : la restriction doit être sur le pont, pas sur la route en dessous.
 4. **Couverture nationale.** Localiser « Maine-et-Loire », emprise « du lieu », cocher « Grands axes seulement », télécharger, puis « Exporter le paquet » sans tuiles. Noter durée, nombre de tronçons, poids du paquet, refus Overpass éventuel. Puis « Importer (fusionner) » un paquet Saumur 25 km détaillé et calculer un itinéraire qui sort de la zone de détail.
 5. **data.gouv dans FRANCHIR.** Données & zone, étape 3, « Chercher sur data.gouv.fr » → « Départements de la zone » (Saumur 25 km) → « Chercher ». Noter le nombre de jeux et les erreurs. Importer 2 ou 3 fichiers, dont un hébergé chez le producteur (`data.maine-et-loire.fr`).
@@ -73,6 +74,7 @@ Version de FRANCHIR (date du fichier dist/index.html) :
 1. Saumur 20 km : OSM … / IGN … / TE … / data.gouv … ; durée …
    Saumur 50 km : … ; durée … ; refus Overpass : …
 2. TE dans le bilan : … tronçons classés, … ponts annotés
+   Franchissements TE : version avec PR #3 oui/non ; ponts annotés … sur 11 (noms : …)
 3. Ponts contrôlés (nom : restriction sur le pont ? oui/non) : …
 4. Maine-et-Loire grands axes : durée …, … tronçons, paquet … Mo ; itinéraire hors détail : OK/KO
 5. data.gouv : … jeux ; erreurs : … ; fichiers importés : …
