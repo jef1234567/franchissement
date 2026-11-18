@@ -90,6 +90,7 @@ describe('A2-11 : synthèses complètes', () => {
 
 /* OSM : accès soumis à autorisation, access=no levé, buses (B-m5). */
 import { construireReseau, extraireOuvrages, requeteOverpassReseau, restrictionsOSM } from './reseau';
+import type { ElemOSM } from '../test/fixtures';
 
 describe('Accès OSM soumis à autorisation (relecture phase 4)', () => {
   const r = (t: Record<string, string>) => restrictionsOSM(t, { illisibles: 0 });
@@ -120,7 +121,7 @@ describe('B-m5 : access=no levé par une clé plus précise', () => {
 });
 
 describe('B-m5 : bridge=culvert = petit ouvrage, pas un pont', () => {
-  const json = {
+  const json: { elements: ElemOSM[] } = {
     elements: [
       { type: 'node' as const, id: 1, lat: 47.01, lon: 0.01 },
       { type: 'node' as const, id: 2, lat: 47.0101, lon: 0.0101 },
@@ -146,7 +147,7 @@ describe('B-m5 : bridge=culvert = petit ouvrage, pas un pont', () => {
 import { calculerItineraire, OPTIONS_ITINERAIRE_DEFAUT } from './itineraire';
 describe('Itinéraire : accès à autorisation et buse signalés', () => {
   it('alertes au rapport, itinéraire non bloqué', () => {
-    const json = {
+    const json: { elements: ElemOSM[] } = {
       elements: [
         { type: 'node' as const, id: 1, lat: 47.01, lon: 0.01 },
         { type: 'node' as const, id: 2, lat: 47.011, lon: 0.011 },
