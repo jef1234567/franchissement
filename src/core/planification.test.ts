@@ -133,11 +133,12 @@ describe('Désaccords entre sources', () => {
 });
 
 describe('Relevé véhicules en sources ouvertes', () => {
-  it('ajoute les véhicules sans inventer de classe MLC', async () => {
+  it('ajoute les véhicules ; toute classe MLC est sourcée ou marquée estimée', async () => {
     const { vehiculesReleve, completerVehicules } = await import('./reference');
     const nv = vehiculesReleve();
     expect(nv.find((x) => x.id === 'serval')).toBeTruthy();
-    for (const x of nv) if (x.id !== 'm1a2') expect(x.mlcCharge).toBeNull();
+    for (const x of nv) if (x.mlcCharge != null && !x.mlcEstimee) expect(['m1a2', 'leopard2a6']).toContain(x.id);
+    for (const id of ['srpb', 'pfm_module', 'trm10000_citerne']) expect(nv.find((x) => x.id === id)!.mlcCharge).toBeNull();
     expect(nv.find((x) => x.id === 'm1a2')!.mlcCharge).toBe(73);
     const base = vehiculesParDefaut().filter((x) => !nv.some((n) => n.id === x.id));
     const { vehicules } = completerVehicules(base);

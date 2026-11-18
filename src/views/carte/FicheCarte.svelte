@@ -30,7 +30,7 @@
     <dl class="caracs">
       <dt>Classe voie unique</dt><dd>{fmt(o.classes.unique.generique)}{o.classes.unique.roues != null ? ` · roues ${o.classes.unique.roues}` : ''}{o.classes.unique.chenilles != null ? ` · chenilles ${o.classes.unique.chenilles}` : ''}</dd>
       <dt>Classe double voie</dt><dd>{fmt(o.classes.double.generique)}{o.classes.double.roues != null ? ` · roues ${o.classes.double.roues}` : ''}{o.classes.double.chenilles != null ? ` · chenilles ${o.classes.double.chenilles}` : ''}</dd>
-      <dt>Précaution / risque</dt><dd>{fmt(o.classes.precaution)} / {fmt(o.classes.risque)}</dd>
+      <dt>Précaution / risque</dt><dd>{fmt(o.classes.precaution)} / {fmt(o.classes.risque)}{o.classes.precautionRoues != null || o.classes.risqueRoues != null ? ` · roues ${fmt(o.classes.precautionRoues ?? null)} / ${fmt(o.classes.risqueRoues ?? null)}` : ''}{o.classes.precautionChenilles != null || o.classes.risqueChenilles != null ? ` · chenilles ${fmt(o.classes.precautionChenilles ?? null)} / ${fmt(o.classes.risqueChenilles ?? null)}` : ''}</dd>
       <dt>Longueur · largeur</dt><dd>{fmt(o.longueurM, ' m')} · {fmt(o.largeurM, ' m')}</dd>
       <dt>Hauteur libre</dt><dd>{fmt(o.hauteurLibreM, ' m')}</dd>
       {#if o.civil.poidsMaxT != null || o.civil.hauteurMaxM != null || o.civil.largeurMaxM != null}

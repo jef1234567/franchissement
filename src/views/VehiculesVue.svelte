@@ -33,7 +33,7 @@
   <header class="ligne" style="align-items:flex-end">
     <div style="flex:1">
       <h2>Véhicules</h2>
-      <p class="muted">Caractéristiques de référence. Un véhicule sans classe MLC est <strong>supposé compatible</strong> sur les ouvrages classés, avec un avertissement « à vérifier » (réglable dans le Référentiel : il peut au contraire être bloqué). Hauteur, largeur et masse permettent les contrôles de gabarit et de restrictions civiles.</p>
+      <p class="muted">Caractéristiques de référence. Aucune classe MLC n'est publiée pour les véhicules français : les classes marquées « estimée » sont calculées depuis la masse (× 1,13 chenilles, × 1,30 roues) et signalées à vérifier dans chaque verdict. Un véhicule sans classe MLC est <strong>supposé compatible</strong> sur les ouvrages classés, avec un avertissement « à vérifier » (réglable dans le Référentiel : il peut au contraire être bloqué). Hauteur, largeur et masse permettent les contrôles de gabarit et de restrictions civiles.</p>
     </div>
     <input type="search" placeholder="Rechercher…" bind:value={recherche} style="width:220px" aria-label="Rechercher un véhicule" />
     <button class="btn" onclick={completer} title="Remplit les dimensions et masses vides à partir des fiches en sources ouvertes, sans écraser vos saisies"><Icone nom="telecharger" taille={16} /> Compléter (sources ouvertes)</button>
@@ -53,7 +53,7 @@
           <tr>
             <td><input type="text" bind:value={v.nom} aria-label="Nom" style="min-width:140px;font-weight:600" /></td>
             <td><select bind:value={v.propulsion} aria-label="Propulsion"><option value="roues">Roues</option><option value="chenilles">Chenilles</option></select></td>
-            <td class:manque={v.mlcCharge == null}><ChampNombre bind:valeur={v.mlcCharge} min={0} max={200} largeur="72px" etiquette="MLC chargé" /></td>
+            <td class:manque={v.mlcCharge == null}><ChampNombre bind:valeur={v.mlcCharge} min={0} max={200} largeur="72px" etiquette="MLC chargé" onchange={() => { delete v.mlcEstimee; }} />{#if v.mlcEstimee}<span class="petit-txt muted" title="Classe estimée (masse × coefficient), non officielle : à vérifier"> estimée</span>{/if}</td>
             <td><ChampNombre bind:valeur={v.mlcVide} min={0} max={200} largeur="72px" etiquette="MLC à vide" /></td>
             <td class:manque={v.longueurM == null}><ChampNombre bind:valeur={v.longueurM} min={0} max={40} largeur="78px" etiquette="Longueur" /></td>
             <td><ChampNombre bind:valeur={v.largeurM} min={0} max={10} largeur="72px" etiquette="Largeur" /></td>
