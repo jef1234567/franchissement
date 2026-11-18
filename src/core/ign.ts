@@ -298,7 +298,13 @@ export function marquerReseauTE(r: Reseau, ouvrages: Ouvrage[], entites: EntiteG
   const marque = `[IGN TE] Sur le réseau « ${couche} ».`;
   let n = 0;
   for (const f of entites) {
-    for (const l of pointsLigne(f.geometry, r.bbox)) {
+    // Franchissements TE (SECUROUT.TE:franchissement_te) : géométrie ponctuelle (essai réel du 18/11/2026, 11 points sur
+    // Saumur) ; avant, seules les lignes étaient lues et aucun pont n'était annoté. Un point = une « ligne » d'un sommet.
+    const g = f.geometry;
+    const geom = g?.type === 'Point' ? { type: 'MultiLineString', coordinates: [[g.coordinates as number[]]] }
+      : g?.type === 'MultiPoint' ? { type: 'MultiLineString', coordinates: (g.coordinates as number[][]).map((c) => [c]) }
+      : g;
+    for (const l of pointsLigne(geom, r.bbox)) {
       for (const p of l) {
         const a = areteLaPlusProche(r, p, { pontsSeuls: true, rayonM });
         if (!a) continue;

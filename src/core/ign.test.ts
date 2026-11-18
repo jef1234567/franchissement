@@ -90,4 +90,16 @@ describe('IGN', () => {
     expect(marquerReseauTE(r, o, [surPontFort({})], 'SECUROUT.TE:te_120t')).toBeGreaterThan(0);
     expect(o.find((x) => x.nom === 'Pont Fort')!.notes).toContain('te_120t');
   });
+  it('franchissements TE ponctuels (Point, MultiPoint) : ouvrage annoté (avant : ignorés)', () => {
+    const { r, o } = preparer();
+    const point = { properties: {}, geometry: { type: 'Point', coordinates: [-0.08, 47.26] } };
+    expect(marquerReseauTE(r, o, [point], 'SECUROUT.TE:franchissement_te')).toBe(1);
+    expect(o.find((x) => x.nom === 'Pont Fort')!.notes).toContain('franchissement_te');
+    const { r: r2, o: o2 } = preparer();
+    const multi = { properties: {}, geometry: { type: 'MultiPoint', coordinates: [[-0.08, 47.26], [-0.08, 47.2598]] } };
+    expect(marquerReseauTE(r2, o2, [multi], 'SECUROUT.TE:franchissement_te')).toBe(1);
+    // Point loin de tout pont : rien.
+    const { r: r3, o: o3 } = preparer();
+    expect(marquerReseauTE(r3, o3, [{ properties: {}, geometry: { type: 'Point', coordinates: [-0.15, 47.21] } }], 'SECUROUT.TE:franchissement_te')).toBe(0);
+  });
 });
