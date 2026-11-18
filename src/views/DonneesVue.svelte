@@ -444,7 +444,7 @@
           // Fusion : le réseau du paquet est assemblé au réseau en place (paquets départementaux, zones voisines).
           const { reseau, bilan } = assemblerReseaux([etat.reseau, p.reseau]);
           await etat.definirReseau(reseau, assemblerZones(etat.zone ? ($state.snapshot(etat.zone) as Zone) : null, p.entete.zone, reseau.bbox));
-          bilanAssemblage = ` Réseaux assemblés : ${bilan.aretes.toLocaleString('fr-FR')} tronçons${bilan.waysDivergentes ? `, ${bilan.waysDivergentes} voie(s) aux géométries différentes entre paquets (restriction la plus forte appliquée à toute la voie)` : ''}.`;
+          bilanAssemblage = ` Réseaux assemblés : ${bilan.aretes.toLocaleString('fr-FR')} tronçons${bilan.waysDivergentes ? `, ${bilan.waysDivergentes} voie(s) aux géométries différentes entre paquets (restriction la plus forte appliquée à toute la voie)` : ''}${bilan.sensContradictoires ? `, ${bilan.sensContradictoires} voie(s) à sens unique contradictoire entre paquets (sens du paquet le plus récent retenu, à vérifier)` : ''}.`;
         } else if (p.reseau) await etat.definirReseau(p.reseau, p.entete.zone);
         if (p.tuiles.length) {
           for (let i = 0; i < p.tuiles.length; i += 200) {

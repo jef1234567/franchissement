@@ -133,7 +133,7 @@
       {/if}
     {:else}
       <div class="kpis">
-        <div><span>Distance</span><strong>{(res.distanceM / 1000).toFixed(1)} km</strong>{#if detour > 50}<em>+{(detour / 1000).toFixed(1)} km de détour</em>{/if}</div>
+        <div><span>Distance</span><strong>{(res.distanceM / 1000).toFixed(1)} km</strong>{#if detour > 50}<em>+{(detour / 1000).toFixed(1)} km par rapport à l'itinéraire de comparaison</em>{/if}</div>
         <div><span>Durée de marche</span><strong>{formatDuree(res.dureeS)}</strong><em>à {iti.options.vitesseConvoiKmh} km/h max.</em></div>
         <div><span>Classe d'itinéraire</span><strong>{res.classeItineraire ?? '—'}</strong><em title={res.maillonFaible?.nom}>{res.maillonFaible ? 'maillon faible : ' + res.maillonFaible.nom : 'aucun ouvrage classé'}</em></div>
         <div><span>Franchissements</span><strong>{iti.ecoulementTotalS != null ? formatDuree(iti.ecoulementTotalS) : '—'}</strong><em>écoulement cumulé</em></div>
@@ -146,7 +146,7 @@
           Le calcul retient le trajet le moins « coûteux » : <strong>{formatDuree(res.dureeS)}</strong> de marche{#if (res.penalitesS ?? 0) > 0}
             + <strong>{min(res.penalitesS ?? 0)} min</strong> de pénalités{/if}.
           {#if nbInconnus && iti.options.inconnus === 'penaliser'}{nbInconnus} pont(s) sans classe traversé(s), {iti.options.penaliteInconnuMin} min chacun.{/if}
-          {#if detour > 50}Le plus court sans aucune contrainte fait {((iti.reference?.distanceM ?? 0) / 1000).toFixed(1)} km (tireté gris) : les {(detour / 1000).toFixed(1)} km de plus viennent des contraintes.{/if}
+          {#if detour > 50}Itinéraire de comparaison (tireté gris) : le plus rapide sans tenir compte des contraintes du convoi (classes MLC, gabarit, restrictions civiles, accès interdits, gués) : {((iti.reference?.distanceM ?? 0) / 1000).toFixed(1)} km. L'écart de {(detour / 1000).toFixed(1)} km tient à ces contraintes (les deux calculs cherchent le plus rapide, pas le plus court).{/if}
         </p>
         <div class="ligne">
           <button class="btn petit" class:primaire={iti.saisiePourquoi} onclick={() => { iti.saisiePourquoi = !iti.saisiePourquoi; iti.saisieCarte = null; }}>
