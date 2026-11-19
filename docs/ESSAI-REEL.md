@@ -46,7 +46,7 @@ Un échec « bloqué avant réponse » ne dit pas si c'est le CORS, le filtrage 
 
 Noter les résultats dans le gabarit en fin de page. Une capture d'écran du bilan suffit souvent.
 
-1. **Préparer la zone, 20 puis 50 km.** Carte → onglet Zone → « Aller à » Saumur → 20 km → « Préparer la zone ». Noter le bilan des 4 étapes (OSM, IGN, TE, data.gouv), la durée, les étapes en orange. Recommencer en 50 km (9 tuiles Overpass) : durée, refus éventuels.
+1. **Préparer la zone, 20 puis 50 km.** Carte → onglet Zone → « Aller à » Saumur → 20 km → « Préparer la zone ». Noter le bilan des 4 étapes (OSM, IGN, TE, data.gouv), la durée, les étapes en orange. Recommencer en 50 km (25 tuiles de 10 km) : durée, refus éventuels.
 2. **Couches TE.** Le diagnostic donne les noms. Dans FRANCHIR, vérifier que l'étape TE du bilan annonce des tronçons classés et des ponts annotés.
    **Franchissements TE (points)** : sur Saumur 20 km, le diagnostic en compte 11. Ouvrir la fiche de 2 ou 3 ponts proches de ces points : chacun doit porter la note « [IGN TE] Sur le réseau « SECUROUT.TE:franchissement_te » ». Ce contrôle demande un FRANCHIR qui inclut la PR #3 (franchissements en points). Sur une version antérieure, aucune note n'est attendue : le noter dans le compte rendu.
 3. **Restrictions IGN sur le bon tronçon.** Ouvrir 2 ou 3 liens « Exemples à contrôler » du rapport de diagnostic. Dans FRANCHIR, cliquer le même endroit : la restriction doit être sur le pont, pas sur la route en dessous.
@@ -54,6 +54,14 @@ Noter les résultats dans le gabarit en fin de page. Une capture d'écran du bil
 5. **data.gouv dans FRANCHIR.** Données & zone, étape 3, « Chercher sur data.gouv.fr » → « Départements de la zone » (Saumur 25 km) → « Chercher ». Noter le nombre de jeux et les erreurs. Importer 2 ou 3 fichiers, dont un hébergé chez le producteur (`data.maine-et-loire.fr`).
 6. **Restrictions linéaires.** Importer « Limitation de gabarit en Maine-et-Loire » en mode tronçons (nature = `nature_contrainte`, axe = `axe`). Vérifier 2 ou 3 tronçons sur la carte (bon tronçon, pas la route du dessous).
 7. **Cache et zone composite.** Après la préparation 50 km : fermer l'onglet, rouvrir `dist/index.html`, relancer « Préparer la zone ». Attendu : « téléchargement(s) repris du cache », moins d'une minute. Noter la place prise (Données & zone, quota). Déplacer la carte de 30 km, « Ajouter ce carré à la zone », calculer un itinéraire qui passe d'un carré à l'autre.
+
+## Essai piloté du 19/11/2026 (Chrome, poste de Jean-François, FRANCHIR servi sur http://localhost:8080, build après PR 6)
+
+Méthode : Claude in Chrome refuse les adresses `file://` ; une page Netlify n'était pas joignable depuis le poste (supprimée ensuite). FRANCHIR a donc été servi en local par une commande PowerShell (`TcpListener` sur 127.0.0.1:8080, sans droits administrateur).
+
+- **Point 1, Saumur 20 km : réussi en 4 min 30 environ.** OSM : 6 835 tronçons, 72 ponts, 4 tuiles. IGN : 601 tronçons avec restriction, 444 tronçons et 17 ponts mis à jour, 88 restrictions sans tronçon OSM. TE : 390 tronçons classés, **23 ponts annotés** (correction des franchissements en points effective), 102 points ambigus écartés. data.gouv : Maine-et-Loire, 3 jeux intégrés (gabarit 2 tronçons, tonnage 301 tronçons, ouvrages d'art 68 ponts ajoutés et 3 modifiés), étape en orange (1 restriction sans tronçon, 2 points ambigus, 6 ponts sans tronçon routier).
+- **Défaut bloquant : la page se fige pendant la préparation.** Sur 20 km, aucune réponse de la page pendant 2 à 3 minutes (étapes TE et data.gouv). Sur 50 km (25 tuiles et non 9), page figée de 14 h 08 à plus de 14 h 33, dès l'étape OSM ; essai abandonné, onglet fermé. Un calcul long s'exécute sans rendre la main au navigateur. Cause probable : les rapprochements avec le réseau OSM (`candidats`, `areteLaPlusProche`) ou l'assemblage, à mesurer avant de corriger (découpage en tranches avec pause, ou travail dans un Worker).
+- Points 2 à 7 et 4 : non faits ce jour-là.
 
 ## Phase 5 — Rejeu du cas réel « Peloton Jaguar » (5 min de votre côté)
 
