@@ -133,6 +133,9 @@ export async function viderCacheTelechargements() {
 /** Oubli en mémoire seulement (après « Tout effacer », qui vide déjà le navigateur). */
 export function oublierCacheMemoire() { cache.clear(); }
 
+/** Rend la main au navigateur entre deux calculs longs (affichage, clics) : la page ne se fige pas (essai réel du 19/11/2026). */
+const pause = () => new Promise<void>((r) => setTimeout(r, 0));
+
 /** Exécute f sur chaque élément, n à la fois au plus, résultats dans l'ordre. */
 async function parLots<T, R>(xs: T[], n: number, f: (x: T, i: number) => Promise<R>): Promise<R[]> {
   const res: R[] = new Array(xs.length);
@@ -170,6 +173,9 @@ class Preparation {
     const e = this.etapes.find((x) => x.id === id);
     if (e) { e.statut = statut; e.message = message; }
   }
+
+  // Copies du réseau : etat.reseau est un état « raw » (objet ordinaire, sans proxy) ; structuredClone suffit.
+  // $state.snapshot y ajoutait une copie récursive en JavaScript : 0,9 s de page figée à 50 km (mesure du 19/11/2026).
 
   /** Prépare le carré centré sur `centre`. `ajouter` : le carré est assemblé au réseau déjà chargé au lieu de le remplacer. */
   async preparer(centre: [number, number], ajouter = false) {
@@ -230,8 +236,10 @@ class Preparation {
 
   /** Exécute une étape de complément en notant son apport (tronçons et ouvrages changés). */
   private async suivre(id: Etape['id'], reseau: Reseau, ouvrages: Ouvrage[], f: () => Promise<void>) {
+    await pause();
     const sig = signaturesAretes(reseau), ouv = signaturesOuvrages(ouvrages);
     await f();
+    await pause();
     this.apports = { ...this.apports, [id]: apportEntre(reseau, sig, ouv, ouvrages) };
   }
 
@@ -380,12 +388,14 @@ class Preparation {
       const trous = echecs.map((x) => x.tuile);
       morceaux[0] = { ...morceaux[0], trous: [...(morceaux[0].trous ?? []), ...trous] };
       const zoneCarre: Zone = { nom, centre, rayonKm: cote / 2, bbox };
-      const existant = ajouter && etat.reseau ? (structuredClone($state.snapshot(etat.reseau)) as Reseau) : null;
+      const existant = ajouter && etat.reseau ? (structuredClone(etat.reseau) as Reseau) : null;
       this.progression = 'Assemblage des tuiles…';
+      await pause();
       // Le carré doit couvrir ses propres trous : son emprise est le carré entier, pas l'union des tuiles reçues.
       const carre = morceaux.length > 1 ? assemblerReseaux(morceaux).reseau : morceaux[0];
       carre.bbox = bbox;
       carre.emprises = [bbox];
+      await pause();
       let reseau = carre;
       let zone = zoneCarre;
       if (existant) {
@@ -399,6 +409,7 @@ class Preparation {
       this.noterLacunes(reseau, 'IGN BD TOPO', bbox, enAttente);
       this.noterLacunes(reseau, 'IGN transports exceptionnels', bbox, enAttente);
       await etat.definirReseau(reseau, zone);
+      await pause();
       const osm = extraireOuvrages(reseau);
       const existants = $state.snapshot(etat.projet.ouvrages) as Ouvrage[];
       const { ouvrages, ajoutes, completes } = integrerOuvragesOSM(existants, osm);
@@ -408,7 +419,8 @@ class Preparation {
       const base = `${reseau.aretes.length.toLocaleString('fr-FR')} tronçons, ${osm.length} ponts (${ajoutes} nouveaux, ${completes} complétés)${tuiles.length > 1 ? `, ${tuiles.length} tuiles` : ''}${existant ? ', assemblé à la zone existante' : ''}${illisibles ? ` ; ${illisibles} valeur(s) de restriction OSM illisible(s), ignorée(s)` : ''}`;
       if (echecs.length) this.etape('osm', 'partiel', `${base} ; ${echecs.length} tuile(s) non reçue(s), en rouge sur la carte (itinéraire refusé s'il les traverse) : relancez « ${existant ? 'Ajouter ce carré à la zone' : 'Préparer la zone'} » sans bouger la carte pour les compléter. Motif : ${echecs[0].motif}`);
       else this.etape('osm', 'ok', base);
-      return structuredClone($state.snapshot(etat.reseau)) as Reseau;
+      await pause();
+      return structuredClone(etat.reseau) as Reseau;
     } catch (e) {
       this.etape('osm', 'echec', signal.aborted ? 'arrêté' : (e as Error).message);
       return null;
@@ -452,6 +464,7 @@ class Preparation {
       this.noterLacunes(reseau, 'IGN BD TOPO', carre, lacunes);
       if (lacunes.length === tuiles.length) throw new Error(lacunes[0].motif);
       // Tuiles reçues appliquées même si d'autres ont échoué.
+      await pause();
       const b = appliquerRestrictionsIGN(reseau, ouvrages, entites);
       const pertes = [
         b.ambigus && `${b.ambigus} point(s) ambigus (pont ou route dessous) écartés`,
@@ -482,6 +495,7 @@ class Preparation {
       for (const c of couches) {
         const { entites, lacunes: l } = await this.wfsParTuiles(c.nom, tuiles, signal);
         for (const x of l) if (!lacunes.some((y) => JSON.stringify(y.emprise) === JSON.stringify(x.emprise))) lacunes.push({ emprise: x.emprise, motif: `${c.nom} : ${x.motif}` });
+        await pause();
         if (/troncon_te$/i.test(c.nom)) { const b = appliquerTroncsTE(reseau, ouvrages, entites); aretes += b.aretes; annotes += b.ouvrages; ambigus += b.ambigus; }
         else annotes += marquerReseauTE(reseau, ouvrages, entites, c.nom);
       }
@@ -614,6 +628,7 @@ class Preparation {
       for (let k = 0; k < candidats.length; k++) {
         if (signal.aborted) throw new Error('arrêté');
         this.progression = `data.gouv : jeu ${k + 1} / ${candidats.length} (« ${candidats[k].titre} »)…`;
+        await pause();
         issues.push(await this.traiterJeu(reseau, ouvrages, candidats[k], bbox, signal));
       }
       this.nonReconnus = nonReconnus();

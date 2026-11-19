@@ -157,7 +157,8 @@ export function assemblerReseaux(reseaux: Reseau[]): { reseau: Reseau; bilan: Bi
     if (arbitre !== null) sensContradictoires++;
     const chaines = presents.map(chainer);
     const ref = chaines[0];
-    const identiques = ref !== null && chaines.every((c) => c !== null && c.length === ref.length && c.every((p, i) => cle(p) === cle(ref[i])));
+    // Une seule chaîne (way connue d'un seul réseau, cas courant) : identique à elle-même, sans comparer point à point.
+    const identiques = ref !== null && chaines.every((c) => c === ref || (c !== null && c.length === ref.length && c.every((p, i) => cle(p) === cle(ref[i]))));
 
     if (!identiques) {
       // Géométries divergentes : arêtes conservées (doublons exacts retirés), restriction la plus forte sur toute la way.

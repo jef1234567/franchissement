@@ -1,6 +1,6 @@
 import type { BBox } from './geo';
 import { estNombre, type Ouvrage } from './model';
-import { areteLaPlusProche, coordsArete, ouvragesParArete, type Arete, type Reseau } from './reseau';
+import { aretesAutour, areteLaPlusProche, coordsArete, indexerAretes, ouvragesParArete, type Arete, type IndexAretes, type Reseau } from './reseau';
 import { distancePointSegment } from './geo';
 import { noterDesaccord } from './importation';
 
@@ -189,10 +189,10 @@ export function niveauBDTOPO(p: Record<string, unknown>): number | null {
 const normRef = (s: unknown) => String(s ?? '').toUpperCase().replace(/[\s.-]/g, '');
 
 /** Arêtes candidates triées par distance, filtrées par niveau (pont / non-pont) et par numéro de route s'ils sont connus. */
-function candidats(r: Reseau, p: [number, number], rayonM: number, niveau: number | null, ref: string): { arete: number; d: number }[] {
+function candidats(r: Reseau, p: [number, number], rayonM: number, niveau: number | null, ref: string, index?: IndexAretes): { arete: number; d: number }[] {
   const mLat = rayonM / 110000, mLon = rayonM / (110000 * Math.cos((p[0] * Math.PI) / 180));
   const res: { arete: number; d: number }[] = [];
-  r.aretes.forEach((e, i) => {
+  const essayer = (e: Arete, i: number) => {
     if (niveau != null && (niveau > 0) !== !!e.pont) return;
     // Route à plusieurs numéros (OSM « D 347;D 938 », tronc commun) : l'un d'eux suffit (audit B-I3).
     if (ref && e.ref && !e.ref.split(';').some((x) => normRef(x) === ref)) return;
@@ -203,7 +203,10 @@ function candidats(r: Reseau, p: [number, number], rayonM: number, niveau: numbe
     let d = Infinity;
     for (let k = 1; k < pts.length; k++) d = Math.min(d, distancePointSegment(p, pts[k - 1], pts[k]));
     if (d <= rayonM) res.push({ arete: i, d });
-  });
+  };
+  // Index (même réseau) : seules les arêtes voisines sont examinées, dans le même ordre ; résultat identique.
+  if (index && index.reseau === r && Number.isFinite(mLat) && Number.isFinite(mLon)) for (const i of aretesAutour(index, p, mLat, mLon)) essayer(r.aretes[i], i);
+  else r.aretes.forEach(essayer);
   return res.sort((a, b) => a.d - b.d);
 }
 
@@ -232,6 +235,7 @@ const CHAMPS: ['pmax' | 'emax' | 'hmax' | 'lmax', keyof Ouvrage['civil'], string
 export function appliquerRestrictionsIGN(r: Reseau, ouvrages: Ouvrage[], entites: EntiteGeo[], source = 'IGN BD TOPO', rayonM = 12): BilanIGN {
   const bilan: BilanIGN = { entites: entites.length, avecRestriction: 0, rapprochees: 0, aretesModifiees: 0, ouvragesModifies: 0, desaccords: 0, ambigus: 0 };
   const parArete = ouvragesParArete(r, ouvrages);
+  const index = indexerAretes(r);
   const modifiees = new Set<number>(), ouvragesTouches = new Set<string>();
   const date = new Date().toISOString();
   for (const f of entites) {
@@ -244,7 +248,7 @@ export function appliquerRestrictionsIGN(r: Reseau, ouvrages: Ouvrage[], entites
     const touchees = new Set<number>();
     for (const l of pointsLigne(f.geometry, r.bbox)) {
       for (const p of pointsEchantillon(l)) {
-        const c = candidats(r, p, rayonM, niveau, ref);
+        const c = candidats(r, p, rayonM, niveau, ref, index);
         if (!c.length) continue;
         // Niveau inconnu : un pont et une route non-pont presque à égale distance → ambigu, on ne choisit pas.
         if (niveau == null && c.some((x) => x.d - c[0].d < 3 && !!r.aretes[x.arete].pont !== !!r.aretes[c[0].arete].pont)) { bilan.ambigus++; continue; }
@@ -295,6 +299,7 @@ export function appliquerRestrictionsIGN(r: Reseau, ouvrages: Ouvrage[], entites
 /** Rattache les tronçons du réseau TE (couche IGN) aux ouvrages traversés : note informative, sans valeur de classe. */
 export function marquerReseauTE(r: Reseau, ouvrages: Ouvrage[], entites: EntiteGeo[], couche: string, rayonM = 12): number {
   const parArete = ouvragesParArete(r, ouvrages);
+  const index = indexerAretes(r);
   const marque = `[IGN TE] Sur le réseau « ${couche} ».`;
   let n = 0;
   for (const f of entites) {
@@ -306,7 +311,7 @@ export function marquerReseauTE(r: Reseau, ouvrages: Ouvrage[], entites: EntiteG
       : g;
     for (const l of pointsLigne(geom, r.bbox)) {
       for (const p of l) {
-        const a = areteLaPlusProche(r, p, { pontsSeuls: true, rayonM });
+        const a = areteLaPlusProche(r, p, { pontsSeuls: true, rayonM, index });
         if (!a) continue;
         for (const o of parArete.get(a.arete) ?? []) if (!o.notes.includes(marque)) { o.notes = [o.notes, marque].filter(Boolean).join('\n'); n++; }
       }
@@ -336,6 +341,7 @@ export interface BilanTE { troncons: number; aretes: number; ouvrages: number; a
  */
 export function appliquerTroncsTE(r: Reseau, ouvrages: Ouvrage[], entites: EntiteGeo[], rayonM = 12): BilanTE {
   const parArete = ouvragesParArete(r, ouvrages);
+  const index = indexerAretes(r);
   const bilan: BilanTE = { troncons: 0, aretes: 0, ouvrages: 0, ambigus: 0 };
   const aretes = new Set<number>(), touches = new Set<string>();
   for (const f of entites) {
@@ -346,7 +352,7 @@ export function appliquerTroncsTE(r: Reseau, ouvrages: Ouvrage[], entites: Entit
     let rapproche = false;
     for (const l of pointsLigne(f.geometry, r.bbox)) {
       for (const p of pointsEchantillon(l)) {
-        const c = candidats(r, p, rayonM, null, ref);
+        const c = candidats(r, p, rayonM, null, ref, index);
         if (!c.length) continue;
         if (c.some((x) => x.d - c[0].d < 3 && !!r.aretes[x.arete].pont !== !!r.aretes[c[0].arete].pont)) { bilan.ambigus++; continue; }
         const e = r.aretes[c[0].arete];
