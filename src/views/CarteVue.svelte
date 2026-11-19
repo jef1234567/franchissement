@@ -82,6 +82,18 @@
     const b = carreAutour(centreCarte, preparation.coteKm);
     L.rectangle([[b.sud, b.ouest], [b.nord, b.est]], { color: '#c9a227', weight: 3, fillColor: '#c9a227', fillOpacity: 0.08, interactive: false }).addTo(coucheCarre);
   }
+  // Bilan cliquable (lot 3) : apport d'une étape ou d'un jeu surligné en orange. La carte n'est pas recadrée :
+  // le carré jaune suit le centre de la carte et doit rester sur la zone préparée.
+  const coucheApport = L.layerGroup();
+  $effect(() => {
+    const cle = preparation.surligne;
+    const a = cle ? preparation.apports[cle] : null;
+    if (!carte) return;
+    coucheApport.clearLayers();
+    if (!a) return;
+    for (const l of a.lignes) L.polyline(l, { renderer: rendu, color: '#f97316', weight: 8, opacity: 0.85, interactive: false, lineCap: 'round' }).addTo(coucheApport);
+    for (const p of a.points) L.circleMarker([p.lat, p.lon], { renderer: rendu, radius: 8, color: '#f97316', weight: 3, fillColor: p.ajoute ? '#f97316' : '#ffffff', fillOpacity: 0.9, interactive: false }).addTo(coucheApport);
+  });
   // Réseau arrivé d'ailleurs (paquet importé, écran Données) : on passe à l'itinéraire. Pendant une préparation, on reste sur Zone.
   let avaitReseau = !!etat.reseau;
   $effect(() => {
@@ -119,7 +131,7 @@
     L.control.zoom({ position: 'topleft', zoomInTitle: 'Zoom avant', zoomOutTitle: 'Zoom arrière' }).addTo(carte);
     L.control.scale({ imperial: false, position: 'bottomleft' }).addTo(carte);
     carte.attributionControl.setPrefix('Leaflet');
-    for (const c of [coucheReseau, coucheZone, coucheCarre, coucheRestrictions, coucheConvois, coucheItineraire, coucheOuvrages, coucheEtapes]) c.addTo(carte);
+    for (const c of [coucheReseau, coucheZone, coucheCarre, coucheRestrictions, coucheConvois, coucheItineraire, coucheApport, coucheOuvrages, coucheEtapes]) c.addTo(carte);
     carte.on('moveend', dessinerReseau);
     carte.on('move', majCarre);
     carte.on('mousemove', (e: L.LeafletMouseEvent) => (coordsSouris = versMGRS(e.latlng.lat, e.latlng.lng) ?? ''));

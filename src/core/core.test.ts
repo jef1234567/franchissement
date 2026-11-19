@@ -11,7 +11,9 @@ import { creerPaquet, lirePaquet, FORMAT_PAQUET } from './paquet';
 import { overpassSynthetique } from '../test/fixtures';
 
 const ref = referentielParDefaut();
-const V = vehiculesParDefaut();
+// Classes figées (valeurs v1) : ces tests portent sur la logique, pas sur les données du catalogue.
+const CLASSES_FIXES: Record<string, number> = { leclerc: 60, vbci: 26, pplog: 36, vab: 14, gbc: 13 };
+const V = vehiculesParDefaut().map((x) => (x.id in CLASSES_FIXES ? { ...x, mlcCharge: CLASSES_FIXES[x.id], mlcEstimee: undefined } : x));
 const v = (id: string) => V.find((x) => x.id === id)!;
 const el = (id: string, quantite = 1, etat: 'charge' | 'vide' = 'charge'): ElementConvoi => ({ vehicule: v(id), quantite, etat });
 const pont = (u: number | null, d: number | null = null, extra: Partial<Ouvrage> = {}) =>
@@ -110,10 +112,11 @@ describe('Vérification STANAG', () => {
 });
 
 describe('Fiches véhicules en sources ouvertes', () => {
-  it('toutes les fiches ont largeur et source ; MLC inchangées', () => {
+  it('toutes les fiches ont largeur et source ; MLC de la séance du 18/11/2026', () => {
     const vs = vehiculesParDefaut();
     expect(vs.filter((x) => x.largeurM == null).map((x) => x.id)).toEqual([]);
-    expect(vs.find((x) => x.id === 'leclerc')!.mlcCharge).toBe(60);
+    expect(vs.find((x) => x.id === 'leclerc')!.mlcCharge).toBe(72);
+    expect(vs.find((x) => x.id === 'scania8m3')!.mlcCharge).toBe(28); // masse inconnue : valeur v1 conservée
   });
   it('complète une base existante sans écraser une saisie', () => {
     const base: Vehicule[] = vehiculesParDefaut().map((x) => ({ ...x, largeurM: null, hauteurM: null, masseT: null, provenance: { type: 'v1' as const, libelle: 'Outil v1' } }));

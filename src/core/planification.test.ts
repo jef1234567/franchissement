@@ -79,7 +79,17 @@ describe('Planification multi-convois', () => {
     const occ = (id: string, d: number, f: number): OccupationOuvrage => ({ convoiId: id, convoi: id, ouvrage: o, debutS: d, finS: f, mode: 'normal', dureeIncertaine: false });
     expect(detecterConflits([occ('A', 0, 100), occ('B', 200, 300)], 0)).toHaveLength(0);
     expect(detecterConflits([occ('A', 0, 100), occ('B', 200, 300)], 150)).toHaveLength(1);
-    expect(detecterConflits([occ('A', 0, 100), occ('A', 50, 300)], 0)).toHaveLength(0);
+  });
+  it('A2-13 : un même convoi qui repasse avant que sa queue ait dégagé est en conflit avec lui-même (sans marge)', () => {
+    const o = ouvrages[0];
+    const occ = (id: string, d: number, f: number): OccupationOuvrage => ({ convoiId: id, convoi: id, ouvrage: o, debutS: d, finS: f, mode: 'normal', dureeIncertaine: false });
+    const c = detecterConflits([occ('A', 0, 100), occ('A', 50, 300)], 600);
+    expect(c).toHaveLength(1);
+    expect(c[0].memeConvoi).toBe(true);
+    expect(c[0].recouvrementS).toBe(50);
+    // Retour après dégagement : pas de conflit, même si la marge entre convois (600 s) n'est pas respectée.
+    expect(detecterConflits([occ('A', 0, 100), occ('A', 150, 300)], 600)).toHaveLength(0);
+    expect(detecterConflits([occ('A', 0, 100), occ('B', 150, 300)], 600)[0].memeConvoi).toBeUndefined();
   });
   it('le temps de route jusqu’à l’ouvrage est renseigné', () => {
     const r = calculerItineraire(reseau, ouvrages, [{ vehicule: v('vbl'), quantite: 1, etat: 'charge' }], ref, [[47.24, -0.12], [47.28, -0.12]], OPTIONS_ITINERAIRE_DEFAUT);
@@ -133,11 +143,12 @@ describe('Désaccords entre sources', () => {
 });
 
 describe('Relevé véhicules en sources ouvertes', () => {
-  it('ajoute les véhicules sans inventer de classe MLC', async () => {
+  it('ajoute les véhicules ; toute classe MLC est sourcée ou marquée estimée', async () => {
     const { vehiculesReleve, completerVehicules } = await import('./reference');
     const nv = vehiculesReleve();
     expect(nv.find((x) => x.id === 'serval')).toBeTruthy();
-    for (const x of nv) if (x.id !== 'm1a2') expect(x.mlcCharge).toBeNull();
+    for (const x of nv) if (x.mlcCharge != null && !x.mlcEstimee) expect(['m1a2', 'leopard2a6']).toContain(x.id);
+    for (const id of ['srpb', 'pfm_module', 'trm10000_citerne']) expect(nv.find((x) => x.id === id)!.mlcCharge).toBeNull();
     expect(nv.find((x) => x.id === 'm1a2')!.mlcCharge).toBe(73);
     const base = vehiculesParDefaut().filter((x) => !nv.some((n) => n.id === x.id));
     const { vehicules } = completerVehicules(base);

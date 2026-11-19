@@ -12,7 +12,8 @@ Deux questions :
 
 ## Livrable
 
-`dist/index.html` : **un seul fichier HTML autonome** (≈ 450 Ko), aucune ressource externe.
+`dist/index.html` : **un seul fichier HTML autonome** (≈ 800 Ko, 260 Ko compressé), aucune ressource externe.
+Poids réparti entre Leaflet (≈ 150 Ko), proj4 pour Lambert et shapefiles (≈ 130 Ko), styles (≈ 50 Ko), moteur Svelte et code de l'application.
 Il s'ouvre par double-clic (Edge, Firefox, Chrome) sur un poste Intradef ou isolé.
 
 ## Mode d'emploi

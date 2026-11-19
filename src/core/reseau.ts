@@ -38,8 +38,12 @@ export interface Arete {
   gue?: 1;
   /** Passage barré (BD TOPO nature_de_la_restriction, OSM barrier/access=no non retenus). */
   barre?: 1;
-  /** Accès interdit (OSM) : « pl » = hgv=no (poids lourds > 3,5 t), « tous » = motor_vehicle=no ou vehicle=no. */
+  /** Accès interdit (OSM) : « pl » = hgv=no (poids lourds > 3,5 t), « tous » = motor_vehicle=no, vehicle=no ou access=no non levé. */
   interdit?: 'pl' | 'tous';
+  /** Accès soumis à autorisation (OSM private, destination, agricultural…) : non bloquant, alerte « autorisation à vérifier ». */
+  acces?: string;
+  /** Buse sous chaussée (OSM bridge=culvert) : pas un pont, petit ouvrage signalé à reconnaître (audit B-m5). */
+  buse?: 1;
   /** Restrictions OSM conditionnelles (horaires, météo…) appliquées en permanence par prudence : texte d'origine. */
   cond?: string;
   /** Restriction signalée sans valeur (OSM below_default, limiteur de hauteur sans hauteur) : « hauteur », « largeur »… */
@@ -69,6 +73,9 @@ export interface Reseau {
   /** Compléments (IGN BD TOPO, réseau TE) non obtenus sur une emprise : le réseau y est connu, mais ses restrictions
    *  peut-être pas. Signalés au rapport d'itinéraire, exportés avec le paquet. */
   lacunes?: Lacune[];
+  /** Réseau construit en lisant la balise OSM des giratoires (depuis le 18/11/2026) : leur absence signifie alors qu'il
+   *  n'y en a pas, et non un paquet antérieur (relecture du lot fiabilisation). */
+  giratoiresLus?: true;
   /** Valeurs de restriction OSM illisibles lors de la construction (non persistant, pour le bilan). */
   illisibles?: number;
 }
@@ -81,7 +88,10 @@ export function requeteOverpassReseau(b: BBox, inclureSecondaires: boolean, gran
   const hw = (grandsAxes ? HIGHWAYS_GRANDS_AXES : [...HIGHWAYS_PRINCIPAUX, ...(inclureSecondaires ? HIGHWAYS_SECONDAIRES : [])]).join('|');
   const bb = `${b.sud.toFixed(5)},${b.ouest.toFixed(5)},${b.nord.toFixed(5)},${b.est.toFixed(5)}`;
   return `${modeste ? '[out:json][timeout:90][maxsize:536870912]' : '[out:json][timeout:240][maxsize:1073741824]'}[bbox:${bb}];
+(
 way["highway"~"^(${hw})$"]["area"!="yes"]["access"!~"^(private|no)$"];
+way["highway"~"^(${hw})$"]["area"!="yes"]["access"~"^(private|no)$"][~"^(vehicle|motor_vehicle|hgv)$"~"^(yes|designated|permissive|destination)$"];
+);
 (._;>;);
 out body qt;`;
 }
@@ -168,8 +178,11 @@ function valeursConditionnelles(v: string | undefined): string[] {
 
 interface RestrictionsOSM {
   hmax?: number; lmax?: number; pmax?: number; emax?: number; lgmax?: number; largeur?: number;
-  gue?: 1; interdit?: 'pl' | 'tous'; cond?: string; sansValeur?: string[];
+  gue?: 1; interdit?: 'pl' | 'tous'; acces?: string; cond?: string; sansValeur?: string[];
 }
+
+/** Valeurs d'accès OSM qui demandent une autorisation (non bloquantes, signalées). */
+const ACCES_AUTORISATION = new Set(['private', 'destination', 'agricultural', 'forestry', 'delivery', 'permit', 'customers']);
 
 /**
  * Restrictions d'un objet OSM (voie ou nœud) : valeur la plus stricte entre la clé, ses variantes (physical, signed, hgv)
@@ -214,6 +227,13 @@ export function restrictionsOSM(t: Record<string, string>, compteur: { illisible
   else if (tous.some(nonCond)) { res.interdit = 'tous'; conds.push(...tous.filter(nonCond).map((k) => `${k}:conditional=${t[k + ':conditional']}`)); }
   else if (non(t.hgv)) res.interdit = 'pl';
   else if (nonCond('hgv')) { res.interdit = 'pl'; conds.push(`hgv:conditional=${t['hgv:conditional']}`); }
+  // access=no non levé par une clé plus précise (vehicle, motor_vehicle, hgv) : interdit (audit B-m5 ; la requête
+  // garde désormais les voies access=no / private dont une clé plus précise rouvre l'accès).
+  const precise = ['hgv', 'motor_vehicle', 'vehicle'].find((k) => t[k] != null);
+  if (!res.interdit && !precise && non(t.access)) res.interdit = 'tous';
+  // Accès soumis à autorisation : valeur de la clé la plus précise renseignée (hgv > motor_vehicle > vehicle > access).
+  const effectif = (precise ? t[precise] : t.access)?.split(';').map((p) => p.trim().toLowerCase()).find((p) => ACCES_AUTORISATION.has(p));
+  if (!res.interdit && effectif) res.acces = effectif;
   if (conds.length) res.cond = conds.join(' ; ');
   if (sansValeur.size) res.sansValeur = [...sansValeur];
   return res;
@@ -225,6 +245,8 @@ function combinerRestrictions(a: RestrictionsOSM, b: RestrictionsOSM): Restricti
   for (const k of ['hmax', 'lmax', 'pmax', 'emax', 'lgmax', 'largeur'] as const) if (b[k] != null && (r[k] == null || b[k]! < r[k]!)) r[k] = b[k];
   if (b.gue) r.gue = 1;
   if (b.interdit === 'tous' || (b.interdit && !r.interdit)) r.interdit = b.interdit;
+  if (b.acces && !r.acces) r.acces = b.acces;
+  if (r.interdit) delete r.acces;
   if (b.cond) r.cond = [r.cond, b.cond].filter(Boolean).join(' ; ');
   if (b.sansValeur) r.sansValeur = [...new Set([...(r.sansValeur ?? []), ...b.sansValeur])];
   return r;
@@ -240,7 +262,8 @@ function sensOSM(tags: Record<string, string>): 0 | 1 | -1 {
   return 0;
 }
 
-const EST_PONT = (t: Record<string, string>) => !!t.bridge && t.bridge !== 'no';
+const EST_BUSE = (t: Record<string, string>) => t.bridge === 'culvert';
+const EST_PONT = (t: Record<string, string>) => !!t.bridge && t.bridge !== 'no' && !EST_BUSE(t);
 const EST_TUNNEL = (t: Record<string, string>) => !!t.tunnel && t.tunnel !== 'no';
 const EST_GUE = (t: Record<string, string>) => !!t.ford && t.ford !== 'no';
 
@@ -263,7 +286,7 @@ export function construireReseau(json: { elements?: ElemOSM[] }, bbox: BBox, sou
   for (const e of json.elements ?? []) {
     if (e.type === 'node' && typeof e.lat === 'number' && typeof e.lon === 'number') {
       coord.set(e.id, [e.lat, e.lon]);
-      if (e.tags && Object.keys(e.tags).some((k) => /^(max(height|width|weight|length|axleload)|ford|barrier|hgv|motor_vehicle|vehicle)\b/.test(k))) {
+      if (e.tags && Object.keys(e.tags).some((k) => /^(max(height|width|weight|length|axleload)|ford|barrier|hgv|motor_vehicle|vehicle|access)\b/.test(k))) {
         const r = restrictionsOSM(e.tags, compteur);
         delete r.largeur;
         if (Object.keys(r).length) restrNoeud.set(e.id, r);
@@ -296,6 +319,7 @@ export function construireReseau(json: { elements?: ElemOSM[] }, bbox: BBox, sou
       hw: t.highway,
       sens: sensOSM(t),
       ...(EST_PONT(t) ? { pont: 1 as const } : {}),
+      ...(EST_BUSE(t) ? { buse: 1 as const } : {}),
       ...(EST_TUNNEL(t) ? { tunnel: 1 as const } : {}),
       ...(EST_GUE(t) ? { gue: 1 as const } : {}),
       ...(t['bridge:name'] || t.name ? { nom: t['bridge:name'] || t.name } : {}),
@@ -319,7 +343,7 @@ export function construireReseau(json: { elements?: ElemOSM[] }, bbox: BBox, sou
       debut = k;
     }
   }
-  return { version: 1, bbox, creeLe: new Date().toISOString(), source, noeuds, aretes, ...(compteur.illisibles ? { illisibles: compteur.illisibles } : {}) };
+  return { version: 1, bbox, creeLe: new Date().toISOString(), source, noeuds, aretes, giratoiresLus: true, ...(compteur.illisibles ? { illisibles: compteur.illisibles } : {}) };
 }
 
 function round6(x: number) {
@@ -433,6 +457,30 @@ export function extraireOuvrages(r: Reseau): Ouvrage[] {
         fiabilite: 'estime',
         provenance: { type: 'osm', libelle: 'OpenStreetMap', reference: 'way ' + ways.join(', '), date: r.creeLe },
         osmWayIds: ways.sort((a, b) => a - b),
+        notes: '',
+      }),
+    );
+  }
+  // Buses (bridge=culvert) : petits ouvrages sous chaussée, une fiche par voie, signalés à reconnaître (audit B-m5).
+  const buses = new Map<number, Arete[]>();
+  for (const e of r.aretes) if (e.buse && !e.pont) (buses.get(e.way) ?? buses.set(e.way, []).get(e.way)!).push(e);
+  for (const [w, es] of buses) {
+    const pts = es.flatMap((e) => coordsArete(r, e));
+    const [lat, lon] = milieuPolyligne(pts);
+    const ref = es.find((e) => e.ref)?.ref ?? '';
+    ouvrages.push(
+      nouvelOuvrage({
+        id: 'osm' + w,
+        nom: `Buse${ref ? ` ${ref}` : ''}${es[0].nom ? ` (${es[0].nom})` : ''}`,
+        route: ref,
+        lat: Math.round(lat * 1e6) / 1e6,
+        lon: Math.round(lon * 1e6) / 1e6,
+        geom: pts.map(([a, b]) => [a, b]),
+        longueurM: Math.round(es.reduce((s, e) => s + e.long, 0) * 10) / 10,
+        petitOuvrage: true,
+        fiabilite: 'estime',
+        provenance: { type: 'osm', libelle: 'OpenStreetMap (bridge=culvert)', reference: 'way ' + w, date: r.creeLe },
+        osmWayIds: [w],
         notes: '',
       }),
     );

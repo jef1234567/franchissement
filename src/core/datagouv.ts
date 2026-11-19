@@ -19,6 +19,16 @@ export function urlRechercheDataGouv(q: string, nombre = 20): string {
   return `${API_DATAGOUV}/datasets/?q=${encodeURIComponent(q)}&page_size=${nombre}`;
 }
 
+/** Pages de résultats examinées au plus par recherche (20 jeux par page, classés par pertinence). */
+export const PAGES_MAX_DATAGOUV = 3;
+
+/** Pagination d'une réponse de recherche data.gouv (API v1) : page suivante (https://www.data.gouv.fr seulement) et total. */
+export function paginationRecherche(json: unknown): { suivante: string | null; total: number | null } {
+  const j = (json ?? {}) as { next_page?: unknown; total?: unknown };
+  const s = typeof j.next_page === 'string' && j.next_page.startsWith(API_DATAGOUV + '/') ? j.next_page : null;
+  return { suivante: s, total: typeof j.total === 'number' && Number.isFinite(j.total) ? j.total : null };
+}
+
 export function requetesDepartement(d: Departement): string[] {
   return THEMES_DATAGOUV.map((t) => `${t} ${d.nom}`);
 }

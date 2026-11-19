@@ -54,6 +54,25 @@ export function triCouche(couche: string): string | undefined {
   return /^BDTOPO_V3:/i.test(couche) ? 'cleabs' : undefined;
 }
 
+/** Tronçons OSM au-delà desquels une tuile BD TOPO vide est jugée suspecte (audit B-m7). */
+export const SEUIL_TUILE_VIDE_SUSPECTE = 20;
+
+/**
+ * Tuile BD TOPO sans aucun tronçon alors que le réseau OSM y compte au moins `seuil` tronçons (extrémité dans la tuile) :
+ * réponse suspecte (service dégradé), sauf hors de France où la BD TOPO ne couvre rien. Renvoie le nombre de tronçons
+ * OSM, ou null si rien de suspect.
+ */
+export function tuileVideSuspecte(r: Reseau, tuile: BBox, recues: number, seuil = SEUIL_TUILE_VIDE_SUSPECTE): number | null {
+  if (recues > 0) return null;
+  const dans = (i: number) => {
+    const la = r.noeuds[2 * i], lo = r.noeuds[2 * i + 1];
+    return la >= tuile.sud && la <= tuile.nord && lo >= tuile.ouest && lo <= tuile.est;
+  };
+  let n = 0;
+  for (const e of r.aretes) if (dans(e.a) || dans(e.b)) n++;
+  return n >= seuil ? n : null;
+}
+
 /** Page WFS lue : entités, nombre annoncé (null si « unknown » ou absent), message d'exception du service. */
 export function lirePageWFS(texte: string): { features: EntiteGeo[]; annonce: number | null } {
   const t = texte.trim();
@@ -70,8 +89,18 @@ export function lirePageWFS(texte: string): { features: EntiteGeo[]; annonce: nu
 }
 
 export interface EntiteGeo {
+  /** Identifiant de l'entité dans le service WFS (« couche.123 »), quand il est fourni. */
+  id?: string | number;
   properties?: Record<string, unknown> | null;
   geometry?: { type: string; coordinates: unknown } | null;
+}
+
+/** Clé d'une entité WFS pour le dédoublonnage entre pages : identifiant du service, sinon `cleabs`, sinon contenu. */
+export function cleEntite(f: EntiteGeo): string {
+  if (f.id != null && f.id !== '') return 'id:' + f.id;
+  const c = f.properties?.cleabs;
+  if (typeof c === 'string' && c) return 'cleabs:' + c;
+  return 'json:' + JSON.stringify([f.properties ?? null, f.geometry ?? null]);
 }
 
 /** Nombre tolérant : 3.5, "3.5", "3,5", "3,5 t" ; 0 ou négatif = pas de restriction. */
@@ -269,7 +298,13 @@ export function marquerReseauTE(r: Reseau, ouvrages: Ouvrage[], entites: EntiteG
   const marque = `[IGN TE] Sur le réseau « ${couche} ».`;
   let n = 0;
   for (const f of entites) {
-    for (const l of pointsLigne(f.geometry, r.bbox)) {
+    // Franchissements TE (SECUROUT.TE:franchissement_te) : géométrie ponctuelle (essai réel du 18/11/2026, 11 points sur
+    // Saumur) ; avant, seules les lignes étaient lues et aucun pont n'était annoté. Un point = une « ligne » d'un sommet.
+    const g = f.geometry;
+    const geom = g?.type === 'Point' ? { type: 'MultiLineString', coordinates: [[g.coordinates as number[]]] }
+      : g?.type === 'MultiPoint' ? { type: 'MultiLineString', coordinates: (g.coordinates as number[][]).map((c) => [c]) }
+      : g;
+    for (const l of pointsLigne(geom, r.bbox)) {
       for (const p of l) {
         const a = areteLaPlusProche(r, p, { pontsSeuls: true, rayonM });
         if (!a) continue;

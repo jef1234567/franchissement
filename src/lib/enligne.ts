@@ -1,9 +1,9 @@
 import { requeteOverpassReseau } from '../core/reseau';
 import type { BBox } from '../core/geo';
 import { iterTuiles, cleTuile, urlTuile, type SourceTuiles } from '../core/tuiles';
-import { PAGE_WFS, couchesTE, lirePageWFS, triCouche, urlCapabilitesIGN, urlGetFeature, type EntiteGeo } from '../core/ign';
+import { PAGE_WFS, cleEntite, couchesTE, lirePageWFS, triCouche, urlCapabilitesIGN, urlGetFeature, type EntiteGeo } from '../core/ign';
 import {
-  departementReponse, integrerReponseRecherche, pointsGrille, requetesDepartement, THEMES_DATAGOUV, trierJeux, urlCommunePoint, urlRechercheDataGouv,
+  departementReponse, integrerReponseRecherche, paginationRecherche, PAGES_MAX_DATAGOUV, pointsGrille, requetesDepartement, THEMES_DATAGOUV, trierJeux, urlCommunePoint, urlRechercheDataGouv,
   type Departement, type JeuDataGouv, type RessourceDataGouv,
 } from '../core/datagouv';
 
@@ -193,7 +193,9 @@ export async function telechargerTuiles(
           try {
             const r = await fetch(urlTuile(source, z, x, y), { signal });
             if (r.ok) {
-              lot.push({ cle, blob: await r.blob() });
+              // Blob lu avant de viser le lot : `lot.push(… await …)` visait l'ancien lot, déjà enregistré par un autre travailleur (tuile perdue).
+              const blob = await r.blob();
+              lot.push({ cle, blob });
               reussi = true;
             } else if (r.status === 404) {
               reussi = true; // hors couverture
@@ -240,6 +242,9 @@ export async function telechargerWFS(
   maxEntites = 200_000,
 ): Promise<EntiteGeo[]> {
   const toutes: EntiteGeo[] = [];
+  // Entités déjà reçues : une couche paginée sans tri (TE) peut renvoyer une entité deux fois et en omettre une autre ;
+  // le compte se fait sur les entités distinctes (relecture du lot : doublon + manque égalaient le nombre annoncé).
+  const vues = new Set<string>();
   let debut = 0, annonce: number | null = null, refus = 0;
   let tri = triCouche(couche);
   for (;;) {
@@ -270,7 +275,12 @@ export async function telechargerWFS(
       throw new Error(`IGN : ${(e as Error).message} (${couche}).`);
     }
     if (page.annonce != null) annonce = Math.max(annonce ?? 0, page.annonce);
-    toutes.push(...page.features);
+    for (const f of page.features) {
+      const k = cleEntite(f);
+      if (vues.has(k)) continue;
+      vues.add(k);
+      toutes.push(f);
+    }
     debut += page.features.length;
     refus = 0; // trois refus consécutifs au plus
     if (!page.features.length || (annonce != null && toutes.length >= annonce)) break;
@@ -326,10 +336,12 @@ export async function departementsDesEmprises(emprises: BBox[], suivi: (msg: str
   return (await departementsDesEmprisesDetail(emprises, suivi, signal)).departements;
 }
 
-/** Interroge l'API de recherche data.gouv pour chaque département et chaque thème. */
-export async function chercherDataGouv(depts: Departement[], suivi: (msg: string) => void, signal?: AbortSignal): Promise<{ jeux: JeuDataGouv[]; echecs: string[] }> {
+/** Interroge l'API de recherche data.gouv pour chaque département et chaque thème. Les pages suivantes sont lues jusqu'à
+ *  PAGES_MAX_DATAGOUV ; au-delà, la recherche est signalée dans `limitees` (audit B-m6 : avant, 20 résultats sans le dire). */
+export async function chercherDataGouv(depts: Departement[], suivi: (msg: string) => void, signal?: AbortSignal): Promise<{ jeux: JeuDataGouv[]; echecs: string[]; limitees?: string[] }> {
   const acc = new Map<string, JeuDataGouv>();
   const echecs: string[] = [];
+  const limitees: string[] = [];
   const total = depts.length * THEMES_DATAGOUV.length;
   let fait = 0, bloquees = 0, refus = 0;
   for (const d of depts) {
@@ -352,11 +364,24 @@ export async function chercherDataGouv(depts: Departement[], suivi: (msg: string
       if (r.status === 429 && ++refus < 3) { await attendre(3000 * refus, signal); k--; fait--; continue; }
       refus = 0;
       if (!r.ok) { echecs.push(`${requetes[k]} (HTTP ${r.status})`); continue; }
-      integrerReponseRecherche(acc, await r.json(), d, THEMES_DATAGOUV[k]);
+      let json: unknown = await r.json();
+      integrerReponseRecherche(acc, json, d, THEMES_DATAGOUV[k]);
+      // Pages suivantes : une page en échec = recherche incomplète (comptée en échec, donc jamais gardée en cache).
+      for (let page = 2; ; page++) {
+        const { suivante, total: nbResultats } = paginationRecherche(json);
+        if (!suivante) break;
+        if (page > PAGES_MAX_DATAGOUV) { limitees.push(`${requetes[k]} (${nbResultats ?? 'plus de ' + 20 * PAGES_MAX_DATAGOUV} résultats, ${20 * PAGES_MAX_DATAGOUV} examinés)`); break; }
+        suivi(`data.gouv : requête ${fait} / ${total} (« ${requetes[k]} »), page ${page}…`);
+        let rp: Response | null = null;
+        try { rp = await fetch(suivante, { headers: { Accept: 'application/json' }, signal }); } catch { if (signal?.aborted) throw new Error('Recherche annulée.'); }
+        if (!rp || !rp.ok) { echecs.push(`${requetes[k]} (page ${page} ${rp ? `HTTP ${rp.status}` : 'sans réponse'})`); break; }
+        json = await rp.json();
+        integrerReponseRecherche(acc, json, d, THEMES_DATAGOUV[k]);
+      }
     }
   }
   if (bloquees && bloquees === total) throw new ErreurAccesBloque("API data.gouv.fr injoignable depuis ce navigateur : requête bloquée avant d'atteindre Internet ou refusée (CORS).");
-  return { jeux: trierJeux([...acc.values()]), echecs };
+  return { jeux: trierJeux([...acc.values()]), echecs, ...(limitees.length ? { limitees } : {}) };
 }
 
 /** Télécharge une ressource (URL stable data.gouv, puis URL directe en repli). */

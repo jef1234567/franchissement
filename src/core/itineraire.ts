@@ -266,6 +266,7 @@ function preparer(r: Reseau, ouvrages: Ouvrage[], elements: ElementConvoi[], ref
       }
       // Origine des valeurs : conditionnelle appliquée en permanence, restriction connue sans valeur (relecture du lot).
       if (e.cond && bloquants.length) bloquants.push(`dont restriction conditionnelle appliquée en permanence par prudence (${e.cond})`);
+      if (e.acces) penalites.push({ texte: `accès « ${e.acces} » (OSM) : autorisation de passage à vérifier`, s: 0 });
       if (e.sansValeur?.length) penalites.push({ texte: `restriction de ${e.sansValeur.join(', ')} signalée sans valeur (OSM) : à reconnaître`, s: 0 });
       if (e.gue && (opt.gues ?? 'eviter') === 'eviter') bloquants.push('gué ou radier (évités par les options)');
       for (const o of ouvrageParArete.get(e) ?? []) {
@@ -571,6 +572,9 @@ export function calculerItineraire(
       const m = dimsConvoi.manque;
       const nc = [estNombre(e.hmax) && m.hauteur && `hauteur ${e.hmax} m`, estNombre(e.lmax) && m.largeur && `largeur ${e.lmax} m`, estNombre(e.pmax) && m.masse && `${e.pmax} t`, estNombre(e.emax) && m.essieu && `${e.emax} t/essieu`, estNombre(e.lgmax) && m.longueur && `longueur ${e.lgmax} m`].filter(Boolean);
       if (nc.length) alertes.push({ pk, texte: `Restriction ${nc.join(', ')} sur ${e.nom || e.ref || 'tronçon'} : donnée manquante pour au moins un véhicule du convoi, contrôle incomplet, à vérifier.` });
+    }
+    if (e.acces && !(memeVoie && precedente!.acces === e.acces)) {
+      alertes.push({ pk, texte: `Accès « ${e.acces} » (OSM) sur ${e.nom || e.ref || 'tronçon'} : autorisation de passage à vérifier.` });
     }
     if (e.cond && !(memeVoie && precedente!.cond === e.cond)) {
       alertes.push({ pk, texte: `Restriction conditionnelle sur ${e.nom || e.ref || 'tronçon'} (${e.cond}) : appliquée en permanence par prudence ; vérifier si la condition (horaire, saison…) s'applique au passage.` });

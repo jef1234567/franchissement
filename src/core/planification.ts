@@ -13,9 +13,12 @@ import type { ModeRequis } from './verification';
    de chaque ouvrage traversé :
      début = heure H + temps de route de la tête jusqu'à l'ouvrage ;
      fin   = début + durée d'écoulement du convoi sur l'ouvrage.
-   Hypothèses (affichées à l'utilisateur) : vitesse constante, pas d'attente
-   cumulée en amont, convois indépendants. Deux convois sont en conflit sur un
-   ouvrage si leurs fenêtres, élargies de la marge, se recouvrent.
+   Hypothèses (affichées à l'utilisateur) : vitesse constante, attentes aux
+   ouvrages précédents cumulées (borne prudente), convois indépendants. Deux
+   passages sont en conflit sur un ouvrage si leurs fenêtres, élargies de la
+   marge, se recouvrent : deux convois, ou un même convoi qui repasse (aller et
+   retour après un demi-tour court) avant que sa queue ait dégagé (audit A2-13 ;
+   recouvrement réel, sans la marge entre convois).
    ========================================================================= */
 
 export interface MouvementConvoi {
@@ -59,6 +62,8 @@ export interface Conflit {
   b: OccupationOuvrage;
   /** Recouvrement (s), marge comprise. */
   recouvrementS: number;
+  /** Deux passages du même convoi (aller et retour) : la tête revient avant que la queue ait dégagé. */
+  memeConvoi?: true;
 }
 
 export interface ResultatPlan {
@@ -132,7 +137,7 @@ export function planifierConvoi(r: Reseau, ouvrages: Ouvrage[], ref: Referentiel
   };
 }
 
-/** Conflits sur un même ouvrage entre convois différents. */
+/** Conflits sur un même ouvrage : entre convois différents, ou entre deux passages d'un même convoi (audit A2-13). */
 export function detecterConflits(occupations: OccupationOuvrage[], margeS: number): Conflit[] {
   const parOuvrage = new Map<string, OccupationOuvrage[]>();
   for (const o of occupations) {
@@ -146,9 +151,10 @@ export function detecterConflits(occupations: OccupationOuvrage[], margeS: numbe
     for (let i = 0; i < l.length; i++) {
       for (let j = i + 1; j < l.length; j++) {
         const a = l[i], b = l[j];
-        if (a.convoiId === b.convoiId) continue;
-        const rec = Math.min(a.finS, b.finS) + margeS - Math.max(a.debutS, b.debutS);
-        if (rec > 0) conflits.push({ ouvrage: a.ouvrage, a, b, recouvrementS: rec });
+        // Même convoi : recouvrement réel seulement (la marge sépare deux convois, pas l'aller et le retour d'un même convoi).
+        const meme = a.convoiId === b.convoiId;
+        const rec = Math.min(a.finS, b.finS) + (meme ? 0 : margeS) - Math.max(a.debutS, b.debutS);
+        if (rec > 0) conflits.push({ ouvrage: a.ouvrage, a, b, recouvrementS: rec, ...(meme ? { memeConvoi: true as const } : {}) });
       }
     }
   }

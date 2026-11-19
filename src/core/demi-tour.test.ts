@@ -47,7 +47,9 @@ describe('Zones de demi-tour', () => {
   });
 
   it('paquet sans balise : anneaux reconnus par leur forme, et signalé', () => {
-    const res = calculerItineraire(reseau({}), [], [vbl], ref, etapes, OPTIONS_ITINERAIRE_DEFAUT);
+    const ancien = reseau({});
+    delete ancien.giratoiresLus; // paquet construit avant la lecture de la balise
+    const res = calculerItineraire(ancien, [], [vbl], ref, etapes, OPTIONS_ITINERAIRE_DEFAUT);
     expect(res.demiTour!.sansBalise).toBe(true);
     expect(res.demiTour!.zones.map((z) => z.source)).toEqual(['geometrie', 'geometrie']);
     expect(res.alertes.some((a) => /sans balise de giratoire/.test(a.texte))).toBe(true);
