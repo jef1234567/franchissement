@@ -15,7 +15,7 @@ import {
   type Vehicule,
 } from './model';
 import { completerVehicules, referentielParDefaut } from './reference';
-import { areteLaPlusProche, type Reseau } from './reseau';
+import { areteLaPlusProche, indexerAretes, type IndexAretes, type Reseau } from './reseau';
 import { devinerSCR, versWGS84, type CodeSCR } from './projections';
 
 /* =========================================================================
@@ -630,6 +630,8 @@ export function appliquerFusion(existants: Ouvrage[], plan: OperationFusion[], r
   const res = existants.map((o) => structuredClone(o));
   const parId = new Map(res.map((o) => [o.id, o]));
   const maintenant = new Date().toISOString();
+  let ix: IndexAretes | null = null; // construit au premier rattachement (même résultat, sans parcourir tout le réseau à chaque ouvrage)
+  const index = () => (ix ??= indexerAretes(reseau!));
   for (const op of plan) {
     if (op.action === 'ignorer') continue;
     if (op.action === 'creer' || !op.cible) {
@@ -637,9 +639,9 @@ export function appliquerFusion(existants: Ouvrage[], plan: OperationFusion[], r
       if (reseau && estNombre(o.lat) && estNombre(o.lon) && !o.osmWayIds.length) {
         // Voie franchie : seulement un pont (la route à moins de 25 m est souvent celle du dessous).
         // Petit ouvrage : la route qui passe dessus (jamais un pont voisin).
-        const a = o.petitOuvrage ? areteLaPlusProche(reseau, [o.lat, o.lon], { rayonM: 25 })
-          : areteLaPlusProche(reseau, [o.lat, o.lon], { pontsSeuls: true, rayonM: 60 }) ??
-            (o.voieFranchie ? null : areteLaPlusProche(reseau, [o.lat, o.lon], { rayonM: 25 }));
+        const a = o.petitOuvrage ? areteLaPlusProche(reseau, [o.lat, o.lon], { rayonM: 25, index: index() })
+          : areteLaPlusProche(reseau, [o.lat, o.lon], { pontsSeuls: true, rayonM: 60, index: index() }) ??
+            (o.voieFranchie ? null : areteLaPlusProche(reseau, [o.lat, o.lon], { rayonM: 25, index: index() }));
         if (a) o.osmWayIds = [reseau.aretes[a.arete].way];
       }
       res.push(o);

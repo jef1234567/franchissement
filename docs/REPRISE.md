@@ -124,6 +124,13 @@ Plan, décisions et message de reprise : `docs/ORCHESTRATION-FIABILISATION.md`. 
 
 **Reste** : confirmation par le Génie des décisions A2-6 et A2-12 (prises le 18/11/2026) ; **phase 5** : essai réel de Jean-François et cas réel avec son paquet Saumur (non fourni le 16/11).
 
+## Page figée pendant « Préparer la zone » (essai du 19/11/2026) — corrigé
+
+Constat : page figée 2 à 3 min à 20 km, plus de 25 min à 50 km. Mesure sur réseau synthétique de même densité (`tests/perf/`, hors ligne) : les rapprochements IGN BD TOPO, TE et data.gouv testaient chaque point contre tous les tronçons (`candidats`, `areteLaPlusProche`), coût en (points × tronçons), 42 s de calcul à 20 km et des dizaines de minutes à 50 km.
+Correction : index spatial des arêtes (`indexerAretes`, grille de 0,002°) qui ne visite que les tronçons voisins puis applique exactement les mêmes tests dans le même ordre ; copies du réseau par `structuredClone` seul (le réseau est un état « raw ») ; pauses entre les calculs pour laisser la page répondre. Résultats identiques (empreinte du réseau et des ouvrages comparée avant / après, test `index-aretes.test.ts`).
+Mesure après correction (Chromium, données simulées) : 20 km en 3 s sans blocage ; 50 km en 10 s, plus long blocage 1,5 s (assemblage des 25 tuiles et dessin du réseau). À confirmer sur le poste de Jean-François avec les vraies données.
+Outils : `npx vite-node tests/perf/preparation.perf.ts -- 50` (calculs seuls, empreinte du résultat) ; `npx vite-node tests/perf/navigateur.ts -- 50 dist/index.html` (préparation complète dans Chromium, blocages de la page).
+
 ## Reste à faire (ordre proposé)
 
 1. ~~Couverture nationale~~ : fait (voir ci-dessus) ; mesure réelle à faire (« Non vérifié », point 4). Limite connue : l'emprise administrative est un rectangle englobant (déborde sur les départements voisins, sans gravité puisque l'assemblage dédoublonne).

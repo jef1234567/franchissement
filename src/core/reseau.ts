@@ -498,17 +498,75 @@ export interface Accroche {
   distance: number;
 }
 
-/** Arête la plus proche d'un point (optionnellement restreinte aux ponts). */
-export function areteLaPlusProche(r: Reseau, p: [number, number], opts: { pontsSeuls?: boolean; rayonM?: number } = {}): Accroche | null {
+/* ---------- Index spatial des arêtes (essai réel du 19/11/2026) ----------
+   Les rapprochements (IGN, TE, data.gouv, ouvrages importés) testaient chaque point contre toutes les
+   arêtes : sur 50 km (≈ 45 000 tronçons), des dizaines de minutes de calcul bloquant la page.
+   L'index range l'emprise de chaque arête dans une grille ; une recherche ne visite que les cases
+   voisines du point, puis applique exactement les mêmes tests, dans l'ordre des arêtes : résultats inchangés.
+   Il suppose une géométrie figée : à reconstruire si des arêtes sont ajoutées ou redécoupées. */
+
+/** Côté d'une case de la grille (degrés, ≈ 220 m en latitude). */
+const CASE_INDEX = 0.002;
+
+export interface IndexAretes {
+  reseau: Reseau;
+  /** Emprise de chaque arête : sud, nord, ouest, est. */
+  emprise: Float64Array;
+  cases: Map<number, number[]>;
+  /** Arêtes à coordonnée illisible : toujours examinées, comme sans index. */
+  horsGrille: number[];
+}
+
+const cleCase = (i: number, j: number) => i * 1_000_003 + j;
+
+/** Construit l'index des arêtes d'un réseau (une fois par étape de rapprochement). */
+export function indexerAretes(r: Reseau): IndexAretes {
+  const emprise = new Float64Array(r.aretes.length * 4);
+  const cases = new Map<number, number[]>();
+  const horsGrille: number[] = [];
+  r.aretes.forEach((e, k) => {
+    const pts = coordsArete(r, e);
+    let s = Infinity, n = -Infinity, o = Infinity, es = -Infinity;
+    for (const q of pts) { s = Math.min(s, q[0]); n = Math.max(n, q[0]); o = Math.min(o, q[1]); es = Math.max(es, q[1]); }
+    emprise[4 * k] = s; emprise[4 * k + 1] = n; emprise[4 * k + 2] = o; emprise[4 * k + 3] = es;
+    if (!Number.isFinite(s + n + o + es)) { horsGrille.push(k); return; }
+    for (let i = Math.floor(s / CASE_INDEX); i <= Math.floor(n / CASE_INDEX); i++)
+      for (let j = Math.floor(o / CASE_INDEX); j <= Math.floor(es / CASE_INDEX); j++) {
+        const c = cleCase(i, j);
+        const l = cases.get(c);
+        if (l) l.push(k); else cases.set(c, [k]);
+      }
+  });
+  return { reseau: r, emprise, cases, horsGrille };
+}
+
+/** Arêtes dont l'emprise élargie de (mLat, mLon) peut contenir p, dans l'ordre croissant (pré-filtre seul). */
+export function aretesAutour(ix: IndexAretes, p: [number, number], mLat: number, mLon: number): number[] {
+  const vus = new Set<number>();
+  const eps = 1e-9; // marge contre les arrondis : le test exact ci-dessous décide
+  for (let i = Math.floor((p[0] - mLat - eps) / CASE_INDEX); i <= Math.floor((p[0] + mLat + eps) / CASE_INDEX); i++)
+    for (let j = Math.floor((p[1] - mLon - eps) / CASE_INDEX); j <= Math.floor((p[1] + mLon + eps) / CASE_INDEX); j++)
+      for (const k of ix.cases.get(cleCase(i, j)) ?? []) vus.add(k);
+  const res: number[] = [...ix.horsGrille];
+  for (const k of vus) {
+    const e = ix.emprise;
+    if (p[0] < e[4 * k] - mLat || p[0] > e[4 * k + 1] + mLat || p[1] < e[4 * k + 2] - mLon || p[1] > e[4 * k + 3] + mLon) continue;
+    res.push(k);
+  }
+  return res.sort((a, b) => a - b);
+}
+
+/** Arête la plus proche d'un point (optionnellement restreinte aux ponts). `index` : accélère la recherche à rayon fini (même résultat). */
+export function areteLaPlusProche(r: Reseau, p: [number, number], opts: { pontsSeuls?: boolean; rayonM?: number; index?: IndexAretes } = {}): Accroche | null {
   const rayon = opts.rayonM ?? Infinity;
   // Pré-filtre par emprise (degrés) quand un rayon est fixé.
   const mLat = Number.isFinite(rayon) ? rayon / 110000 : Infinity;
   const mLon = Number.isFinite(rayon) ? rayon / (110000 * Math.cos((p[0] * Math.PI) / 180)) : Infinity;
   let best: Accroche | null = null;
-  r.aretes.forEach((e, i) => {
+  const essayer = (e: Arete, i: number, filtrer: boolean) => {
     if (opts.pontsSeuls && !e.pont) return;
     const pts = coordsArete(r, e);
-    if (Number.isFinite(mLat)) {
+    if (filtrer) {
       let s = Infinity, n = -Infinity, o = Infinity, es = -Infinity;
       for (const q of pts) { s = Math.min(s, q[0]); n = Math.max(n, q[0]); o = Math.min(o, q[1]); es = Math.max(es, q[1]); }
       if (p[0] < s - mLat || p[0] > n + mLat || p[1] < o - mLon || p[1] > es + mLon) return;
@@ -517,7 +575,10 @@ export function areteLaPlusProche(r: Reseau, p: [number, number], opts: { pontsS
       const d = distancePointSegment(p, pts[k - 1], pts[k]);
       if (d <= rayon && (!best || d < best.distance)) best = { arete: i, distance: d };
     }
-  });
+  };
+  const ix = opts.index && opts.index.reseau === r && Number.isFinite(mLat) && Number.isFinite(mLon) ? opts.index : null;
+  if (ix) for (const i of aretesAutour(ix, p, mLat, mLon)) essayer(r.aretes[i], i, false);
+  else r.aretes.forEach((e, i) => essayer(e, i, Number.isFinite(mLat)));
   return best;
 }
 
