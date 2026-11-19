@@ -67,6 +67,9 @@ Saumur, 20 km, une seule requête : échec sur tous les serveurs Overpass (overp
 
 L'environnement de développement n'avait pas accès à Internet : **aucune requête réelle vers l'IGN n'a été faite**.
 
+**Protocole pas à pas et diagnostic automatique** : `docs/ESSAI-REEL.md` et `outils/diagnostic-reseau.html` (18/11/2026 ; nouvel essai depuis l'environnement de développement : tous ces services refusés par le filtrage réseau).
+Diagnostic réel du 18/11/2026 : voir `ESSAI-REEL.md`. Point 2 fait (5 couches TE) ; pagination BD TOPO et CORS data.gouv confirmés ; Overpass principal saturé (502) ; franchissements TE (points) probablement ignorés par `marquerReseauTE`.
+
 1. Ouvrir `dist/index.html`, **Carte, onglet Zone** : « Aller à » Saumur, 20 km, « Préparer la zone ». Noter le bilan des quatre étapes (erreurs CORS éventuelles, tronçons avec restriction, couches TE, jeux data.gouv intégrés ou « à voir à la main »). Recommencer en 50 km pour la durée et le comportement d'Overpass sur 9 tuiles.
 2. « Réseau transports exceptionnels » : noter les noms exacts des couches `SECUROUT.TE:*` trouvées. Si aucune n'apparaît, le réseau TE n'est pas publié sous ce nom : voir `docs/SOURCES-NATIONALES.md`.
 3. Contrôler sur 2 ou 3 ponts connus que la restriction IGN est bien posée sur le pont et pas sur la route en dessous.

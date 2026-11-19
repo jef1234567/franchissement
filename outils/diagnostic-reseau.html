@@ -1,0 +1,407 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FRANCHIR, diagnostic réseau</title>
+<style>
+  :root { --fond:#fff; --texte:#1b1f24; --doux:#5b6470; --bord:#d6dae0; --ok:#1a7f37; --alerte:#9a6700; --ko:#cf222e; --carte:#f6f8fa; }
+  @media (prefers-color-scheme: dark) { :root { --fond:#16191d; --texte:#e6e9ed; --doux:#9aa3ad; --bord:#30363d; --ok:#3fb950; --alerte:#d29922; --ko:#f85149; --carte:#1e2227; } }
+  body { margin:0; background:var(--fond); color:var(--texte); font:15px/1.45 system-ui, "Segoe UI", sans-serif; }
+  main { max-width:1000px; margin:0 auto; padding:16px; }
+  h1 { font-size:1.35rem; margin:.2rem 0 .4rem; }
+  p { color:var(--doux); margin:.3rem 0; }
+  fieldset { border:1px solid var(--bord); border-radius:8px; margin:12px 0; padding:8px 12px; display:flex; flex-wrap:wrap; gap:10px 18px; align-items:end; }
+  label { display:flex; flex-direction:column; font-size:.85rem; color:var(--doux); }
+  input { font:inherit; padding:4px 6px; width:8rem; border:1px solid var(--bord); border-radius:6px; background:var(--fond); color:var(--texte); }
+  button { font:inherit; padding:6px 14px; border-radius:6px; border:1px solid var(--bord); background:var(--carte); color:var(--texte); cursor:pointer; }
+  button.principal { background:#0969da; color:#fff; border-color:#0969da; }
+  button:disabled { opacity:.5; cursor:default; }
+  table { width:100%; border-collapse:collapse; margin-top:12px; }
+  th, td { text-align:left; vertical-align:top; padding:6px 8px; border-bottom:1px solid var(--bord); }
+  th { font-size:.8rem; color:var(--doux); font-weight:600; }
+  td.etat { font-weight:700; white-space:nowrap; }
+  .ok { color:var(--ok); } .alerte { color:var(--alerte); } .ko { color:var(--ko); } .encours { color:var(--doux); }
+  td.detail { font-size:.88rem; white-space:pre-wrap; word-break:break-word; }
+  td a { font-size:.8rem; }
+  textarea { width:100%; box-sizing:border-box; height:16rem; margin-top:12px; font:12px/1.4 ui-monospace, Consolas, monospace; background:var(--carte); color:var(--texte); border:1px solid var(--bord); border-radius:6px; }
+  .barre { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>FRANCHIR, diagnostic réseau</h1>
+  <p>Interroge les services en ligne de FRANCHIR (IGN, data.gouv, geo.api.gouv, Overpass, Nominatim) depuis ce navigateur, dans les mêmes conditions que <code>dist/index.html</code> ouvert en local. Rien n'est modifié dans FRANCHIR. Durée : 2 à 5 minutes.</p>
+  <p>Ouvrez ce fichier dans le même navigateur que FRANCHIR (Edge), cliquez « Lancer », puis « Copier le rapport » et collez-le à Claude.</p>
+  <fieldset>
+    <label>Lieu<input id="lieu" value="Saumur"></label>
+    <label>Latitude<input id="lat" value="47.2600"></label>
+    <label>Longitude<input id="lon" value="-0.0770"></label>
+    <label>Côté de la zone (km)<input id="cote" value="20"></label>
+    <button id="lancer" class="principal">Lancer</button>
+  </fieldset>
+  <table>
+    <thead><tr><th>Contrôle</th><th>État</th><th>Durée</th><th>Détail</th></tr></thead>
+    <tbody id="lignes"></tbody>
+  </table>
+  <div class="barre">
+    <button id="copier" disabled>Copier le rapport</button>
+    <button id="enregistrer" disabled>Enregistrer le rapport (.txt)</button>
+  </div>
+  <textarea id="rapport" readonly placeholder="Le rapport apparaîtra ici."></textarea>
+</main>
+<script>
+'use strict';
+/* Adresses et paramètres repris de src/core/ign.ts, src/core/datagouv.ts, src/lib/enligne.ts et src/core/tuiles.ts.
+   Si l'une change dans FRANCHIR, la reporter ici. */
+const WFS = 'https://data.geopf.fr/wfs/ows';
+const WMTS = 'https://data.geopf.fr/wmts';
+const GEO = 'https://geo.api.gouv.fr';
+const DATAGOUV = 'https://www.data.gouv.fr/api/1';
+const NOMINATIM = 'https://nominatim.openstreetmap.org/search';
+const OVERPASS = [
+  ['Europe', 'https://ovp.dresel.systems/api/interpreter'],
+  ['principal', 'https://overpass-api.de/api/interpreter'],
+  ['private.coffee', 'https://overpass.private.coffee/api/interpreter'],
+];
+const THEMES = ['transports exceptionnels', 'ponts', "ouvrages d'art", 'tonnage', 'gabarit'];
+const PAGE = 5000;
+
+const $ = (id) => document.getElementById(id);
+const resultats = [];
+let contexte = {};
+
+function bboxAutour(lat, lon, demiCote) {
+  const dLat = demiCote / 111.32, dLon = demiCote / (111.32 * Math.cos(lat * Math.PI / 180));
+  return { sud: lat - dLat, nord: lat + dLat, ouest: lon - dLon, est: lon + dLon };
+}
+const f5 = (x) => x.toFixed(5);
+
+/** fetch avec délai ; distingue « bloqué » (aucune réponse lisible : CORS, filtrage, panne réseau) d'une réponse HTTP. */
+async function appel(url, options = {}, delaiS = 60) {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), delaiS * 1000);
+  const t0 = performance.now();
+  try {
+    const r = await fetch(url, { ...options, signal: ctl.signal });
+    const texte = options.entetesSeulement ? '' : await r.text();
+    return { ok: r.ok, statut: r.status, texte, ms: performance.now() - t0, entetes: r.headers };
+  } catch (e) {
+    const ms = performance.now() - t0;
+    if (ctl.signal.aborted) return { ok: false, statut: 0, bloque: false, delai: true, ms, erreur: `pas de réponse en ${delaiS} s` };
+    return { ok: false, statut: 0, bloque: true, ms, erreur: `bloqué avant réponse (${e.message}) : CORS, filtrage du réseau ou serveur injoignable` };
+  } finally { clearTimeout(t); }
+}
+const echecTexte = (r) => r.statut ? `HTTP ${r.statut}` + (r.texte ? ` : ${r.texte.replace(/\s+/g, ' ').slice(0, 160)}` : '') : r.erreur;
+
+function ligne(id, titre) {
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td>${titre}</td><td class="etat encours">en cours…</td><td></td><td class="detail"></td>`;
+  $('lignes').appendChild(tr);
+  const res = { id, titre, etat: 'en cours', ms: 0, detail: '', lien: '' };
+  resultats.push(res);
+  return {
+    fin(etat, detail, ms, lien) {
+      Object.assign(res, { etat, detail, ms, lien: lien || '' });
+      const cl = etat === 'OK' ? 'ok' : etat === 'ALERTE' ? 'alerte' : 'ko';
+      tr.children[1].className = 'etat ' + cl;
+      tr.children[1].textContent = etat === 'OK' ? '✓ OK' : etat === 'ALERTE' ? '⚠ alerte' : '✗ échec';
+      tr.children[2].textContent = ms != null ? (ms / 1000).toFixed(1) + ' s' : '';
+      tr.children[3].textContent = detail;
+      if (lien) { const a = document.createElement('a'); a.href = lien; a.target = '_blank'; a.rel = 'noopener'; a.textContent = ' [ouvrir dans un onglet]'; tr.children[3].appendChild(a); }
+    },
+  };
+}
+
+/* ---------- Contrôles ---------- */
+
+async function cNominatim() {
+  const l = ligne('nominatim', 'Géocodage (Nominatim, « Aller à »)');
+  const url = `${NOMINATIM}?format=jsonv2&limit=5&countrycodes=fr&accept-language=fr&q=${encodeURIComponent($('lieu').value)}`;
+  const r = await appel(url, { headers: { Accept: 'application/json' } }, 30);
+  if (!r.ok) return l.fin('ÉCHEC', echecTexte(r), r.ms, url);
+  try {
+    const j = JSON.parse(r.texte);
+    if (!j.length) return l.fin('ALERTE', 'aucun résultat', r.ms, url);
+    l.fin('OK', `${j.length} résultat(s), 1er : ${j[0].display_name.slice(0, 80)} (${(+j[0].lat).toFixed(4)}, ${(+j[0].lon).toFixed(4)})`, r.ms, url);
+  } catch { l.fin('ÉCHEC', 'réponse illisible', r.ms, url); }
+}
+
+async function cDepartements(b) {
+  const l = ligne('geoapi', 'Départements de la zone (geo.api.gouv.fr, 16 points)');
+  const t0 = performance.now();
+  const deps = new Map(); let ok = 0, vides = 0; const echecs = [];
+  let premiereUrl = '';
+  for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) {
+    const lat = b.sud + (b.nord - b.sud) * i / 3, lon = b.ouest + (b.est - b.ouest) * j / 3;
+    const url = `${GEO}/communes?lat=${f5(lat)}&lon=${f5(lon)}&fields=departement&format=json`;
+    premiereUrl ||= url;
+    let r;
+    for (let essai = 0; essai < 3; essai++) { r = await appel(url, {}, 20); if (r.ok) break; }
+    if (!r.ok) { echecs.push(echecTexte(r)); continue; }
+    ok++;
+    try {
+      const d = JSON.parse(r.texte)[0]?.departement;
+      if (d) deps.set(d.code, d.nom); else vides++;
+    } catch { echecs.push('réponse illisible'); }
+  }
+  contexte.departements = [...deps].map(([code, nom]) => ({ code, nom }));
+  const liste = contexte.departements.map((d) => `${d.code} ${d.nom}`).join(', ') || 'aucun';
+  const detail = `${ok}/16 points répondus (3 essais max), ${vides} hors commune. Départements : ${liste}` + (echecs.length ? `\nÉchecs : ${[...new Set(echecs)].join(' | ')}` : '');
+  l.fin(ok === 16 ? 'OK' : ok ? 'ALERTE' : 'ÉCHEC', detail, performance.now() - t0, premiereUrl);
+}
+
+async function cDataGouv() {
+  const l = ligne('datagouv', 'Recherche data.gouv.fr (5 thèmes par département)');
+  const deps = contexte.departements?.length ? contexte.departements : [{ code: '49', nom: 'Maine-et-Loire' }];
+  const t0 = performance.now();
+  const lignes = [], echecs = [], jeux = new Map();
+  let premiereUrl = '';
+  for (const d of deps) for (const th of THEMES) {
+    const q = `${th} ${d.nom}`;
+    const url = `${DATAGOUV}/datasets/?q=${encodeURIComponent(q)}&page_size=20`;
+    premiereUrl ||= url;
+    let r;
+    for (let essai = 0; essai < 3; essai++) { r = await appel(url, { headers: { Accept: 'application/json' } }, 30); if (r.ok) break; }
+    if (!r.ok) { echecs.push(`« ${q} » : ${echecTexte(r)}`); continue; }
+    try {
+      const j = JSON.parse(r.texte);
+      const n = j.total ?? j.data?.length ?? 0;
+      lignes.push(`« ${q} » : ${n}`);
+      for (const ds of j.data ?? []) jeux.set(ds.id, ds);
+    } catch { echecs.push(`« ${q} » : réponse illisible`); }
+  }
+  contexte.jeux = [...jeux.values()];
+  const titres = contexte.jeux.slice(0, 12).map((ds) => `- ${ds.title} (${ds.organization?.name ?? 'sans organisation'}, ${ds.resources?.length ?? 0} ressource(s))`).join('\n');
+  const detail = `${lignes.join(' ; ')}\n${jeux.size} jeux distincts, dont :\n${titres}` + (echecs.length ? `\nÉchecs : ${echecs.join(' | ')}` : '');
+  l.fin(echecs.length === 0 && jeux.size ? 'OK' : jeux.size ? 'ALERTE' : 'ÉCHEC', detail, performance.now() - t0, premiereUrl);
+}
+
+async function cRessources() {
+  const l = ligne('ressource', 'Téléchargement de fichiers départementaux (data.gouv puis producteur)');
+  const t0 = performance.now();
+  const formats = /^(csv|geojson|json|zip|xlsx|xls|kml|gpkg|shp)$/i;
+  const cibles = [];
+  for (const motif of [/gabarit/i, /tonnage/i, /ouvrages? d.art/i]) {
+    const ds = (contexte.jeux ?? []).find((d) => motif.test(d.title) && d.resources?.some((r) => formats.test(r.format ?? '')));
+    if (ds) cibles.push({ ds, res: ds.resources.find((r) => formats.test(r.format ?? '')) });
+  }
+  if (!cibles.length) return l.fin('ALERTE', 'aucun jeu « gabarit », « tonnage » ou « ouvrages d\'art » avec fichier téléchargeable trouvé par la recherche', performance.now() - t0);
+  const lignes = []; let bons = 0;
+  for (const { ds, res } of cibles) {
+    const stable = `${DATAGOUV}/datasets/r/${res.id}`;
+    const hote = (() => { try { return new URL(res.url).host; } catch { return '?'; } })();
+    let detail = `${ds.title} [${res.format}, hébergé chez ${hote}] : `;
+    let r = await appel(stable, {}, 60);
+    if (r.ok) { bons++; detail += `OK par l'URL data.gouv (${(r.texte.length / 1024).toFixed(0)} Ko)`; }
+    else {
+      const r2 = await appel(res.url, {}, 60);
+      if (r2.ok) { bons++; detail += `URL data.gouv en échec (${echecTexte(r)}), OK par l'URL directe (${(r2.texte.length / 1024).toFixed(0)} Ko)`; }
+      else detail += `échec URL data.gouv (${echecTexte(r)}) et URL directe (${echecTexte(r2)}) ; lien : ${res.url}`;
+    }
+    lignes.push(detail);
+  }
+  l.fin(bons === cibles.length ? 'OK' : bons ? 'ALERTE' : 'ÉCHEC', lignes.join('\n'), performance.now() - t0);
+}
+
+async function cCapacites() {
+  const l = ligne('capabilities', 'Catalogue IGN (WFS GetCapabilities) et couches TE');
+  const url = `${WFS}?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetCapabilities`;
+  const r = await appel(url, {}, 90);
+  if (!r.ok) return l.fin('ÉCHEC', echecTexte(r), r.ms, url);
+  const noms = [...r.texte.matchAll(/<(?:wfs:)?Name>([^<]+)<\/(?:wfs:)?Name>/g)].map((m) => m[1].trim());
+  const te = noms.filter((n) => /^SECUROUT\.TE[:.]/i.test(n));
+  const bdtopo = noms.includes('BDTOPO_V3:troncon_de_route');
+  contexte.couchesTE = te;
+  l.fin(bdtopo && te.length ? 'OK' : 'ALERTE',
+    `${(r.texte.length / 1e6).toFixed(1)} Mo, ${noms.length} couches. BDTOPO_V3:troncon_de_route : ${bdtopo ? 'présente' : 'ABSENTE'}.\nCouches TE (${te.length}) : ${te.join(', ') || 'aucune'}`, r.ms, url);
+}
+
+function urlGetFeature(couche, b, debut, tri) {
+  const p = new URLSearchParams({
+    SERVICE: 'WFS', VERSION: '2.0.0', REQUEST: 'GetFeature', TYPENAMES: couche,
+    OUTPUTFORMAT: 'application/json', SRSNAME: 'EPSG:4326',
+    BBOX: `${b.sud},${b.ouest},${b.nord},${b.est},urn:ogc:def:crs:EPSG::4326`,
+    COUNT: String(PAGE), STARTINDEX: String(debut), ...(tri ? { SORTBY: `${tri} ASC` } : {}),
+  });
+  return `${WFS}?${p}`;
+}
+
+/** Télécharge toutes les pages d'une couche ; contrôle nombre annoncé / reçu / doublons. */
+async function toutesPages(couche, b, tri, cle) {
+  const entites = []; let annonce = null, pages = 0; const vus = new Set(); let doublons = 0;
+  for (let debut = 0; pages < 40; debut += PAGE) {
+    const url = urlGetFeature(couche, b, debut, tri);
+    const r = await appel(url, {}, 120);
+    pages++;
+    if (!r.ok) return { erreur: `page ${pages} : ${echecTexte(r)}`, url, entites, annonce, pages };
+    let j;
+    try { j = JSON.parse(r.texte); } catch { return { erreur: `page ${pages} illisible : ${r.texte.slice(0, 160)}`, url, entites, annonce, pages }; }
+    if (typeof j.numberMatched === 'number') annonce = j.numberMatched;
+    const fs = j.features ?? [];
+    for (const f of fs) {
+      const k = cle ? f.properties?.[cle] : f.id;
+      if (k != null) { if (vus.has(k)) doublons++; vus.add(k); }
+      entites.push(f);
+    }
+    if (fs.length < PAGE) break;
+  }
+  return { entites, annonce, pages, doublons, url: urlGetFeature(couche, b, 0, tri) };
+}
+
+const num = (v) => { const n = parseFloat(String(v ?? '').replace(',', '.')); return Number.isFinite(n) && n > 0 ? n : null; };
+
+async function cBDTopo(b) {
+  const l = ligne('bdtopo', 'IGN BD TOPO, tronçons de la zone (toutes les pages, tri cleabs)');
+  const t0 = performance.now();
+  const r = await toutesPages('BDTOPO_V3:troncon_de_route', b, 'cleabs', 'cleabs');
+  const ms = performance.now() - t0;
+  if (r.erreur) return l.fin('ÉCHEC', `${r.erreur} (${r.entites.length} entités reçues avant l'échec)`, ms, r.url);
+  const c = { hauteur: 0, poidsTotal: 0, essieu: 0, largeur: 0, longueur: 0, gue: 0, barre: 0 };
+  const natures = new Map(), positions = new Map();
+  const ponts = [];
+  for (const f of r.entites) {
+    const p = f.properties ?? {};
+    const h = num(p.restriction_de_hauteur), pt = num(p.restriction_de_poids_total), e = num(p.restriction_de_poids_par_essieu), la = num(p.restriction_de_largeur), lo = num(p.restriction_de_longueur);
+    if (h) c.hauteur++; if (pt) c.poidsTotal++; if (e) c.essieu++; if (la) c.largeur++; if (lo) c.longueur++;
+    const pos = String(p.position_par_rapport_au_sol ?? '?');
+    positions.set(pos, (positions.get(pos) ?? 0) + 1);
+    if (/gu[eé] ou radier/i.test(pos)) c.gue++;
+    if (p.nature_de_la_restriction) natures.set(p.nature_de_la_restriction, (natures.get(p.nature_de_la_restriction) ?? 0) + 1);
+    if (/passage barr/i.test(p.nature_de_la_restriction ?? '')) c.barre++;
+    if ((h || pt || e || la || lo) && parseInt(pos, 10) > 0 && f.geometry?.coordinates?.length) {
+      const co = f.geometry.type === 'MultiLineString' ? f.geometry.coordinates[0] : f.geometry.coordinates;
+      const m = co[Math.floor(co.length / 2)];
+      ponts.push({ nom: p.cpx_numero || p.nom_collaboratif_gauche || p.nom_1_gauche || '(sans nom)', h, pt, e, la, lo, x: m[0], y: m[1] });
+    }
+  }
+  const ecart = r.annonce != null && r.annonce !== r.entites.length;
+  // Ordre des coordonnées : GeoJSON [lon, lat] attendu ; certains serveurs renvoient [lat, lon] en EPSG:4326.
+  const ordre = ponts.length ? (Math.abs(ponts[0].x) > 40 ? '[lat, lon]' : '[lon, lat]') : '?';
+  const enLatLon = ordre === '[lat, lon]';
+  // Exemples variés : hauteur et poids total d'abord (la charge à l'essieu de 13 t est générique), un par voie.
+  const tries = [...ponts].sort((a, b2) => (b2.h || b2.pt ? 1 : 0) - (a.h || a.pt ? 1 : 0));
+  const parVoie = new Set(), choisis = [];
+  for (const q of tries) { if (!parVoie.has(q.nom)) { parVoie.add(q.nom); choisis.push(q); } if (choisis.length === 5) break; }
+  for (const q of tries) { if (choisis.length >= 5) break; if (!choisis.includes(q)) choisis.push(q); }
+  const exemples = choisis.map((q) => {
+    const lat = enLatLon ? q.x : q.y, lon = enLatLon ? q.y : q.x;
+    const r1 = [q.h && `hauteur ${q.h} m`, q.pt && `poids ${q.pt} t`, q.e && `essieu ${q.e} t`, q.la && `largeur ${q.la} m`, q.lo && `longueur ${q.lo} m`].filter(Boolean).join(', ');
+    return `- ${q.nom} : ${r1} — https://www.openstreetmap.org/?mlat=${lat.toFixed(5)}&mlon=${lon.toFixed(5)}#map=18/${lat.toFixed(5)}/${lon.toFixed(5)}`;
+  }).join('\n');
+  const detail = `${r.entites.length} tronçons en ${r.pages} page(s), annoncés : ${r.annonce ?? 'inconnu'}${ecart ? ' (ÉCART)' : ''}, doublons cleabs : ${r.doublons}. Ordre des coordonnées : ${ordre}.\n`
+    + `Restrictions : hauteur ${c.hauteur}, poids total ${c.poidsTotal}, essieu ${c.essieu}, largeur ${c.largeur}, longueur ${c.longueur}, gués ${c.gue}, passages barrés ${c.barre}.\n`
+    + `Positions : ${[...positions].map(([k, v]) => `${k} (${v})`).join(', ')}.\n`
+    + `Natures de restriction : ${[...natures].sort((a, b2) => b2[1] - a[1]).slice(0, 6).map(([k, v]) => `${k} (${v})`).join(', ') || 'aucune'}.\n`
+    + `Tronçons sur ouvrage avec restriction : ${ponts.length}. Exemples à contrôler sur la carte (point 3) :\n${exemples || '- aucun'}`;
+  l.fin(ecart || r.doublons ? 'ALERTE' : 'OK', detail, ms, r.url);
+}
+
+async function cTE(b) {
+  const l = ligne('te', 'Réseau transports exceptionnels (couches SECUROUT.TE sur la zone)');
+  const t0 = performance.now();
+  const couches = (contexte.couchesTE ?? []).filter((c) => !/lien/i.test(c));
+  if (!couches.length) return l.fin('ALERTE', 'aucune couche TE dans le catalogue (voir contrôle précédent)', performance.now() - t0);
+  const lignes = []; let echec = 0, alerte = 0;
+  for (const c of couches) {
+    const tc = performance.now();
+    const r = await toutesPages(c, b, undefined, undefined);
+    const duree = ` en ${((performance.now() - tc) / 1000).toFixed(1)} s`;
+    if (r.erreur) { echec++; lignes.push(`${c} : ${r.erreur}`); continue; }
+    const ecart = r.annonce != null && r.annonce !== r.entites.length;
+    if (ecart || r.doublons) alerte++;
+    let extra = '';
+    if (/franchissement/i.test(c)) {
+      const gest = new Map();
+      const types = new Map(), geoms = new Map();
+      for (const f of r.entites) {
+        const p = f.properties ?? {};
+        const g = p.gestionnaire_du_franchissement ?? p.gestionnaire ?? '?'; gest.set(g, (gest.get(g) ?? 0) + 1);
+        const t = p.type_de_franchissement ?? '?'; types.set(t, (types.get(t) ?? 0) + 1);
+        const gt = f.geometry?.type ?? 'sans géométrie'; geoms.set(gt, (geoms.get(gt) ?? 0) + 1);
+      }
+      const fmtM = (m) => [...m].map(([k, v]) => `${k} (${v})`).join(', ');
+      extra = ` ; géométries : ${fmtM(geoms)} ; types : ${fmtM(types)} ; gestionnaires : ${fmtM(gest)}`;
+    }
+    if (/troncon/i.test(c)) {
+      const cat = new Map();
+      for (const f of r.entites) { const g = f.properties?.categorie_te ?? f.properties?.reseau_te ?? '?'; cat.set(g, (cat.get(g) ?? 0) + 1); }
+      extra = ` ; catégories : ${[...cat].map(([k, v]) => `${k} (${v})`).join(', ')}`;
+    }
+    const attrs = r.entites[0] ? Object.keys(r.entites[0].properties ?? {}).slice(0, 12).join(', ') : '';
+    lignes.push(`${c} : ${r.entites.length} entités${duree} (annoncées ${r.annonce ?? '?'}${ecart ? ', ÉCART' : ''}, doublons ${r.doublons})${extra}${attrs ? `\n    attributs : ${attrs}` : ''}`);
+  }
+  l.fin(echec ? (echec === couches.length ? 'ÉCHEC' : 'ALERTE') : alerte ? 'ALERTE' : 'OK', lignes.join('\n'), performance.now() - t0);
+}
+
+async function cOverpass(lat, lon) {
+  const p = bboxAutour(lat, lon, 1);
+  const q = `[out:json][timeout:25];way["highway"](${f5(p.sud)},${f5(p.ouest)},${f5(p.nord)},${f5(p.est)});out count;`;
+  for (const [nom, url] of OVERPASS) {
+    const l = ligne('overpass-' + nom, `Overpass, serveur ${nom} (petite requête 2 × 2 km)`);
+    const r = await appel(url, { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }, 60);
+    if (!r.ok) { l.fin('ÉCHEC', echecTexte(r), r.ms, url + '?data=' + encodeURIComponent(q)); continue; }
+    try {
+      const j = JSON.parse(r.texte);
+      const n = j.elements?.[0]?.tags?.ways ?? j.elements?.[0]?.tags?.total ?? '?';
+      l.fin('OK', `${n} voies ; données OSM du ${j.osm3s?.timestamp_osm_base ?? '?'}`, r.ms);
+    } catch { l.fin('ÉCHEC', 'réponse illisible : ' + r.texte.slice(0, 160), r.ms); }
+  }
+}
+
+async function cTuile(lat, lon) {
+  const l = ligne('wmts', 'Fond de carte Plan IGN (une tuile WMTS)');
+  const z = 12, n = 2 ** z;
+  const x = Math.floor((lon + 180) / 360 * n);
+  const y = Math.floor((1 - Math.log(Math.tan(lat * Math.PI / 180) + 1 / Math.cos(lat * Math.PI / 180)) / Math.PI) / 2 * n);
+  const url = `${WMTS}?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&TILEMATRIXSET=PM&TILEMATRIX=${z}&TILEROW=${y}&TILECOL=${x}&FORMAT=image/png`;
+  const r = await appel(url, {}, 30);
+  l.fin(r.ok ? 'OK' : 'ÉCHEC', r.ok ? `tuile reçue (${r.entetes.get('content-type') ?? '?'})` : echecTexte(r), r.ms, url);
+}
+
+/* ---------- Rapport ---------- */
+
+function rapport(debut) {
+  const z = contexte.zone;
+  const tete = [
+    'FRANCHIR, diagnostic réseau',
+    `Date : ${debut.toLocaleString('fr-FR')} (durée totale ${((Date.now() - debut) / 1000).toFixed(0)} s)`,
+    `Navigateur : ${navigator.userAgent}`,
+    `Origine de la page : ${location.origin === 'null' || location.protocol === 'file:' ? 'null (fichier local, comme FRANCHIR)' : location.origin}`,
+    `Zone : ${$('lieu').value}, centre ${$('lat').value}, ${$('lon').value}, côté ${$('cote').value} km (S ${z.sud.toFixed(4)} O ${z.ouest.toFixed(4)} N ${z.nord.toFixed(4)} E ${z.est.toFixed(4)})`,
+    `Bilan : ${resultats.filter((r) => r.etat === 'OK').length} OK, ${resultats.filter((r) => r.etat === 'ALERTE').length} alerte(s), ${resultats.filter((r) => r.etat === 'ÉCHEC').length} échec(s)`,
+    '',
+  ];
+  const corps = resultats.map((r) => `[${r.etat}] ${r.titre} (${(r.ms / 1000).toFixed(1)} s)\n  ${r.detail.replace(/\n/g, '\n  ')}${r.lien && r.etat !== 'OK' ? `\n  URL : ${r.lien}` : ''}`);
+  return tete.concat(corps).join('\n');
+}
+
+$('lancer').addEventListener('click', async () => {
+  $('lancer').disabled = true; $('copier').disabled = true; $('enregistrer').disabled = true;
+  $('lignes').innerHTML = ''; resultats.length = 0; contexte = {};
+  const lat = parseFloat($('lat').value), lon = parseFloat($('lon').value), cote = parseFloat($('cote').value) || 20;
+  const b = bboxAutour(lat, lon, cote / 2);
+  contexte.zone = b;
+  const debut = new Date();
+  const etapes = [cNominatim, () => cTuile(lat, lon), () => cDepartements(b), cDataGouv, cRessources, cCapacites, () => cBDTopo(b), () => cTE(b), () => cOverpass(lat, lon)];
+  for (const e of etapes) {
+    try { await e(); } catch (err) { ligne('erreur', 'Erreur interne du diagnostic').fin('ÉCHEC', String(err?.stack ?? err), 0); }
+  }
+  $('rapport').value = rapport(debut);
+  $('lancer').disabled = false; $('copier').disabled = false; $('enregistrer').disabled = false;
+});
+
+$('copier').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText($('rapport').value); $('copier').textContent = 'Copié ✓'; }
+  catch { $('rapport').select(); document.execCommand('copy'); $('copier').textContent = 'Copié ✓'; }
+  setTimeout(() => { $('copier').textContent = 'Copier le rapport'; }, 2000);
+});
+$('enregistrer').addEventListener('click', () => {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([$('rapport').value], { type: 'text/plain;charset=utf-8' }));
+  a.download = `franchir-diagnostic-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.txt`;
+  a.click();
+});
+</script>
+</body>
+</html>
